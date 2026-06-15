@@ -8,9 +8,11 @@ function App() {
       <Route path="/" element={<Navigate to="/upload" replace />} />
       <Route path="/upload" element={<FileUploader />} />
       <Route path="/meeting-detail" element={<MeetingMinutesDetail />} />
+      <Route path="/login" element={<LoginPage />} />
+      <Route path="/signup" element={<SignUpPage />} />
       <Route path="*" element={<Navigate to="/upload" replace />} />
     </Routes>
-  )
-}
+  );
+};
 
-export default App
+export default App;

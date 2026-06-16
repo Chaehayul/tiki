@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 
 const iconPaths = {
@@ -37,11 +38,23 @@ function Icon({ name, size = 16, color = 'currentColor', sw = 2 }) {
 
 export default function AuthHeader() {
     const { pathname } = useLocation();
+    const [isLoggedIn, setIsLoggedIn] = useState(() => Boolean(localStorage.getItem('tiki_access_token')));
+    const authLinks = isLoggedIn
+        ? [{ label: '대시보드', to: '/dashboard' }]
+        : [
+              { label: '로그인', to: '/login' },
+              { label: '회원가입', to: '/signup' },
+          ];
 
-    const links = [
-        { label: '로그인', to: '/login' },
-        { label: '회원가입', to: '/signup' },
-    ];
+    useEffect(() => {
+        const syncAuthSession = () => setIsLoggedIn(Boolean(localStorage.getItem('tiki_access_token')));
+        window.addEventListener('storage', syncAuthSession);
+        window.addEventListener('tiki-auth-changed', syncAuthSession);
+        return () => {
+            window.removeEventListener('storage', syncAuthSession);
+            window.removeEventListener('tiki-auth-changed', syncAuthSession);
+        };
+    }, []);
 
     return (
         <header className="fixed left-0 right-0 top-0 z-50 border-b border-[rgba(0,100,180,0.12)] bg-[rgba(248,250,255,0.92)] backdrop-blur-[12px]">
@@ -58,7 +71,7 @@ export default function AuthHeader() {
 
                 {/* 로그인 / 회원가입 탭 */}
                 <nav className="flex items-center gap-1">
-                    {links.map((link) => {
+                    {authLinks.map((link) => {
                         const active = pathname === link.to;
                         return (
                             <Link

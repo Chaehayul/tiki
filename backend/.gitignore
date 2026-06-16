@@ -16,6 +16,7 @@ env/
 .mypy_cache/
 .pytest_cache/
 .ruff_cache/
+.alembic/
 
 # Build artifacts
 build/
@@ -24,6 +25,9 @@ dist/
 
 # Logs
 *.log
+
+# Uploaded local files
+uploads/
 
 # macOS
 .DS_Store

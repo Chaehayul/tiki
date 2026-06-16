@@ -1,0 +1,105 @@
+from pathlib import Path
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, File, Form, UploadFile, status
+from sqlalchemy.orm import Session
+
+from app.core.config import BACKEND_DIR, settings
+from app.core.exceptions import AppException
+from app.db.database import get_db
+from app.models.file import UploadedFile
+from app.schemas.upload import UploadBatchResponse, UploadedFileResponse
+from app.services.pipeline.file_processing import (
+    AUDIO_EXTENSIONS,
+    MAX_UPLOAD_BYTES,
+    build_storage_path,
+    classify_file_kind,
+)
+
+router = APIRouter(prefix="/uploads", tags=["uploads"])
+
+
+@router.post(
+    "",
+    response_model=UploadBatchResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def upload_files(
+    project_id: str = Form(...),
+    project_key: str = Form(...),
+    project_name: str = Form(...),
+    files: list[UploadFile] = File(...),
+    db: Session = Depends(get_db),
+) -> UploadBatchResponse:
+    if not files:
+        raise AppException(detail="No files uploaded", code="empty_upload")
+
+    upload_dir = (BACKEND_DIR / settings.upload_dir).resolve()
+    upload_dir.mkdir(parents=True, exist_ok=True)
+
+    saved_files: list[UploadedFile] = []
+
+    for file in files:
+        filename = file.filename or "uploaded-file"
+        extension = Path(filename).suffix.lower().lstrip(".")
+
+        if extension not in AUDIO_EXTENSIONS:
+            raise AppException(
+                detail="Only audio files are currently supported by the frontend",
+                code="unsupported_file_type",
+            )
+
+    for file in files:
+        filename = file.filename or "uploaded-file"
+        extension = Path(filename).suffix.lower().lstrip(".")
+        storage_path = build_storage_path(upload_dir, file)
+        file_size_bytes = 0
+
+        with storage_path.open("wb") as output_file:
+            while chunk := await file.read(1024 * 1024):
+                file_size_bytes += len(chunk)
+                if file_size_bytes > MAX_UPLOAD_BYTES:
+                    storage_path.unlink(missing_ok=True)
+                    raise AppException(
+                        detail="File size exceeds 1GB limit",
+                        code="file_too_large",
+                    )
+                output_file.write(chunk)
+
+        uploaded_file = UploadedFile(
+            project_id=project_id,
+            project_key=project_key,
+            project_name=project_name,
+            original_filename=filename,
+            storage_path=str(storage_path),
+            content_type=file.content_type,
+            file_extension=extension,
+            file_size_bytes=file_size_bytes,
+            file_kind=classify_file_kind(extension),
+        )
+        db.add(uploaded_file)
+        saved_files.append(uploaded_file)
+
+    db.commit()
+
+    for uploaded_file in saved_files:
+        db.refresh(uploaded_file)
+
+    return UploadBatchResponse(
+        files=[
+            UploadedFileResponse.model_validate(uploaded_file)
+            for uploaded_file in saved_files
+        ],
+    )
+
+
+@router.get("/{file_id}", response_model=UploadedFileResponse)
+def get_uploaded_file(
+    file_id: UUID,
+    db: Session = Depends(get_db),
+) -> UploadedFileResponse:
+    uploaded_file = db.get(UploadedFile, file_id)
+    if uploaded_file is None:
+        raise AppException(detail="Uploaded file not found", status_code=404, code="not_found")
+
+    return UploadedFileResponse.model_validate(uploaded_file)

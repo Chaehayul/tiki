@@ -1,5 +1,6 @@
-import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import { saveAuthSession, signupUser } from '../api/apiClient';
 import AuthHeader from '../components/AuthHeader';
 
 const cn = (...classes) => classes.filter(Boolean).join(' ');
@@ -221,6 +222,7 @@ function SuccessScreen() {
 
 /* ── 메인 컴포넌트 ── */
 export default function SignUpPage() {
+    const navigate = useNavigate();
     const [step, setStep] = useState(1); // 1 | 2 | 'done'
 
     /* Step 1 */
@@ -237,8 +239,15 @@ export default function SignUpPage() {
     const [agree, setAgree] = useState(false);
     const [s2Errors, setS2Errors] = useState({});
     const [loading, setLoading] = useState(false);
+    const [submitError, setSubmitError] = useState('');
 
     const strength = getPasswordStrength(password);
+
+    useEffect(() => {
+        if (localStorage.getItem('tiki_access_token')) {
+            navigate('/dashboard', { replace: true });
+        }
+    }, [navigate]);
 
     /* ── 유효성 검사 ── */
     const validateStep1 = () => {
@@ -267,14 +276,25 @@ export default function SignUpPage() {
         if (validateStep1()) setStep(2);
     };
 
-    const handleSubmit = (e) => {
+    const handleSubmit = async (e) => {
         e.preventDefault();
         if (!validateStep2()) return;
+        setSubmitError('');
         setLoading(true);
-        setTimeout(() => {
+        try {
+            const authResponse = await signupUser({
+                name: name.trim(),
+                email,
+                password,
+                role,
+            });
+            saveAuthSession(authResponse);
             setLoading(false);
             setStep('done');
-        }, 1600);
+        } catch (err) {
+            setSubmitError(err.message || '회원가입에 실패했습니다.');
+            setLoading(false);
+        }
     };
 
     return (
@@ -609,13 +629,20 @@ export default function SignUpPage() {
                                             에 동의합니다
                                         </span>
                                     </button>
-                                    {s2Errors.agree && (
-                                        <p className="mt-1.5 flex items-center gap-1 pl-[26px] text-[12px] text-[#DC2626]">
-                                            <Icon name="alertCircle" size={12} color="#EF4444" />
-                                            {s2Errors.agree}
-                                        </p>
-                                    )}
-                                </div>
+                                {s2Errors.agree && (
+                                    <p className="mt-1.5 flex items-center gap-1 pl-[26px] text-[12px] text-[#DC2626]">
+                                        <Icon name="alertCircle" size={12} color="#EF4444" />
+                                        {s2Errors.agree}
+                                    </p>
+                                )}
+                            </div>
+
+                                {submitError && (
+                                    <div className="flex items-start gap-2 rounded-xl border border-[rgba(239,68,68,.2)] bg-[rgba(239,68,68,.06)] px-4 py-3">
+                                        <Icon name="alertCircle" size={16} color="#EF4444" />
+                                        <span className="text-[13px] text-[#DC2626]">{submitError}</span>
+                                    </div>
+                                )}
 
                                 {/* 버튼 */}
                                 <div className="mt-1 flex gap-2">

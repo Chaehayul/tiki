@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { loginUser, saveAuthSession } from '../api/apiClient';
 import AuthHeader from '../components/AuthHeader';
 
 const cn = (...classes) => classes.filter(Boolean).join(' ');
@@ -127,7 +128,13 @@ export default function LoginPage() {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
 
-    const handleSubmit = (e) => {
+    useEffect(() => {
+        if (localStorage.getItem('tiki_access_token')) {
+            navigate('/dashboard', { replace: true });
+        }
+    }, [navigate]);
+
+    const handleSubmit = async (e) => {
         e.preventDefault();
         if (!email || !password) {
             setError('이메일과 비밀번호를 모두 입력해주세요.');
@@ -139,7 +146,15 @@ export default function LoginPage() {
         }
         setError('');
         setLoading(true);
-        setTimeout(() => setLoading(false), 1500);
+        try {
+            const authResponse = await loginUser({ email, password });
+            saveAuthSession(authResponse);
+            navigate('/dashboard');
+        } catch (err) {
+            setError(err.message || '로그인에 실패했습니다.');
+        } finally {
+            setLoading(false);
+        }
     };
 
     return (

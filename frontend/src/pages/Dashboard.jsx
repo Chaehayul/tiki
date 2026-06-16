@@ -1,24 +1,9 @@
-import React, { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Link } from "react-router-dom";
+import { clearAuthSession } from "../api/apiClient";
 import Header from "../components/Header";
 import Footer from "../components/Footer";
 import MobileTab from "../components/MobileTab";
-
-// TIKI 컬러 팔레트 상수 정의
-const TIKI_COLORS = {
-  bg: "#F8FAFF",
-  surface: "#FFFFFF",
-  surfaceHover: "#EEF3FF",
-  cyan: "#0099CC",
-  purple: "#7C3AED",
-  green: "#10B981",
-  yellow: "#F59E0B",
-  red: "#EF4444",
-  text: "#0D1B2A",
-  textMuted: "#5A6F8A",
-  border: "rgba(0,100,180,0.12)",
-  borderActive: "rgba(0,153,204,0.5)"
-};
 
 // 가상의 팀원 목록 (스타트업 '네오테크' 시나리오 반영)
 const TEAM_MEMBERS = [
@@ -196,8 +181,32 @@ export default function App() {
   }, []);
 
   // 1단계: 사용자 로그인 상태 관리
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isAuthenticated, setIsAuthenticated] = useState(() => Boolean(localStorage.getItem("tiki_access_token")));
+  const [user, setUser] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem("tiki_user") || "null");
+    } catch {
+      return null;
+    }
+  });
   const [showLoginModal, setShowLoginModal] = useState(false);
+  useEffect(() => {
+    const syncAuthSession = () => {
+      setIsAuthenticated(Boolean(localStorage.getItem("tiki_access_token")));
+      try {
+        setUser(JSON.parse(localStorage.getItem("tiki_user") || "null"));
+      } catch {
+        setUser(null);
+      }
+    };
+
+    window.addEventListener("storage", syncAuthSession);
+    window.addEventListener("tiki-auth-changed", syncAuthSession);
+    return () => {
+      window.removeEventListener("storage", syncAuthSession);
+      window.removeEventListener("tiki-auth-changed", syncAuthSession);
+    };
+  }, []);
   const [loginForm, setLoginForm] = useState({ email: "tiki@neotech.com", password: "••••••••" });
 
   // 2단계: 대시보드 상태 관리
@@ -233,12 +242,18 @@ export default function App() {
   // 로그인 모드 진입
   const handleLogin = (e) => {
     e.preventDefault();
+    const demoUser = { name: "TIKI Demo", email: loginForm.email };
+    localStorage.setItem("tiki_access_token", "demo-dashboard-token");
+    localStorage.setItem("tiki_user", JSON.stringify(demoUser));
+    setUser(demoUser);
     setIsAuthenticated(true);
     setShowLoginModal(false);
     triggerToast("🔓 네오테크 가상 B2B 도메인으로 로그인되었습니다.");
   };
 
   const handleLogout = () => {
+    clearAuthSession();
+    setUser(null);
     setIsAuthenticated(false);
     triggerToast("로그아웃 되었습니다. 랜딩 페이지로 이동합니다.");
   };
@@ -365,7 +380,7 @@ export default function App() {
       clearInterval(interval);
       clearTimeout(interval);
     };
-  }, [uploadPhase]);
+  }, [uploadPhase, uploadFile?.name]);
 
   const resetUpload = () => {
     setUploadFile(null);
@@ -383,7 +398,14 @@ export default function App() {
 
   return (
     <div className="min-h-screen flex flex-col bg-[#F8FAFF] text-[#0D1B2A] font-sans antialiased pt-20 pb-20 md:pb-0">
-      <Header isMobile={isMobile} phase={uploadPhase} stateLabels={uploadStateLabels} />
+      <Header
+        isMobile={isMobile}
+        isLoggedIn={isAuthenticated}
+        user={user}
+        onLogout={handleLogout}
+        phase={uploadPhase}
+        stateLabels={uploadStateLabels}
+      />
 
       {/* 🔹 1단계: 랜딩 페이지 (비인증 상태) */}
       {!isAuthenticated && (

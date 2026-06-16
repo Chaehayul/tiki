@@ -1,76 +1,118 @@
-const icons = {
-  home: ["M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z", "M9 22V12h6v10"],
-  uploadCloud: ["M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242", "M12 12v9", "M8 17l4-5 4 5"],
-  barChart: ["M12 20V10", "M18 20V4", "M6 20v-4"],
-  settings: ["M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z", "M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"],
+import { useLocation, useNavigate } from 'react-router-dom';
+
+const iconPaths = {
+    home: ['M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z', 'M9 22V12h6v10'],
+    folder: ['M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z'],
+    plus: ['M12 5v14', 'M5 12h14'],
+    user: ['M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2', 'M12 3a4 4 0 1 0 0 8 4 4 0 0 0 0-8z'],
 };
 
-const cn = (...classes) => classes.filter(Boolean).join(" ");
+const cn = (...classes) => classes.filter(Boolean).join(' ');
 
-function IIcon({ name, size = 16, color = "currentColor", sw = 2 }) {
-  const paths = icons[name];
-  if (!paths) return null;
-
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke={color}
-      strokeWidth={sw}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className="block shrink-0"
-    >
-      {paths.map((d, index) => (
-        <path key={index} d={d} />
-      ))}
-    </svg>
-  );
+function Icon({ name, size = 20, color = 'currentColor', sw = 1.8 }) {
+    const paths = iconPaths[name];
+    if (!paths) return null;
+    return (
+        <svg
+            width={size}
+            height={size}
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke={color}
+            strokeWidth={sw}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className="block shrink-0"
+        >
+            {paths.map((d, i) => (
+                <path key={i} d={d} />
+            ))}
+        </svg>
+    );
 }
 
 const TABS = [
-  { id: "home", icon: "home", label: "홈" },
-  { id: "upload", icon: "uploadCloud", label: "업로드" },
-  { id: "reports", icon: "barChart", label: "회의록" },
-  { id: "settings", icon: "settings", label: "설정" },
+    { id: 'home', icon: 'home', label: '홈', to: '/dashboard' },
+    { id: 'projects', icon: 'folder', label: '프로젝트', to: '/projects' },
+    { id: 'upload', icon: 'plus', label: '업로드', to: '/upload' },
+    { id: 'mypage', icon: 'user', label: '마이페이지', to: '/mypage' },
 ];
 
+/**
+ * Props:
+ *   active   string  — 현재 활성 탭 id
+ *   onChange (id) => void
+ */
 export default function MobileTab({ active, onChange }) {
-  return (
-    <div className="fixed inset-x-0 bottom-0 z-[100] px-3 pb-[calc(env(safe-area-inset-bottom,0px)+12px)] sm:px-4">
-      <nav className="mx-auto max-w-[28rem] rounded-[28px] border border-[rgba(0,100,180,.12)] bg-[rgba(248,250,255,.88)] p-2 shadow-[0_12px_40px_rgba(0,60,150,.12)] backdrop-blur-[18px]">
-        <div className="grid grid-cols-4 gap-1">
-          {TABS.map((tab) => {
-            const isActive = active === tab.id;
-            return (
-              <button
-                key={tab.id}
-                onClick={() => onChange(tab.id)}
-                className={cn(
-                  "group relative flex min-h-[68px] flex-col items-center justify-center gap-1 rounded-[22px] border transition-all duration-200",
-                  "focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0099CC]/30",
-                  isActive
-                    ? "border-[rgba(0,153,204,.18)] bg-white text-[#0099CC] shadow-[0_4px_18px_rgba(0,153,204,.12)]"
-                    : "border-transparent bg-transparent text-[#5A6F8A] hover:bg-white/70 hover:text-[#0D1B2A]",
-                )}
-              >
-                {isActive && <div className="absolute inset-x-4 top-2 h-1 rounded-full bg-[linear-gradient(90deg,#0099CC,#7C3AED)]" />}
-                <div className={cn("relative mt-1 transition-transform duration-200", isActive ? "translate-y-[2px]" : "group-hover:-translate-y-0.5")}>
-                  <IIcon name={tab.icon} size={22} color="currentColor" sw={isActive ? 2.3 : 1.9} />
-                  {tab.id === "upload" && (
-                    <span className="absolute -right-1 -top-1 h-2 w-2 rounded-full border border-[#F8FAFF] bg-[#7C3AED] shadow-[0_0_0_2px_rgba(124,58,237,.08)]" />
-                  )}
-                </div>
-                <span className={cn("text-[10.5px] leading-none tracking-[0.2px] transition-colors duration-200", isActive ? "font-bold" : "font-medium")}>
-                  {tab.label}
-                </span>
-              </button>
-            );
-          })}
+    const navigate = useNavigate();
+    const location = useLocation();
+
+    const routeActiveTab = TABS.find((tab) => location.pathname.startsWith(tab.to))?.id;
+    const activeTab = routeActiveTab ?? active ?? 'home';
+
+    return (
+        <div
+            className="fixed inset-x-0 bottom-0 z-[100] border-t border-[rgba(0,100,180,0.12)] bg-[rgba(248,250,255,0.94)] backdrop-blur-[16px]"
+            style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
+        >
+            <div className="grid grid-cols-4">
+                {TABS.map((tab) => {
+                    const isActive = activeTab === tab.id;
+                    const isUpload = tab.id === 'upload';
+
+                    return (
+                        <button
+                            key={tab.id}
+                            onClick={() => {
+                                onChange?.(tab.id);
+                                navigate(tab.to);
+                            }}
+                            className={cn(
+                                'relative flex flex-col items-center justify-center gap-1 py-3 transition-colors duration-150 focus:outline-none',
+                                isActive ? (isUpload ? 'text-[#0099CC]' : 'text-[#0099CC]') : 'text-[#5A6F8A]'
+                            )}
+                        >
+                            {/* 활성 인디케이터 — 상단 라인 */}
+                            <span
+                                className={cn(
+                                    'absolute top-0 left-1/2 -translate-x-1/2 h-[2px] rounded-b-full transition-all duration-200',
+                                    isActive ? 'w-8 bg-[#0099CC]' : 'w-0 bg-transparent'
+                                )}
+                            />
+
+                            {/* 아이콘 래퍼 */}
+                            <span
+                                className={cn(
+                                    'flex items-center justify-center rounded-[10px] transition-all duration-150',
+                                    isUpload
+                                        ? cn(
+                                              'h-9 w-9',
+                                              isActive ? 'bg-[rgba(0,153,204,0.12)]' : 'bg-[rgba(0,100,180,0.06)]'
+                                          )
+                                        : cn('h-9 w-9', isActive ? 'bg-[rgba(0,153,204,0.1)]' : '')
+                                )}
+                            >
+                                <Icon
+                                    name={tab.icon}
+                                    size={isUpload ? 22 : 20}
+                                    color={isActive ? '#0099CC' : '#5A6F8A'}
+                                    sw={isUpload ? 2.4 : isActive ? 2.2 : 1.8}
+                                />
+                            </span>
+
+                            {/* 레이블 */}
+                            <span
+                                className={cn(
+                                    'text-[10px] leading-none tracking-[0.1px] transition-all duration-150',
+                                    isActive ? 'font-bold text-[#0099CC]' : 'font-medium text-[#5A6F8A]'
+                                )}
+                            >
+                                {tab.label}
+                            </span>
+                        </button>
+                    );
+                })}
+            </div>
         </div>
-      </nav>
-    </div>
-  );
+    );
 }

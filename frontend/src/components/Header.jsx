@@ -213,12 +213,13 @@ function MobileSideMenu({ open, onClose, isLoggedIn, onLogout }) {
             {/* Panel */}
             <div
                 className={cn(
-                    'fixed right-0 top-0 z-50 h-full w-[280px] bg-white shadow-[−8px_0_32px_rgba(0,100,180,0.12)] transition-transform duration-300 ease-[cubic-bezier(.32,.72,0,1)]',
+                    'fixed right-0 top-0 z-50 w-[280px] bg-white shadow-[-8px_0_32px_rgba(0,100,180,0.12)] transition-transform duration-300 ease-[cubic-bezier(.32,.72,0,1)] flex flex-col',
                     open ? 'translate-x-0' : 'translate-x-full'
                 )}
+                style={{ height: 'calc(100% - 60px - env(safe-area-inset-bottom, 0px))' }}
             >
                 {/* Panel header */}
-                <div className="flex items-center justify-between border-b border-[rgba(0,100,180,0.08)] px-5 py-4">
+                <div className="flex shrink-0 items-center justify-between border-b border-[rgba(0,100,180,0.08)] px-5 py-4">
                     <span className="text-[15px] font-bold tracking-[-0.5px] text-[#0D1B2A]">
                         <span className="text-[#0099CC]">TI</span>KI
                     </span>
@@ -232,7 +233,7 @@ function MobileSideMenu({ open, onClose, isLoggedIn, onLogout }) {
                 </div>
 
                 {/* Nav links */}
-                <nav className="py-3">
+                <nav className="flex-1 overflow-y-auto py-3">
                     {links.map(({ icon, label, to }) => (
                         <Link
                             key={label}
@@ -249,7 +250,7 @@ function MobileSideMenu({ open, onClose, isLoggedIn, onLogout }) {
                 </nav>
 
                 {/* Bottom CTA */}
-                <div className="absolute bottom-[60px] left-0 right-0 border-t border-[rgba(0,100,180,0.08)] p-5">
+                <div className="shrink-0 border-t border-[rgba(0,100,180,0.08)] px-5 py-4 pb-8">
                     {isLoggedIn ? (
                         <button
                             onClick={() => {

@@ -1,5 +1,5 @@
-import { Link } from 'react-router-dom';
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import AuthHeader from '../components/AuthHeader';
 
 const cn = (...classes) => classes.filter(Boolean).join(' ');
@@ -17,7 +17,7 @@ const iconPaths = {
     checkCircle: ['M22 11.08V12a10 10 0 1 1-5.93-9.14', 'M22 4L12 14.01l-3-3'],
     alertCircle: ['M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20z', 'M12 8v4', 'M12 16h.01'],
     alertTriangle: [
-        'M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z',
+        'M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0-3.42 0z',
         'M12 9v4',
         'M12 17h.01',
     ],
@@ -119,6 +119,7 @@ function GoogleIcon({ size = 18 }) {
 }
 
 export default function LoginPage() {
+    const navigate = useNavigate();
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [showPassword, setShowPassword] = useState(false);
@@ -226,9 +227,9 @@ export default function LoginPage() {
                             <label htmlFor="password" className="text-[13px] font-semibold text-[#0D1B2A]">
                                 비밀번호
                             </label>
-                            <a href="#" className="text-[12px] font-semibold text-[#0099CC] hover:underline">
+                            <button type="button" className="text-[12px] font-semibold text-[#0099CC] hover:underline">
                                 비밀번호 찾기
-                            </a>
+                            </button>
                         </div>
                         <div className="relative">
                             <div className="pointer-events-none absolute left-1.5 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-[8px] bg-white shadow-[0_1px_4px_rgba(0,60,150,.10)]">
@@ -310,9 +311,13 @@ export default function LoginPage() {
                 {/* Sign up */}
                 <p className="mt-5 text-center text-[13px] text-[#5A6F8A]">
                     아직 계정이 없으신가요?{' '}
-                    <Link to="/signup" className="font-semibold text-[#0099CC] hover:underline">
+                    <button
+                        type="button"
+                        onClick={() => navigate('/signup')}
+                        className="cursor-pointer font-semibold text-[#0099CC] hover:underline"
+                    >
                         무료로 시작하기
-                    </Link>
+                    </button>
                 </p>
             </div>
 

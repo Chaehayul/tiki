@@ -46,8 +46,8 @@ export default function AuthHeader() {
     return (
         <header className="fixed left-0 right-0 top-0 z-50 border-b border-[rgba(0,100,180,0.12)] bg-[rgba(248,250,255,0.92)] backdrop-blur-[12px]">
             <div className="mx-auto flex min-h-16 w-full max-w-[1200px] flex-wrap items-center justify-between gap-3 px-4 py-3 sm:h-16 sm:flex-nowrap sm:px-6 sm:py-0 lg:px-10">
-                {/* 로고 — 홈으로 이동 */}
-                <Link to="/" className="flex shrink-0 items-center gap-2.5 text-[#0D1B2A] no-underline">
+                {/* 로고 — 대시보드로 이동 */}
+                <Link to="/dashboard" className="flex shrink-0 items-center gap-2.5 text-[#0D1B2A] no-underline">
                     <div className="flex h-9 w-9 items-center justify-center rounded-[10px] bg-[linear-gradient(135deg,#0099CC,#7C3AED)]">
                         <Icon name="fileAudio" size={20} color="#fff" />
                     </div>

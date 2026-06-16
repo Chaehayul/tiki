@@ -11,7 +11,6 @@ import ProjectList from './pages/ProjectList';
 function App() {
   return (
     <Routes>
-      <Route path="/" element={<Navigate to="/create-project" replace />} />
       <Route path="/create-project" element={<CreateProject />} />
       <Route path="/project-list" element={<ProjectList />} />
       <Route path="/dashboard" element={<Dashboard />} />
@@ -20,7 +19,7 @@ function App() {
       <Route path="/meeting-detail" element={<MeetingMinutesDetail />} />
       <Route path="/login" element={<LoginPage />} />
       <Route path="/signup" element={<SignUpPage />} />
-      <Route path="*" element={<Navigate to="/upload" replace />} />
+      <Route path="*" element={<Navigate to="/dashboard" replace />} />
     </Routes>
   );
 };

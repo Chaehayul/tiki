@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
+import { Link } from "react-router-dom";
 import Header from "../components/Header";
 import Footer from "../components/Footer";
 import MobileTab from "../components/MobileTab";
@@ -411,12 +412,12 @@ export default function App() {
               </p>
 
               <div className="flex flex-col sm:flex-row justify-center items-center gap-4">
-                <button
-                  onClick={() => setShowLoginModal(true)}
-                  className="w-full sm:w-auto px-8 py-4 text-base font-bold text-white bg-[#0099CC] hover:bg-[#0086b3] rounded-2xl shadow-xl shadow-cyan-500/20 transition-all flex items-center justify-center gap-2"
+                <Link
+                  to="/login"
+                  className="w-full sm:w-auto px-8 py-4 text-base font-bold text-white bg-[#0099CC] hover:bg-[#0086b3] rounded-2xl shadow-xl shadow-cyan-500/20 transition-all flex items-center justify-center gap-2 no-underline"
                 >
                   지금 무료로 시작하기 <LucideIcon name="sparkles" size={16} />
-                </button>
+                </Link>
                 <a
                   href="#how-it-works"
                   className="w-full sm:w-auto px-8 py-4 text-base font-semibold text-[#0D1B2A] hover:text-[#0099CC] bg-white border border-[rgba(0,100,180,0.12)] rounded-2xl hover:bg-[#EEF3FF] transition-all text-center"

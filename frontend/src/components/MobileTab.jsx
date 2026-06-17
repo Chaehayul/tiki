@@ -33,7 +33,7 @@ function Icon({ name, size = 20, color = 'currentColor', sw = 1.8 }) {
 
 const TABS = [
     { id: 'home', icon: 'home', label: '홈', to: '/dashboard' },
-    { id: 'projects', icon: 'folder', label: '프로젝트', to: '/projects' },
+    { id: 'projects', icon: 'folder', label: '프로젝트', to: '/project-list' },
     { id: 'upload', icon: 'plus', label: '업로드', to: '/upload' },
     { id: 'mypage', icon: 'user', label: '마이페이지', to: '/mypage' },
 ];

@@ -316,6 +316,10 @@ const ProjectList = () => {
     });
   };
 
+  const openProjectMeetings = (project) => {
+    navigate(`/project/${project.id}/meetings`, { state: { project } });
+  };
+
   return (
     <div className="min-h-screen bg-[#F8FAFF] overflow-x-hidden pt-20 pb-20 md:pb-0 flex flex-col">
       <Header isMobile={isMobile} phase="IDLE" stateLabels={stateLabels} />
@@ -500,7 +504,7 @@ const ProjectList = () => {
                         return (
                     <div
                       key={project.id}
-                      onClick={() => navigate(`/project/${project.id}/meetings`)}
+                      onClick={() => openProjectMeetings(project)}
                       className="snap-start shrink-0 w-[250px] sm:w-[264px] bg-[#FFFFFF] p-4 rounded-xl border border-[rgba(0,100,180,0.12)] shadow-sm hover:shadow-md hover:border-[#0099CC] transition-all duration-300 group cursor-pointer"
                     >
                       <div className="relative flex items-start justify-between mb-2" data-project-menu-root="true">
@@ -523,7 +527,7 @@ const ProjectList = () => {
                               onClick={(e) => {
                                 e.stopPropagation();
                                 setOpenMenuProjectId(null);
-                                navigate('/configuration');
+                                navigate('/configuration', { state: { project } });
                               }}
                               className="w-full px-3 py-2.5 text-left text-sm text-[#0D1B2A] hover:bg-[#EEF3FF]"
                             >
@@ -534,7 +538,7 @@ const ProjectList = () => {
                               onClick={(e) => {
                                 e.stopPropagation();
                                 setOpenMenuProjectId(null);
-                                navigate(`/project/${project.id}/meetings`);
+                                openProjectMeetings(project);
                               }}
                               className="w-full px-3 py-2.5 text-left text-sm text-[#0D1B2A] hover:bg-[#EEF3FF]"
                             >
@@ -573,7 +577,7 @@ const ProjectList = () => {
                       return (
                     <div
                       key={project.id}
-                      onClick={() => navigate(`/project/${project.id}/meetings`)}
+                      onClick={() => openProjectMeetings(project)}
                       className={`px-4 sm:px-5 py-3.5 flex items-start justify-between gap-4 cursor-pointer hover:bg-[#F8FAFF] ${idx !== items.length - 1 ? 'border-b border-[rgba(0,100,180,0.08)]' : ''}`}
                     >
                       <div className="min-w-0 flex-1">

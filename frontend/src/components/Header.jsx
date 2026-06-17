@@ -172,7 +172,7 @@ function ProfileDropdown({ user, onLogout }) {
 }
 
 // ── Mobile Side Menu ──────────────────────────────────────────────────────────
-function MobileSideMenu({ open, onClose, isLoggedIn, onLogout }) {
+function MobileSideMenu({ open, onClose, isLoggedIn, isSubscribed, onLogout }) {
     // Trap focus + lock scroll while open
     useEffect(() => {
         if (open) document.body.style.overflow = 'hidden';
@@ -183,17 +183,14 @@ function MobileSideMenu({ open, onClose, isLoggedIn, onLogout }) {
     }, [open]);
 
     const publicLinks = [
-        { icon: 'zap', label: '기능 소개', to: '#features' },
+        { icon: 'zap', label: '기능 소개', to: '/landing' },
         { icon: 'creditCard', label: '요금제', to: '#pricing' },
-        { icon: 'book', label: '서비스 이용 가이드', to: '/docs' },
     ];
 
     const authLinks = [
-        { icon: 'layoutDashboard', label: '대시보드', to: '/dashboard' },
-        { icon: 'fileText', label: '회의록', to: '/meetings' },
-        { icon: 'creditCard', label: '요금제', to: '#pricing' },
-        { icon: 'zap', label: '기능 소개', to: '#features' },
-        { icon: 'book', label: '서비스 이용 가이드', to: '/docs' },
+        { icon: 'fileAudio', label: '업로드', to: '/upload' },
+        { icon: 'layoutDashboard', label: '프로젝트', to: '/project-list' },
+        { icon: 'creditCard', label: isSubscribed ? '구독중' : '구독', to: '/mypage' },
     ];
 
     const links = isLoggedIn ? authLinks : publicLinks;
@@ -285,22 +282,22 @@ function MobileSideMenu({ open, onClose, isLoggedIn, onLogout }) {
  *   phase      'IDLE' | 'UPLOADING' | 'PROCESSING' | 'COMPLETED' | 'FAILED'
  *   stateLabels { UPLOADING: string, ... }
  *   user        { name: string, email: string }
+ *   isSubscribed boolean
  *   onLogout    () => void
  */
-export default function Header({ isMobile, isLoggedIn, phase, stateLabels, user, onLogout }) {
+export default function Header({ isMobile, isLoggedIn, phase, stateLabels, user, isSubscribed, onLogout }) {
     const [mobileOpen, setMobileOpen] = useState(false);
+    const subscribed = typeof isSubscribed === 'boolean' ? isSubscribed : Boolean(user?.isSubscribed);
 
     const desktopLoggedOutLinks = [
-        { label: '기능 소개', to: '#features' },
+        { label: '기능 소개', to: '/landing' },
         { label: '요금제', to: '#pricing' },
-        { label: '문서', to: '/docs' },
     ];
 
     const desktopLoggedInLinks = [
-        { label: '대시보드', to: '/dashboard' },
-        { label: '회의록', to: '/meetings' },
-        { label: '요금제', to: '#pricing' },
-        { label: '기능 소개', to: '#features' },
+        { label: '업로드', to: '/upload' },
+        { label: '프로젝트', to: '/project-list' },
+        { label: subscribed ? '구독중' : '구독', to: '/mypage' },
     ];
 
     return (
@@ -382,6 +379,7 @@ export default function Header({ isMobile, isLoggedIn, phase, stateLabels, user,
                     open={mobileOpen}
                     onClose={() => setMobileOpen(false)}
                     isLoggedIn={isLoggedIn}
+                    isSubscribed={subscribed}
                     onLogout={onLogout}
                 />
             )}

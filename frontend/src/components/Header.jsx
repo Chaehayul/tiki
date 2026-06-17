@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { clearAuthSession } from '../api/apiClient';
 
 // ── Icons ────────────────────────────────────────────────────────────────────
 const iconPaths = {
@@ -185,10 +186,11 @@ function MobileSideMenu({ open, onClose, isLoggedIn, isSubscribed, onLogout }) {
     const publicLinks = [
         { icon: 'zap', label: '기능 소개', to: '/landing' },
         { icon: 'creditCard', label: '요금제', to: '#pricing' },
+        { icon: 'user', label: '로그인/회원가입', to: '/login' },
     ];
 
     const authLinks = [
-        { icon: 'fileAudio', label: '업로드', to: '/upload' },
+        { icon: 'layoutDashboard', label: '대시보드', to: '/dashboard' },
         { icon: 'layoutDashboard', label: '프로젝트', to: '/project-list' },
         { icon: 'creditCard', label: isSubscribed ? '구독중' : '구독', to: '/mypage' },
     ];
@@ -259,15 +261,7 @@ function MobileSideMenu({ open, onClose, isLoggedIn, isSubscribed, onLogout }) {
                             <Icon name="logOut" size={15} color="currentColor" />
                             로그아웃
                         </button>
-                    ) : (
-                        <Link
-                            to="/login"
-                            onClick={onClose}
-                            className="flex w-full items-center justify-center rounded-[8px] bg-[linear-gradient(135deg,#0099CC,#7C3AED)] py-2.5 text-[14px] font-semibold text-white no-underline"
-                        >
-                            무료로 시작하기
-                        </Link>
-                    )}
+                    ) : null}
                 </div>
             </div>
         </>
@@ -286,16 +280,58 @@ function MobileSideMenu({ open, onClose, isLoggedIn, isSubscribed, onLogout }) {
  *   onLogout    () => void
  */
 export default function Header({ isMobile, isLoggedIn, phase, stateLabels, user, isSubscribed, onLogout }) {
+    const { pathname } = useLocation();
+    const navigate = useNavigate();
     const [mobileOpen, setMobileOpen] = useState(false);
-    const subscribed = typeof isSubscribed === 'boolean' ? isSubscribed : Boolean(user?.isSubscribed);
+    const [authState, setAuthState] = useState(() => Boolean(localStorage.getItem('tiki_access_token')));
+    const [sessionUser, setSessionUser] = useState(() => {
+        try {
+            const raw = localStorage.getItem('tiki_user');
+            return raw ? JSON.parse(raw) : null;
+        } catch {
+            return null;
+        }
+    });
+
+    useEffect(() => {
+        const syncAuthSession = () => {
+            setAuthState(Boolean(localStorage.getItem('tiki_access_token')));
+            try {
+                const raw = localStorage.getItem('tiki_user');
+                setSessionUser(raw ? JSON.parse(raw) : null);
+            } catch {
+                setSessionUser(null);
+            }
+        };
+
+        window.addEventListener('storage', syncAuthSession);
+        window.addEventListener('tiki-auth-changed', syncAuthSession);
+        return () => {
+            window.removeEventListener('storage', syncAuthSession);
+            window.removeEventListener('tiki-auth-changed', syncAuthSession);
+        };
+    }, []);
+
+    const effectiveLoggedIn = typeof isLoggedIn === 'boolean' ? isLoggedIn : authState;
+    const effectiveUser = user ?? sessionUser;
+    const subscribed = typeof isSubscribed === 'boolean' ? isSubscribed : Boolean(effectiveUser?.isSubscribed);
+    const handleLogout = () => {
+        clearAuthSession();
+        if (pathname !== '/dashboard') {
+            sessionStorage.setItem('tiki_flash_toast', '로그아웃 되었습니다.');
+        }
+        onLogout?.();
+        navigate('/dashboard', { replace: true });
+    };
 
     const desktopLoggedOutLinks = [
         { label: '기능 소개', to: '/landing' },
         { label: '요금제', to: '#pricing' },
+        { label: '로그인/회원가입', to: '/login' },
     ];
 
     const desktopLoggedInLinks = [
-        { label: '업로드', to: '/upload' },
+        { label: '대시보드', to: '/dashboard' },
         { label: '프로젝트', to: '/project-list' },
         { label: subscribed ? '구독중' : '구독', to: '/mypage' },
     ];
@@ -310,7 +346,7 @@ export default function Header({ isMobile, isLoggedIn, phase, stateLabels, user,
             >
                 {/* ── Logo ── */}
                 <Link
-                    to={isLoggedIn ? '/dashboard' : '/'}
+                    to="/upload"
                     className="flex items-center gap-2.5 text-[#0D1B2A] no-underline"
                 >
                     <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-[linear-gradient(135deg,#0099CC,#7C3AED)]">
@@ -325,7 +361,7 @@ export default function Header({ isMobile, isLoggedIn, phase, stateLabels, user,
                 <nav className="flex items-center gap-1">
                     {!isMobile && (
                         <>
-                            {(isLoggedIn ? desktopLoggedInLinks : desktopLoggedOutLinks).map(({ label, to }) => (
+                            {(effectiveLoggedIn ? desktopLoggedInLinks : desktopLoggedOutLinks).map(({ label, to }) => (
                                 <Link
                                     key={label}
                                     to={to}
@@ -341,20 +377,10 @@ export default function Header({ isMobile, isLoggedIn, phase, stateLabels, user,
                     {!isMobile && <StatusPill phase={phase} stateLabels={stateLabels} isMobile={false} />}
 
                     {/* Logged-in: profile avatar */}
-                    {isLoggedIn && !isMobile && (
+                    {effectiveLoggedIn && !isMobile && (
                         <div className="ml-1">
-                            <ProfileDropdown user={user} onLogout={onLogout} />
+                            <ProfileDropdown user={effectiveUser} onLogout={handleLogout} />
                         </div>
-                    )}
-
-                    {/* Logged-out: CTA */}
-                    {!isLoggedIn && !isMobile && (
-                        <Link
-                            to="/login"
-                            className="ml-1 rounded-[6px] border border-[rgba(0,153,204,.5)] bg-[rgba(0,153,204,.08)] px-[14px] py-[6px] text-sm font-semibold text-[#0099CC] no-underline transition-colors hover:bg-[rgba(0,153,204,.15)]"
-                        >
-                            무료 시작
-                        </Link>
                     )}
 
                     {/* Mobile: status pill + hamburger */}
@@ -378,9 +404,9 @@ export default function Header({ isMobile, isLoggedIn, phase, stateLabels, user,
                 <MobileSideMenu
                     open={mobileOpen}
                     onClose={() => setMobileOpen(false)}
-                    isLoggedIn={isLoggedIn}
+                    isLoggedIn={effectiveLoggedIn}
                     isSubscribed={subscribed}
-                    onLogout={onLogout}
+                    onLogout={handleLogout}
                 />
             )}
         </>

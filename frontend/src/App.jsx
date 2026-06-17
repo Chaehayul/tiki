@@ -12,6 +12,8 @@ import MyPage from './pages/Mypage';
 import Landingpage from './pages/Landingpage';
 
 function App() {
+  const isAuthenticated = Boolean(localStorage.getItem('tiki_access_token'));
+
   return (
     <Routes>
       <Route path="/create-project" element={<CreateProject />} />
@@ -22,7 +24,10 @@ function App() {
       <Route path="/upload" element={<FileUploader />} />
       <Route path="/configuration" element={<Configuration />} />
       <Route path="/meeting-detail" element={<MeetingMinutesDetail />} />
-      <Route path="/mypage" element={<MyPage />} />
+      <Route
+        path="/mypage"
+        element={isAuthenticated ? <MyPage /> : <Navigate to="/login" replace />}
+      />
       <Route path="/landing" element={<Landingpage />} />
       <Route path="/login" element={<LoginPage />} />
       <Route path="/signup" element={<SignUpPage />} />

@@ -245,7 +245,7 @@ export default function SignUpPage() {
 
     useEffect(() => {
         if (localStorage.getItem('tiki_access_token')) {
-            navigate('/dashboard', { replace: true });
+            navigate('/upload', { replace: true });
         }
     }, [navigate]);
 
@@ -289,8 +289,7 @@ export default function SignUpPage() {
                 role,
             });
             saveAuthSession(authResponse);
-            setLoading(false);
-            setStep('done');
+            navigate('/upload', { replace: true });
         } catch (err) {
             setSubmitError(err.message || '회원가입에 실패했습니다.');
             setLoading(false);

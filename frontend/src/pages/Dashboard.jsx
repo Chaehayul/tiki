@@ -102,6 +102,18 @@ function LucideIcon({ name, size = 16, className = "" }) {
         <line x1="5" y1="12" x2="19" y2="12" />
       </svg>
     ),
+    upload: (
+      <svg className={className} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+        <polyline points="17 8 12 3 7 8" />
+        <line x1="12" y1="3" x2="12" y2="15" />
+      </svg>
+    ),
+    zap: (
+      <svg className={className} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+      </svg>
+    ),
     trash: (
       <svg className={className} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <polyline points="3 6 5 6 21 6" />
@@ -139,6 +151,12 @@ function LucideIcon({ name, size = 16, className = "" }) {
     chevronRight: (
       <svg className={className} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <polyline points="9 18 15 12 9 6" />
+      </svg>
+    ),
+    x: (
+      <svg className={className} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <line x1="18" y1="6" x2="6" y2="18" />
+        <line x1="6" y1="6" x2="18" y2="18" />
       </svg>
     ),
     link: (
@@ -239,6 +257,14 @@ export default function App() {
     setTimeout(() => setToast({ show: false, message: "" }), 3000);
   };
 
+  useEffect(() => {
+    const flashToast = sessionStorage.getItem("tiki_flash_toast");
+    if (flashToast) {
+      triggerToast(flashToast);
+      sessionStorage.removeItem("tiki_flash_toast");
+    }
+  }, []);
+
   // 로그인 모드 진입
   const handleLogin = (e) => {
     e.preventDefault();
@@ -248,14 +274,13 @@ export default function App() {
     setUser(demoUser);
     setIsAuthenticated(true);
     setShowLoginModal(false);
-    triggerToast("🔓 네오테크 가상 B2B 도메인으로 로그인되었습니다.");
+    triggerToast("네오테크 가상 B2B 도메인으로 로그인되었습니다.");
   };
 
   const handleLogout = () => {
-    clearAuthSession();
     setUser(null);
     setIsAuthenticated(false);
-    triggerToast("로그아웃 되었습니다. 랜딩 페이지로 이동합니다.");
+    triggerToast("로그아웃 되었습니다.");
   };
 
   // 컨텍스트 링크 클릭시 타임라인 스크롤 & 애니메이션 효과 (움직임 효과는 배제함)
@@ -265,7 +290,7 @@ export default function App() {
     const targetElementId = `transcript-${normalizedTime}`;
 
     setHighlightedTime(normalizedTime);
-    triggerToast(`⏱️ 회의록 원본 인용 링크 [${normalizedTime}] 대화 구간을 활성화합니다.`);
+    triggerToast(`회의록 원본 인용 링크 [${normalizedTime}] 대화 구간을 활성화합니다.`);
     
     const element = document.getElementById(targetElementId);
     if (element) {
@@ -297,7 +322,7 @@ export default function App() {
       return item;
     }));
     setSelectedItem(null);
-    triggerToast("✍️ 액션 아이템이 성공적으로 수정(사용자 변경)되었습니다.");
+    triggerToast("액션 아이템이 성공적으로 수정(사용자 변경)되었습니다.");
   };
 
   // B. 승인 (Approve) 기능
@@ -314,7 +339,7 @@ export default function App() {
       return item;
     }));
     setSelectedItem(null);
-    triggerToast("🚀 Jira API를 호출하여 티켓 생성이 승인 완료되었습니다!");
+    triggerToast("Jira API를 호출하여 티켓 생성이 승인 완료되었습니다!");
   };
 
   // C. 삭제 (Delete) 기능
@@ -373,7 +398,7 @@ export default function App() {
         };
         setActionItems(prev => [newAction, ...prev]);
         setUploadPhase("COMPLETED");
-        triggerToast("✅ AI 분석 및 액션 아이템 추출이 완료되어 목록에 추가되었습니다!");
+        triggerToast("AI 분석 및 액션 아이템 추출이 완료되어 목록에 추가되었습니다!");
       }, 2500);
     }
     return () => {
@@ -407,7 +432,7 @@ export default function App() {
         stateLabels={uploadStateLabels}
       />
 
-      {/* 🔹 1단계: 랜딩 페이지 (비인증 상태) */}
+      {/* 1단계: 랜딩 페이지 (비인증 상태) */}
       {!isAuthenticated && (
         <div className="flex-1 flex flex-col">
           {/* Hero Section */}
@@ -542,12 +567,12 @@ export default function App() {
         </div>
       )}
 
-      {/* 🔹 2단계: 메인 협업 대시보드 (인증 상태) */}
+      {/* 2단계: 메인 협업 대시보드 (인증 상태) */}
       {isAuthenticated && (
         <div className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 flex flex-col gap-8">
           
           {/* 대시보드 메인 인트로 및 요약 */}
-          <section className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-6 bg-white border border-[rgba(0,100,180,0.12)] rounded-2xl shadow-sm">
+          <section className="p-6 bg-white border border-[rgba(0,100,180,0.12)] rounded-2xl shadow-sm">
             <div>
               <div className="flex items-center gap-2 mb-1.5">
                 <span className="w-2.5 h-2.5 rounded-full bg-[#10B981]"></span>
@@ -559,47 +584,6 @@ export default function App() {
               <p className="text-sm text-[#5A6F8A] mt-1">
                 AI가 추출한 Action Item입니다. 상세 내용 검증 후 Jira 보드로 승인/전송하세요.
               </p>
-            </div>
-            
-            {/* 사후 업로드 간이 트리거 */}
-            <div className="shrink-0 flex items-center gap-3">
-              {uploadPhase === "IDLE" ? (
-                <label className="px-4 py-2.5 bg-gradient-to-r from-[#0099CC] to-[#7C3AED] text-white text-sm font-bold rounded-xl shadow-md cursor-pointer transition-colors">
-                  📁 새 회의 오디오 파일 업로드
-                  <input
-                    type="file"
-                    accept=".mp3,.wav,.m4a"
-                    className="hidden"
-                    onChange={handleFileUploadSimulate}
-                  />
-                </label>
-              ) : (
-                <div className="flex items-center gap-3 bg-[#EEF3FF] border border-[#0099CC]/30 px-4 py-2 rounded-xl">
-                  {uploadPhase === "UPLOADING" && (
-                    <div className="flex items-center gap-2 text-xs font-bold text-[#0099CC]">
-                      <svg className="animate-spin h-4 w-4 text-[#0099CC]" fill="none" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                      </svg>
-                      업로드 중 ({uploadProgress}%)
-                    </div>
-                  )}
-                  {uploadPhase === "PROCESSING" && (
-                    <div className="flex items-center gap-2 text-xs font-bold text-[#7C3AED]">
-                      <span className="relative flex h-2 w-2">
-                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-purple-400 opacity-75"></span>
-                        <span className="relative inline-flex rounded-full h-2 w-2 bg-[#7C3AED]"></span>
-                      </span>
-                      AI 요약 및 마스킹 중...
-                    </div>
-                  )}
-                  {uploadPhase === "COMPLETED" && (
-                    <button onClick={resetUpload} className="text-xs font-bold text-[#10B981] hover:underline">
-                      성공! 목록 새로고침 (클릭하여 닫기)
-                    </button>
-                  )}
-                </div>
-              )}
             </div>
           </section>
 
@@ -614,8 +598,8 @@ export default function App() {
                     <LucideIcon name="sparkles" size={16} className="text-[#0099CC]" />
                     회의 대화록 원본 인용 (Context)
                   </h3>
-                  <span className="text-[11px] px-2 py-0.5 bg-[#EEF3FF] text-[#0099CC] rounded-full font-semibold">
-                    화자 식별 완료
+                  <span className="text-[11px] px-2 py-0.5 bg-[#EEF3FF] text-[#0099CC] rounded-full font-semibold whitespace-nowrap">
+                    화자식별완료
                   </span>
                 </div>
                 <p className="text-xs text-[#5A6F8A] mt-1">
@@ -701,7 +685,11 @@ export default function App() {
                       className="group relative flex flex-col justify-between p-5 bg-white border border-[rgba(0,100,180,0.12)] hover:border-[#0099CC]/40 hover:bg-[#EEF3FF]/30 rounded-2xl shadow-sm transition-colors duration-200 cursor-pointer"
                     >
                       {/* 카드 헤더 (우선순위 & 상태 뱃지) */}
-                      <div className="flex items-center justify-between gap-2 mb-3">
+                      <div
+                        className={`flex items-center gap-2 mb-3 ${
+                          item.status === "연동 완료" && item.jiraLink ? "pr-[92px]" : ""
+                        }`}
+                      >
                         <span className={`px-2.5 py-0.5 text-[11px] font-bold rounded-full ${statusStyles[item.status] || "bg-gray-400"}`}>
                           {item.status}
                         </span>
@@ -736,7 +724,7 @@ export default function App() {
                           className="flex items-center gap-1 text-[#0099CC] hover:underline font-bold"
                         >
                           <LucideIcon name="clock" size={12} />
-                          ⏱️ {item.contextTime} 인용
+                          {item.contextTime} 인용
                         </button>
                       </div>
 
@@ -760,7 +748,9 @@ export default function App() {
 
                 {actionItems.length === 0 && (
                   <div className="col-span-2 text-center py-16 bg-white border border-dashed border-[rgba(0,100,180,0.12)] rounded-2xl">
-                    <span className="text-3xl">🎉</span>
+                    <div className="flex justify-center">
+                      <LucideIcon name="checkCircle" size={30} className="text-[#10B981]" />
+                    </div>
                     <h5 className="font-bold text-[#0D1B2A] mt-2">오늘 처리할 액션 아이템 완료!</h5>
                     <p className="text-xs text-[#5A6F8A] mt-1">새 회의 파일을 업로드하여 태스크를 추출하세요.</p>
                   </div>
@@ -772,7 +762,7 @@ export default function App() {
         </div>
       )}
 
-      {/* 🔹 3단계: 상세 편집 모달 (수정 / 승인 / 삭제 통합 제어) */}
+      {/* 3단계: 상세 편집 모달 (수정 / 승인 / 삭제 통합 제어) */}
       {selectedItem && (
         <div className="fixed inset-0 z-50 bg-[#0D1B2A]/40 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl max-w-2xl w-full border border-[rgba(0,100,180,0.12)] shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
@@ -789,7 +779,7 @@ export default function App() {
                 onClick={() => setSelectedItem(null)}
                 className="text-[#5A6F8A] hover:text-[#0D1B2A] text-lg font-bold transition-colors"
               >
-                <LucideIcon name="chevronRight" size={18} className="transform rotate-90" />
+                <LucideIcon name="x" size={18} />
               </button>
             </div>
 
@@ -934,7 +924,8 @@ export default function App() {
                     onClick={() => handleApprove(selectedItem.id)}
                     className="px-5 py-2 text-xs font-bold text-white bg-[#10B981] hover:bg-[#0d9488] rounded-lg shadow-md shadow-emerald-500/15 transition-colors flex items-center gap-1"
                   >
-                    승인 및 Jira 연동 🚀
+                    <LucideIcon name="zap" size={12} className="text-white" />
+                    승인 및 Jira 연동
                   </button>
                 </div>
 
@@ -945,7 +936,7 @@ export default function App() {
         </div>
       )}
 
-      {/* 🔹 로그인용 가상 회원가입 및 데모체험 모달 */}
+      {/* 로그인용 가상 회원가입 및 데모체험 모달 */}
       {showLoginModal && (
         <div className="fixed inset-0 z-50 bg-[#0D1B2A]/40 backdrop-blur-sm flex items-center justify-center p-4">
           <form
@@ -991,16 +982,17 @@ export default function App() {
               </button>
               <button
                 type="submit"
-                className="flex-1 py-2 text-sm font-bold text-white bg-[#0099CC] hover:bg-[#0086b3] rounded-lg transition-colors shadow-md shadow-cyan-500/10"
+                className="flex-1 py-2 text-sm font-bold text-white bg-[#0099CC] hover:bg-[#0086b3] rounded-lg transition-colors shadow-md shadow-cyan-500/10 inline-flex items-center justify-center gap-1.5"
               >
-                입장 및 시연 ⚡
+                <LucideIcon name="zap" size={14} className="text-white" />
+                입장 및 시연
               </button>
             </div>
           </form>
         </div>
       )}
 
-      {/* 🔹 토스트 알림 컴포넌트 */}
+      {/* 토스트 알림 컴포넌트 */}
       {toast.show && (
         <div className="fixed bottom-6 right-6 z-50 flex items-center gap-2 bg-[#0D1B2A] text-white px-5 py-3.5 rounded-xl shadow-2xl border border-gray-800 animate-in slide-in-from-bottom-4 duration-300">
           <LucideIcon name="checkCircle" size={16} className="text-[#10B981]" />

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { Link } from 'react-router-dom';
 import Header from '../components/Header';
 import Footer from '../components/Footer';
 import MobileTab from '../components/MobileTab';
@@ -646,7 +647,7 @@ export default function TikiLandingPage() {
             title: '원클릭 연동',
             sub: 'Jira · Notion 즉시 전송',
             desc: '승인 버튼 하나로 추출된 태스크가 Jira 티켓으로 자동 생성됩니다. 복사·붙여넣기는 영원히 안녕.',
-            badge: '6종 툴 지원',
+            badge: '2종 툴 지원',
         },
     ];
 
@@ -661,7 +662,7 @@ export default function TikiLandingPage() {
         { value: 94, suffix: '%', label: 'STT 정확도', icon: 'trendingUp', color: '#0099CC' },
         { value: 3, suffix: '초', label: '평균 추출 시간', icon: 'clock', color: '#7C3AED' },
         { value: 100, suffix: '%', label: '데이터 온프레미스', icon: 'shield', color: '#10B981' },
-        { value: 6, suffix: '종', label: '연동 툴 지원', icon: 'link', color: '#F59E0B' },
+        { value: 2, suffix: '종', label: '연동 툴 지원', icon: 'link', color: '#F59E0B' },
     ];
 
     const whyItems = [
@@ -717,7 +718,7 @@ export default function TikiLandingPage() {
             color: '#0099CC',
             bg: 'from-[#0099CC]/10 to-[#0099CC]/5',
             border: 'border-[#0099CC]/30',
-            items: ['실시간 대화 스트리밍 요약', 'Slack 알림 자동 발송', 'Notion 데이터베이스 연동'],
+            items: ['실시간 대화 스트리밍 요약', '자동 회의록 공유 알림', 'Notion 데이터베이스 연동'],
         },
         {
             phase: 'v2.0',
@@ -734,7 +735,7 @@ export default function TikiLandingPage() {
         { icon: 'fileText', text: '회의 끝나자마자 30분을 회의록 정리에 쏟는다' },
         { icon: 'clipboardList', text: 'Jira에 누가 무엇을 언제까지 해야 하는지 일일이 옮겨 적는다' },
         { icon: 'volumeX', text: '중요한 결정이 녹취록 어딘가에 묻혀 잊혀진다' },
-        { icon: 'repeat', text: '같은 내용을 Slack, Notion, Jira에 세 번씩 복붙한다' },
+        { icon: 'repeat', text: '같은 내용을 Notion, Jira에 반복해서 복붙한다' },
         { icon: 'shieldAlert', text: '고객 정보가 담긴 회의록을 외부 AI에 올리기 꺼려진다' },
         { icon: 'clock3', text: '다음 회의 전까지도 전 회의 정리가 완료되지 않는다' },
     ];
@@ -789,8 +790,8 @@ export default function TikiLandingPage() {
                     </p>
 
                     <div className="flex flex-col sm:flex-row justify-center items-center gap-4 mb-16">
-                        <a
-                            href="#cta"
+                        <Link
+                            to="/login"
                             className="group w-full sm:w-auto px-8 py-4 text-base font-bold text-white bg-gradient-to-r from-[#0099CC] to-[#0077aa] hover:from-[#0086b3] hover:to-[#006699] rounded-2xl transition-all flex items-center justify-center gap-2 shadow-lg shadow-[#0099CC]/30 hover:shadow-xl hover:shadow-[#0099CC]/40 hover:-translate-y-0.5"
                         >
                             지금 무료로 시작하기
@@ -799,7 +800,7 @@ export default function TikiLandingPage() {
                                 size={16}
                                 className="text-white transition-transform group-hover:translate-x-1"
                             />
-                        </a>
+                        </Link>
                         <a
                             href="#how"
                             className="w-full sm:w-auto px-8 py-4 text-base font-semibold text-[#0D1B2A] bg-white border border-[rgba(0,100,180,0.15)] hover:bg-[#EEF3FF] hover:border-[rgba(0,153,204,0.3)] rounded-2xl transition-all text-center shadow-sm hover:shadow-md"
@@ -826,7 +827,7 @@ export default function TikiLandingPage() {
                             </div>
 
                             <div className="p-4 sm:p-6 bg-[#F8FAFF]">
-                                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-4 p-4 bg-white rounded-xl border border-[rgba(0,100,180,0.12)] gap-3">
+                                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-4 p-4 bg-white rounded-xl border border-[rgba(0,100,180,0.12)] gap-3 text-left">
                                     <div>
                                         <div className="flex items-center gap-1.5 mb-1">
                                             <span className="w-2 h-2 rounded-full bg-[#10B981] animate-pulse" />
@@ -1395,8 +1396,8 @@ export default function TikiLandingPage() {
                         오디오 파일 하나만 있으면 됩니다.
                     </p>
                     <div className="flex flex-col sm:flex-row justify-center items-center gap-4">
-                        <a
-                            href="#"
+                        <Link
+                            to="/login"
                             className="group w-full sm:w-auto px-8 py-4 text-base font-bold text-[#0099CC] bg-white hover:bg-[#EEF3FF] rounded-2xl transition-all flex items-center justify-center gap-2 shadow-xl shadow-black/20 hover:shadow-2xl hover:-translate-y-0.5"
                         >
                             무료로 시작하기
@@ -1405,7 +1406,7 @@ export default function TikiLandingPage() {
                                 size={16}
                                 className="text-[#0099CC] transition-transform group-hover:translate-x-1"
                             />
-                        </a>
+                        </Link>
                         <a
                             href="#"
                             className="w-full sm:w-auto px-8 py-4 text-base font-bold text-white border-2 border-white/30 hover:bg-white/15 hover:border-white/50 rounded-2xl transition-all flex items-center justify-center gap-2"

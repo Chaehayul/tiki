@@ -130,7 +130,7 @@ export default function LoginPage() {
 
     useEffect(() => {
         if (localStorage.getItem('tiki_access_token')) {
-            navigate('/dashboard', { replace: true });
+            navigate('/upload', { replace: true });
         }
     }, [navigate]);
 
@@ -149,7 +149,7 @@ export default function LoginPage() {
         try {
             const authResponse = await loginUser({ email, password });
             saveAuthSession(authResponse);
-            navigate('/dashboard');
+            navigate('/upload');
         } catch (err) {
             setError(err.message || '로그인에 실패했습니다.');
         } finally {

@@ -330,7 +330,7 @@ export default function CreateProject() {
                     onClick={() => {
                       setIsBuilding(false);
                       setBuildSuccess(false);
-                      alert('🎉 새 프로젝트가 리스트에 성공적으로 반영되었습니다!\n프로젝트 목록(ProjectList) 화면으로 이동합니다.');
+                      alert('새 프로젝트가 리스트에 성공적으로 반영되었습니다!\n프로젝트 목록(ProjectList) 화면으로 이동합니다.');
                       navigate('/project-list');
                     }}
                     className="w-full bg-[#0099CC] hover:bg-[#0088BB] text-white py-3.5 px-6 rounded-xl font-bold transition shadow-md shadow-[#0099CC]/15"

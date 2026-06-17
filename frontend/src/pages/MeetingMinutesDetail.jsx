@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import Header from "../components/Header";
 import Footer from "../components/Footer";
 import MobileTab from "../components/MobileTab";
+import { clearAuthSession } from "../api/apiClient";
 
 /* ─── 데이터 ─────────────────────────────────────────── */
 const TX = [
@@ -56,16 +57,6 @@ const INITIAL_INTEGRATION_SERVICES = [
       { id: "P-20", title: "QA 체크리스트",           assignee: "정다은", status: "progress" },
       { id: "P-19", title: "UI 컴포넌트 가이드",      assignee: "한유진", status: "todo" },
       { id: "P-18", title: "배포 런북",               assignee: "이민준", status: "todo" },
-    ],
-  },
-  {
-    id: "slack",
-    name: "Slack",
-    iconBg: "#7C3AED",
-    iconLabel: "S",
-    deepLinkBase: "https://your-workspace.slack.com/archives/",
-    tickets: [
-      { id: "MSG-1", title: "Sprint 12 주요 결정사항 공지", assignee: "#dev-general", status: "todo" },
     ],
   },
 ];
@@ -142,6 +133,57 @@ function fmtAuditTime(dateStr) {
   return dateStr;
 }
 
+function LucideIcon({ name, size = 14, color = "currentColor", strokeWidth = 2, className = "" }) {
+  const common = {
+    width: size,
+    height: size,
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: color,
+    strokeWidth,
+    strokeLinecap: "round",
+    strokeLinejoin: "round",
+    className,
+  };
+
+  switch (name) {
+    case "x":
+      return <svg {...common}><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>;
+    case "check":
+      return <svg {...common}><path d="M20 6 9 17l-5-5" /></svg>;
+    case "check-circle":
+      return <svg {...common}><circle cx="12" cy="12" r="10" /><path d="M9 12.5 11 14.5 15.5 10" /></svg>;
+    case "circle":
+      return <svg {...common}><circle cx="12" cy="12" r="8" /></svg>;
+    case "arrow-up":
+      return <svg {...common}><path d="M12 19V5" /><path d="m6 11 6-6 6 6" /></svg>;
+    case "alert-triangle":
+      return <svg {...common}><path d="M10.29 3.86 1.82 18A2 2 0 0 0 3.53 21h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z" /><path d="M12 9v4" /><path d="M12 17h.01" /></svg>;
+    case "alert-circle":
+      return <svg {...common}><circle cx="12" cy="12" r="10" /><path d="M12 8v4" /><path d="M12 16h.01" /></svg>;
+    case "info":
+      return <svg {...common}><circle cx="12" cy="12" r="10" /><path d="M12 10v6" /><path d="M12 7h.01" /></svg>;
+    case "clipboard-list":
+      return <svg {...common}><rect x="8" y="2" width="8" height="4" rx="1" /><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" /><path d="M9 11h.01" /><path d="M13 11h3" /><path d="M9 16h.01" /><path d="M13 16h3" /></svg>;
+    case "rows-3":
+      return <svg {...common}><path d="M4 7h16" /><path d="M4 12h16" /><path d="M4 17h16" /></svg>;
+    case "star":
+      return <svg {...common}><path d="m12 3.5 2.8 5.67 6.25.9-4.52 4.41 1.07 6.22L12 17.76 6.4 20.7l1.07-6.22L2.95 10.07l6.25-.9L12 3.5Z" /></svg>;
+    case "star-filled":
+      return <svg width={size} height={size} viewBox="0 0 24 24" fill={color} stroke={color} strokeWidth={1.5} className={className}><path d="m12 3.5 2.8 5.67 6.25.9-4.52 4.41 1.07 6.22L12 17.76 6.4 20.7l1.07-6.22L2.95 10.07l6.25-.9L12 3.5Z" /></svg>;
+    case "square-check":
+      return <svg {...common}><rect x="3" y="3" width="18" height="18" rx="3" /><path d="M8 12.5 10.8 15 16 9.5" /></svg>;
+    case "pencil":
+      return <svg {...common}><path d="M12 20h9" /><path d="m16.5 3.5 4 4L8 20l-4 1 1-4 11.5-13.5Z" /></svg>;
+    case "play":
+      return <svg {...common}><path d="m8 6 10 6-10 6V6Z" fill={color} stroke="none" /></svg>;
+    case "pause":
+      return <svg {...common}><path d="M9 6v12" /><path d="M15 6v12" /></svg>;
+    default:
+      return null;
+  }
+}
+
 /* ─── 배지 헬퍼 ──────────────────────────────────────── */
 const KW_BADGE = {
   cyan:   "bg-cyan-50 text-cyan-600 border border-cyan-200",
@@ -151,21 +193,19 @@ const KW_BADGE = {
 };
 
 const ISSUE_CFG = {
-  high:   { bg: "bg-red-50",    border: "border-red-200",    icon: "🔴", badge: "bg-red-100 text-red-500",     label: "높음" },
-  medium: { bg: "bg-amber-50",  border: "border-amber-200",  icon: "🟡", badge: "bg-amber-100 text-amber-600", label: "보통" },
-  low:    { bg: "bg-slate-50",  border: "border-slate-200",  icon: "⚪", badge: "bg-slate-100 text-slate-500", label: "낮음" },
+  high:   { bg: "bg-red-50",    border: "border-red-200",    icon: "alert-triangle", badge: "bg-red-100 text-red-500",     label: "높음" },
+  medium: { bg: "bg-amber-50",  border: "border-amber-200",  icon: "alert-circle",   badge: "bg-amber-100 text-amber-600", label: "보통" },
+  low:    { bg: "bg-slate-50",  border: "border-slate-200",  icon: "info",           badge: "bg-slate-100 text-slate-500", label: "낮음" },
 };
 
 const SVC_ISSUE_BTN = {
   jira:   "linear-gradient(135deg,#10B981,#059669)",
   notion: "linear-gradient(135deg,#0D1B2A,#374151)",
-  slack:  "linear-gradient(135deg,#7C3AED,#6D28D9)",
 };
 
 const SVC_ACCENT = {
   jira:   "#0099CC",
   notion: "#374151",
-  slack:  "#7C3AED",
 };
 
 /* ─── Spinner ────────────────────────────────────────── */
@@ -222,7 +262,9 @@ function Modal({ open, onClose, title, children, footer, maxWidth = 448 }) {
       >
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 flex-shrink-0">
           <span className="font-bold text-sm text-slate-900">{title}</span>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-700 text-xl leading-none">×</button>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-700 leading-none">
+            <LucideIcon name="x" size={18} />
+          </button>
         </div>
         <div className="px-6 py-5 overflow-y-auto flex-1">{children}</div>
         {footer && (
@@ -276,7 +318,7 @@ function IntegrationBadge({ svc, onClick }) {
         <span className="text-slate-400">/{total}</span>
       </span>
       {allDone && (
-        <span className="text-emerald-500 font-bold" style={{ fontSize: 10 }}>✓</span>
+        <span className="text-emerald-500"><LucideIcon name="check" size={12} /></span>
       )}
     </button>
   );
@@ -329,8 +371,14 @@ function ServiceDetailModal({ open, onClose, svc, auditLog }) {
               t.status === "done" ? "border-emerald-200 bg-emerald-50/50" : "border-slate-200 hover:border-slate-300"
             }`}
           >
-            <span className="flex-shrink-0 text-sm">
-              {t.status === "done" ? "✓" : t.status === "progress" ? "◑" : "○"}
+            <span className="flex-shrink-0">
+              {t.status === "done" ? (
+                <LucideIcon name="check-circle" size={14} color="#10B981" />
+              ) : t.status === "progress" ? (
+                <Spinner size={14} color="#F59E0B" />
+              ) : (
+                <LucideIcon name="circle" size={14} color="#94A3B8" />
+              )}
             </span>
             <div className="flex-1 min-w-0">
               <p className="text-sm font-semibold text-slate-900 truncate">
@@ -366,7 +414,7 @@ function ServiceDetailModal({ open, onClose, svc, auditLog }) {
           <p className="text-xs font-semibold text-slate-400 mb-2">발행 이력</p>
           {svcLogs.slice(0, 3).map((log, i) => (
             <div key={i} className="flex items-center gap-2 text-xs">
-              <span className="text-emerald-500 flex-shrink-0">↑</span>
+              <span className="text-emerald-500 flex-shrink-0"><LucideIcon name="arrow-up" size={12} /></span>
               <span className="text-slate-600 flex-1 truncate">{log.label}</span>
               <span className="text-slate-400 flex-shrink-0 font-mono">{log.time}</span>
               <span className="text-slate-400 flex-shrink-0">{log.user}</span>
@@ -523,7 +571,7 @@ function IssueModal({ open, onClose, onIssued, services }) {
             color: isDone || isActive ? "#fff" : "#5A6F8A",
           }}
         >
-          {isDone ? "✓" : n}
+          {isDone ? <LucideIcon name="check" size={12} color="#fff" /> : n}
         </div>
         <span className="text-xs font-semibold" style={{ color: isActive ? "#0099CC" : "#5A6F8A" }}>
           {n === 1 ? "서비스 & 항목 선택" : "양식 확인 & 전송"}
@@ -593,7 +641,10 @@ function IssueModal({ open, onClose, onIssued, services }) {
         <div className="space-y-5">
           <div>
             <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-2.5">보낼 서비스</p>
-            <div className="grid grid-cols-3 gap-2">
+            <div
+              className="grid gap-2"
+              style={{ gridTemplateColumns: `repeat(${Math.max(1, Math.min(services.length, 2))}, minmax(0, 1fr))` }}
+            >
               {services.map(svc => {
                 const isSelected = selectedSvc === svc.id;
                 return (
@@ -602,9 +653,9 @@ function IssueModal({ open, onClose, onIssued, services }) {
                     onClick={() => setSelectedSvc(svc.id)}
                     className="flex flex-col items-center gap-2 py-3 px-2 rounded-xl border transition-all hover:-translate-y-0.5"
                     style={{
-                      borderColor: isSelected ? (svc.id === "slack" ? "#7C3AED" : "#0099CC") : "rgba(0,100,180,0.12)",
+                      borderColor: isSelected ? "#0099CC" : "rgba(0,100,180,0.12)",
                       background: isSelected
-                        ? svc.id === "slack" ? "rgba(124,58,237,0.06)" : "rgba(0,153,204,0.06)"
+                        ? "rgba(0,153,204,0.06)"
                         : "#fff",
                     }}
                   >
@@ -648,7 +699,7 @@ function IssueModal({ open, onClose, onIssued, services }) {
                         borderColor: checked ? "#10B981" : "rgba(0,100,180,0.2)",
                       }}
                     >
-                      {checked && <span className="text-white font-bold" style={{ fontSize: 9 }}>✓</span>}
+                      {checked && <LucideIcon name="check" size={10} color="#fff" />}
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="text-sm text-slate-800 leading-snug">{item.text}</p>
@@ -672,7 +723,7 @@ function IssueModal({ open, onClose, onIssued, services }) {
               className="rounded-xl p-3.5 flex items-start gap-3"
               style={{ background: "rgba(239,68,68,0.05)", border: "1px solid rgba(239,68,68,0.2)" }}
             >
-              <span className="text-base flex-shrink-0 mt-0.5">⚠️</span>
+              <span className="text-red-500 flex-shrink-0 mt-0.5"><LucideIcon name="alert-triangle" size={16} /></span>
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-semibold text-red-600 mb-1">연동 오류가 발생했습니다</p>
                 <p className="text-xs text-slate-500 leading-relaxed mb-2.5">{issueError.message}</p>
@@ -701,7 +752,7 @@ function IssueModal({ open, onClose, onIssued, services }) {
                 boxShadow: issueMode === "merged" ? "0 1px 4px rgba(0,100,180,0.12)" : "none",
               }}
             >
-              <span style={{ fontSize: 13 }}>📋</span>
+              <LucideIcon name="clipboard-list" size={13} />
               통합 티켓으로 발행
             </button>
             <button
@@ -713,7 +764,7 @@ function IssueModal({ open, onClose, onIssued, services }) {
                 boxShadow: issueMode === "individual" ? "0 1px 4px rgba(0,100,180,0.12)" : "none",
               }}
             >
-              <span style={{ fontSize: 13 }}>🗂</span>
+              <LucideIcon name="rows-3" size={13} />
               개별 티켓으로 발행
               {checkedItems.size > 1 && (
                 <span
@@ -954,7 +1005,7 @@ function TxCard({ item, isActive, isBookmarked, onSeek, onToggleBm, collapsed, o
             isBookmarked ? "opacity-100 text-amber-400" : "opacity-0 group-hover:opacity-100 text-slate-300 hover:text-amber-400"
           }`}
         >
-          {isBookmarked ? "★" : "☆"}
+          {isBookmarked ? <LucideIcon name="star-filled" size={14} /> : <LucideIcon name="star" size={14} />}
         </button>
         <button
           onClick={e => { e.stopPropagation(); onToggleCollapse(item.idx); }}
@@ -1008,13 +1059,13 @@ function EditableDecision({ text, onSave }) {
         </div>
       ) : (
         <div className="flex items-start gap-2.5">
-          <span className="flex-shrink-0 mt-1 text-base leading-none text-cyan-500">☑</span>
+          <span className="flex-shrink-0 mt-1 text-cyan-500"><LucideIcon name="square-check" size={14} /></span>
           <p className="text-sm text-slate-800 leading-relaxed flex-1">{val}</p>
           <button
             onClick={() => setEditing(true)}
             className="opacity-0 group-hover:opacity-100 text-slate-400 p-1 rounded hover:bg-slate-100 transition-opacity text-sm"
           >
-            ✏️
+            <LucideIcon name="pencil" size={13} />
           </button>
         </div>
       )}
@@ -1172,7 +1223,13 @@ function SummaryPanel({ onOpenRegen, onOpenIssue, transcriptVisible, onToggleTra
                 const c = ISSUE_CFG[iss.level];
                 return (
                   <div key={i} className={`flex items-start gap-3 p-3 rounded-xl border ${c.bg} ${c.border}`}>
-                    <span className="flex-shrink-0 text-base leading-none mt-0.5">{c.icon}</span>
+                    <span className="flex-shrink-0 mt-0.5">
+                      <LucideIcon
+                        name={c.icon}
+                        size={16}
+                        color={iss.level === "high" ? "#EF4444" : iss.level === "medium" ? "#F59E0B" : "#64748B"}
+                      />
+                    </span>
                     <p className="flex-1 text-sm text-slate-800 leading-relaxed">{iss.text}</p>
                     <span className={`flex-shrink-0 text-xs font-bold px-2 py-0.5 rounded ${c.badge}`}>{c.label}</span>
                   </div>
@@ -1217,7 +1274,7 @@ function AudioPlayer({ curTime, playing, spdIdx, onSeek, onTogglePlay, onCycleSp
           className="w-9 h-9 rounded-full flex items-center justify-center text-white flex-shrink-0 hover:scale-105 active:scale-95 transition-transform"
           style={{ background: "linear-gradient(135deg,#0099CC,#7C3AED)" }}
         >
-          {playing ? "⏸" : "▶"}
+          {playing ? <LucideIcon name="pause" size={14} color="#fff" /> : <LucideIcon name="play" size={14} color="#fff" />}
         </button>
         <span className="text-xs font-semibold font-mono text-slate-400 flex-shrink-0 hidden sm:block">
           {fmtTime(curTime)} / <span className="text-slate-300">1:15:32</span>
@@ -1383,6 +1440,14 @@ export default function TikiSprint12() {
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
   const [summaryCollapsed, setSummaryCollapsed] = useState(false);
   const [activeTab, setActiveTab] = useState("reports");
+  const [isAuthenticated, setIsAuthenticated] = useState(() => Boolean(localStorage.getItem("tiki_access_token")));
+  const [sessionUser, setSessionUser] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem("tiki_user") || "null");
+    } catch {
+      return null;
+    }
+  });
   const timerRef = useRef(null);
 
   const stateLabels = {
@@ -1397,6 +1462,24 @@ export default function TikiSprint12() {
     const onResize = () => setIsMobile(window.innerWidth < 768);
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  useEffect(() => {
+    const syncAuthSession = () => {
+      setIsAuthenticated(Boolean(localStorage.getItem("tiki_access_token")));
+      try {
+        setSessionUser(JSON.parse(localStorage.getItem("tiki_user") || "null"));
+      } catch {
+        setSessionUser(null);
+      }
+    };
+    window.addEventListener("storage", syncAuthSession);
+    window.addEventListener("tiki-auth-changed", syncAuthSession);
+
+    return () => {
+      window.removeEventListener("storage", syncAuthSession);
+      window.removeEventListener("tiki-auth-changed", syncAuthSession);
+    };
   }, []);
 
   const showToast = useCallback((msg, color = "#10B981") => {
@@ -1510,11 +1593,14 @@ export default function TikiSprint12() {
     >
       <Header
         isMobile={isMobile}
-        isLoggedIn={true}
-        phase="COMPLETED"
+        isLoggedIn={isAuthenticated}
+        phase="IDLE"
         stateLabels={stateLabels}
-        user={{ name: "김지훈", email: "jihun@tiki.ai" }}
-        onLogout={() => showToast("로그아웃 되었습니다.", "#7C3AED")}
+        user={sessionUser}
+        onLogout={() => {
+          clearAuthSession();
+          showToast("로그아웃 되었습니다.", "#7C3AED");
+        }}
       />
 
       {/* ── MEETING META ── */}
@@ -1618,7 +1704,7 @@ export default function TikiSprint12() {
                     bmFilter ? "bg-amber-50 text-amber-500 border-amber-200" : "bg-white text-slate-400 border-slate-200 hover:bg-blue-50"
                   }`}
                 >
-                  ☆ <span className="hidden sm:inline text-xs">북마크</span>
+                  <LucideIcon name={bmFilter ? "star-filled" : "star"} size={13} /> <span className="hidden sm:inline text-xs">북마크</span>
                 </button>
                 <button
                   onClick={toggleAllCollapse}

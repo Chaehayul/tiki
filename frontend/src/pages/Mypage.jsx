@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import Header from "../components/Header";
 import Footer from "../components/Footer";
 import MobileTab from "../components/MobileTab";
+import { clearAuthSession } from "../api/apiClient";
 
 // ── Icons ──────────────────────────────────────────────────────────────────
 const ICON_PATHS = {
@@ -202,9 +203,9 @@ function PwStrengthBar({ password }) {
 // Sections
 // ═══════════════════════════════════════════════════════════════════════════
 
-function ProfileSection({ showToast }) {
+function ProfileSection({ showToast, initialName, initialEmail }) {
   const fileRef = useRef(null);
-  const [name, setName] = useState("김지훈");
+  const [name, setName] = useState(initialName);
   const [bio, setBio] = useState("AI 기반 회의 자동화를 연구합니다.");
   const [avatar, setAvatar] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -247,7 +248,7 @@ function ProfileSection({ showToast }) {
         </div>
         <div className="space-y-1.5">
           <p className="text-[14px] font-bold text-[#0D1B2A]">{name || "이름 없음"}</p>
-          <p className="text-[12px] text-[#5A6F8A]">jkim@tikiapp.io</p>
+          <p className="text-[12px] text-[#5A6F8A]">{initialEmail}</p>
           <div className="flex gap-2 pt-0.5">
             <button onClick={() => fileRef.current?.click()}
               className="rounded-lg border border-[rgba(0,100,180,.15)] bg-white px-3 py-1.5 text-[12px] font-semibold text-[#5A6F8A] transition-colors hover:border-[rgba(0,153,204,.4)] hover:text-[#0099CC]">
@@ -272,7 +273,7 @@ function ProfileSection({ showToast }) {
           <Input value={name} onChange={e => setName(e.target.value)} placeholder="이름 입력" />
         </Field>
         <Field label="이메일" hint="이메일은 로그인 ID로, 변경할 수 없습니다.">
-          <Input value="jkim@tikiapp.io" disabled />
+          <Input value={initialEmail} disabled />
         </Field>
         <Field label="한 줄 소개" className="sm:col-span-2">
           <Input value={bio} onChange={e => setBio(e.target.value)} placeholder="간단한 소개를 입력하세요" />
@@ -556,6 +557,14 @@ export default function MyPage() {
   const [modal, setModal] = useState(null);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 640);
   const [activeBottomTab, setActiveBottomTab] = useState("mypage");
+  const [isAuthenticated, setIsAuthenticated] = useState(() => Boolean(localStorage.getItem("tiki_access_token")));
+  const [sessionUser, setSessionUser] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem("tiki_user") || "null");
+    } catch {
+      return null;
+    }
+  });
 
   const stateLabels = {
     IDLE: "대기",
@@ -569,6 +578,24 @@ export default function MyPage() {
     const onResize = () => setIsMobile(window.innerWidth < 640);
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  useEffect(() => {
+    const syncAuthSession = () => {
+      setIsAuthenticated(Boolean(localStorage.getItem("tiki_access_token")));
+      try {
+        setSessionUser(JSON.parse(localStorage.getItem("tiki_user") || "null"));
+      } catch {
+        setSessionUser(null);
+      }
+    };
+    window.addEventListener("storage", syncAuthSession);
+    window.addEventListener("tiki-auth-changed", syncAuthSession);
+
+    return () => {
+      window.removeEventListener("storage", syncAuthSession);
+      window.removeEventListener("tiki-auth-changed", syncAuthSession);
+    };
   }, []);
 
   useEffect(() => {
@@ -588,6 +615,11 @@ export default function MyPage() {
   const showToast = useCallback((message, type = "success") => {
     setToast({ message, type });
   }, []);
+
+  const handleLogout = useCallback(() => {
+    clearAuthSession();
+    showToast("로그아웃 되었습니다.");
+  }, [showToast]);
 
   const handleModal = (type) => setModal(type);
   const closeModal = () => setModal(null);
@@ -612,16 +644,18 @@ export default function MyPage() {
   };
 
   const activeNav = NAV_ITEMS.find(n => n.id === activeTab);
+  const profileName = sessionUser?.name || "사용자";
+  const profileEmail = sessionUser?.email || "";
 
   return (
     <div className="relative min-h-screen bg-white text-[#0D1B2A] [font-family:'Pretendard',-apple-system,BlinkMacSystemFont,sans-serif]">
       <Header
         isMobile={isMobile}
-        isLoggedIn={true}
-        phase="COMPLETED"
+        isLoggedIn={isAuthenticated}
+        phase="IDLE"
         stateLabels={stateLabels}
-        user={{ name: "김지훈", email: "jkim@tikiapp.io" }}
-        onLogout={() => showToast("로그아웃 되었습니다.")}
+        user={{ name: profileName, email: profileEmail }}
+        onLogout={handleLogout}
       />
 
       <div className="relative z-[1] mx-auto flex max-w-[960px] gap-0 px-4 pt-24 pb-28 sm:gap-8 sm:px-6 sm:pb-16">
@@ -652,10 +686,10 @@ export default function MyPage() {
           {/* User card at bottom */}
           <div className="mt-6 hidden rounded-2xl border border-[rgba(0,100,180,.1)] bg-[rgba(0,60,150,.03)] p-3.5 sm:block">
             <div className="flex items-center gap-2.5">
-              <div className="h-8 w-8 rounded-xl bg-[linear-gradient(135deg,#0099CC,#7C3AED)] flex items-center justify-center text-[13px] font-black text-white select-none shrink-0">김</div>
+              <div className="h-8 w-8 rounded-xl bg-[linear-gradient(135deg,#0099CC,#7C3AED)] flex items-center justify-center text-[13px] font-black text-white select-none shrink-0">{(profileName || "사")[0]}</div>
               <div className="min-w-0">
-                <p className="truncate text-[12px] font-bold text-[#0D1B2A]">김지훈</p>
-                <p className="truncate text-[11px] text-[#9BAABE]">jkim@tikiapp.io</p>
+                <p className="truncate text-[12px] font-bold text-[#0D1B2A]">{profileName}</p>
+                <p className="truncate text-[11px] text-[#9BAABE]">{profileEmail}</p>
               </div>
             </div>
           </div>
@@ -690,7 +724,7 @@ export default function MyPage() {
           </div>
 
           <div className="rounded-2xl border border-[rgba(0,100,180,.1)] bg-white p-5 shadow-[0_2px_16px_rgba(0,60,150,.05)] sm:p-7">
-            {activeTab === "profile"      && <ProfileSection showToast={showToast} />}
+            {activeTab === "profile"      && <ProfileSection showToast={showToast} initialName={profileName} initialEmail={profileEmail} />}
             {activeTab === "security"     && <SecuritySection showToast={showToast} setModal={handleModal} />}
             {activeTab === "integrations" && <IntegrationsSection showToast={showToast} />}
             {activeTab === "sessions"     && <SessionsSection showToast={showToast} setModal={handleModal} />}

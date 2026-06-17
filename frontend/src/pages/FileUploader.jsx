@@ -218,6 +218,8 @@ export default function TikiApp() {
   const [progressLabel, setProgressLabel] = useState("");
   const [elapsedTime, setElapsedTime] = useState("—");
   const [error, setError] = useState({ title: "", msg: "", cancelStyle: false });
+  const [dragFromIndex, setDragFromIndex] = useState(null);
+  const [dragOverIndex, setDragOverIndex] = useState(null);
 
   // 프로젝트 선택 상태
   const [selectedProject, setSelectedProject] = useState(null);
@@ -231,6 +233,7 @@ export default function TikiApp() {
   const startTimeRef = useRef(null);
   const timerRef = useRef(null);
   const dropdownRef = useRef(null);
+  const dragPreviewRef = useRef(null);
 
   const totalSize = files.reduce((sum, currentFile) => sum + currentFile.size, 0);
 
@@ -250,6 +253,20 @@ export default function TikiApp() {
       startTimeRef.current = performance.now();
     }
   }, [phase]);
+
+  useEffect(() => () => {
+    if (dragPreviewRef.current) {
+      dragPreviewRef.current.remove();
+      dragPreviewRef.current = null;
+    }
+  }, []);
+
+  const clearDragPreview = () => {
+    if (dragPreviewRef.current) {
+      dragPreviewRef.current.remove();
+      dragPreviewRef.current = null;
+    }
+  };
 
   const handleFiles = (selectedFiles) => {
     const allowed = ["mp3", "wav", "m4a", "aac", "ogg", "flac"];
@@ -293,6 +310,38 @@ export default function TikiApp() {
   const removeFile = (indexToRemove) => {
     setFiles((currentFiles) => currentFiles.filter((_, index) => index !== indexToRemove));
     setError({ title: "", msg: "", cancelStyle: false });
+  };
+
+  const reorderFiles = (fromIndex, toIndex) => {
+    if (fromIndex === null || toIndex === null || fromIndex === toIndex) return;
+    setFiles((currentFiles) => {
+      const reordered = [...currentFiles];
+      const [moved] = reordered.splice(fromIndex, 1);
+      reordered.splice(toIndex, 0, moved);
+      return reordered;
+    });
+  };
+
+  const handleFileDragOver = (event, overIndex) => {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+
+    setDragOverIndex(overIndex);
+  };
+
+  const handleFileDragEnter = (overIndex) => {
+    if (dragFromIndex === null || dragFromIndex === overIndex) return;
+
+    // 드래그한 항목이 다른 행에 진입하는 즉시 재정렬
+    setFiles((currentFiles) => {
+      const reordered = [...currentFiles];
+      const [moved] = reordered.splice(dragFromIndex, 1);
+      reordered.splice(overIndex, 0, moved);
+      return reordered;
+    });
+
+    setDragFromIndex(overIndex);
+    setDragOverIndex(overIndex);
   };
 
   const clearFiles = () => {
@@ -581,6 +630,7 @@ export default function TikiApp() {
               <div>
                 <div className="text-sm font-semibold">{files.length}개 파일이 선택됐어요</div>
                 <div className="mt-0.5 text-xs text-[#5A6F8A]">총 용량 {formatBytes(totalSize)}</div>
+                <div className="mt-1 text-[11px] text-[#0099CC]">파일을 드래그해서 분석 순서를 바꿀 수 있어요</div>
               </div>
               <button
                 className="rounded-[7px] border border-[rgba(0,0,0,.08)] bg-[rgba(0,0,0,.03)] px-3 py-1.5 text-xs font-semibold text-[#5A6F8A]"
@@ -589,9 +639,64 @@ export default function TikiApp() {
                 전체 삭제
               </button>
             </div>
-            <div className="grid gap-3">
+            <div
+              className="grid gap-3"
+              onDragOver={(event) => {
+                event.preventDefault();
+                event.dataTransfer.dropEffect = "move";
+              }}
+              onDrop={(event) => {
+                event.preventDefault();
+                setDragFromIndex(null);
+                setDragOverIndex(null);
+                clearDragPreview();
+              }}
+            >
               {files.map((selectedFile, index) => (
-                <div key={`${selectedFile.name}-${selectedFile.size}-${index}`} className="flex items-center gap-3 rounded-[12px] border border-[rgba(0,100,180,.08)] bg-[rgba(0,60,150,.03)] px-3 py-3">
+                <div
+                  key={`${selectedFile.name}-${selectedFile.size}-${index}`}
+                  draggable
+                  onDragStart={(event) => {
+                    const preview = event.currentTarget.cloneNode(true);
+                    const { width } = event.currentTarget.getBoundingClientRect();
+                    preview.style.width = `${Math.ceil(width)}px`;
+                    preview.style.position = "fixed";
+                    preview.style.top = "-9999px";
+                    preview.style.left = "-9999px";
+                    preview.style.margin = "0";
+                    preview.style.opacity = "1";
+                    preview.style.pointerEvents = "none";
+                    preview.style.zIndex = "9999";
+                    preview.style.transform = "none";
+                    preview.style.boxShadow = "0 12px 28px rgba(0, 60, 150, 0.24)";
+                    document.body.appendChild(preview);
+                    dragPreviewRef.current = preview;
+
+                    setDragFromIndex(index);
+                    setDragOverIndex(index);
+                    event.dataTransfer.effectAllowed = "move";
+                    event.dataTransfer.setData("text/plain", String(index));
+                    event.dataTransfer.setDragImage(preview, 28, 20);
+                  }}
+                  onDragEnter={() => handleFileDragEnter(index)}
+                  onDragOver={(event) => handleFileDragOver(event, index)}
+                  onDrop={(event) => {
+                    event.preventDefault();
+                    setDragFromIndex(null);
+                    setDragOverIndex(null);
+                    clearDragPreview();
+                  }}
+                  onDragEnd={() => {
+                    setDragFromIndex(null);
+                    setDragOverIndex(null);
+                    clearDragPreview();
+                  }}
+                  className={cn(
+                    "flex items-center gap-3 rounded-[12px] border border-[rgba(0,100,180,.08)] bg-[rgba(0,60,150,.03)] px-3 py-3 cursor-grab active:cursor-grabbing transition-all duration-150",
+                    dragFromIndex === index && "scale-[1.01] opacity-100 shadow-[0_8px_24px_rgba(0,60,150,.18)] ring-2 ring-[rgba(0,153,204,.25)]",
+                    dragOverIndex === index && dragFromIndex !== index && "border-[#0099CC] bg-[#EEF3FF]"
+                  )}
+                >
                   <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[10px] border border-[rgba(0,100,180,.12)] bg-[linear-gradient(135deg,rgba(0,153,204,.08),rgba(124,58,237,.08))]">
                     <IIcon name="music" size={20} color="#0099CC" sw={1.8} />
                   </div>

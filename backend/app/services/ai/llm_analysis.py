@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 from abc import ABC, abstractmethod
 from collections import Counter
 from datetime import datetime
@@ -14,6 +15,7 @@ from typing import Any
 
 from app.core.config import settings
 from app.models.enums import TicketPriority, TicketStatus
+from app.services.ai.rag_context import RAGContext, normalize_rag_context
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +40,16 @@ ACTION_KEYWORDS: tuple[str, ...] = (
     "맡",
     "논의",
     "조율",
+    "완료",
+    "확보",
+    "마감",
+    "목표",
+    "공유",
+    "승인",
+    "반려",
+    "협의",
+    "배정",
+    "오픈",
 )
 
 HIGH_PRIORITY_KEYWORDS: tuple[str, ...] = (
@@ -71,15 +83,45 @@ NEGATION_PATTERNS: tuple[re.Pattern[str], ...] = (
 )
 
 ACTION_SIGNAL_PATTERNS: tuple[re.Pattern[str], ...] = (
-    re.compile(r"(?:해야|필요|하기로|하겠|합시다|해주세요|검토|수정|보완|연동|개발|구현|배포|정리|확인|업로드|테스트|반영|마이그레이션|이관|대응|도입|준비|추가|고정|적용|진행|처리|실행|구성|할당)"),
+    re.compile(r"(?:해야|필요|하기로|하겠|합시다|해주세요|검토|수정|보완|연동|개발|구현|배포|정리|확인|업로드|테스트|반영|마이그레이션|이관|대응|도입|준비|추가|고정|적용|진행|처리|실행|구성|할당|완료|확보|마감|목표|협의|공유|승인|반려|배정|오픈)"),
 )
 
 STRONG_ACTION_PATTERNS: tuple[re.Pattern[str], ...] = (
-    re.compile(r"(?:해야|필요|검토|수정|보완|연동|구현|확인|반영|마이그레이션|이관|대응|도입|처리|실행|할당|해결|개선|조치|적용)"),
+    re.compile(r"(?:해야|필요|검토|수정|보완|연동|구현|확인|반영|마이그레이션|이관|대응|도입|처리|실행|할당|해결|개선|조치|적용|완료|확보|마감|목표|협의|공유|승인|반려|배정|오픈)"),
 )
 
 DECISION_PATTERNS: tuple[re.Pattern[str], ...] = (
-    re.compile(r"(?:결정|확정|합의|하기로|선정|동의)"),
+    re.compile(r"(?:결정|확정|합의|하기로|선정|동의|정리하겠습니다|정리하죠|하겠습니다|하죠|걸로 하겠습니다|목표로 하겠습니다|목표로 하죠)"),
+)
+
+DECISION_CONFIRMATION_MARKERS: tuple[str, ...] = (
+    "결정",
+    "확정",
+    "합의",
+    "하기로",
+    "선정",
+    "동의",
+    "채택",
+    "하겠습니다",
+    "하죠",
+    "걸로 하겠습니다",
+    "목표로 하겠습니다",
+    "목표로 하죠",
+)
+
+DECISION_TIMELINE_MARKERS: tuple[str, ...] = (
+    "오늘",
+    "내일",
+    "이번 주",
+    "이번주",
+    "다음 주",
+    "다음주",
+    "다음 회의",
+    "다음 단계",
+    "후속",
+    "오후",
+    "이번 달",
+    "이번달",
 )
 
 ISSUE_PATTERNS: tuple[re.Pattern[str], ...] = (
@@ -88,6 +130,43 @@ ISSUE_PATTERNS: tuple[re.Pattern[str], ...] = (
 
 NEXT_AGENDA_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"(?:다음 회의|다음 안건|후속|추후|다음 단계|다음 스텝|다음 회의에서는|다음 회의에)"),
+)
+
+FOLLOWUP_AGENDA_MARKERS: tuple[str, ...] = (
+    "검토",
+    "공유",
+    "정리",
+    "점검",
+    "확인",
+    "준비",
+    "비교",
+    "반영",
+    "논의",
+    "설계",
+    "후속",
+    "다음 회의",
+    "추후",
+    "마무리",
+)
+
+DIRECTIONAL_DECLARATION_MARKERS: tuple[str, ...] = (
+    "우선",
+    "방향을 잡",
+    "방향을 정",
+    "중심으로",
+    "우선 방향",
+    "전략을 잡",
+    "방침을 잡",
+)
+
+NEXT_AGENDA_DISALLOWED_MARKERS: tuple[str, ...] = (
+    "최종",
+    "확정",
+    "결정",
+    "합의",
+    "동의",
+    "선정",
+    "채택",
 )
 
 QUESTION_LIKE_PATTERNS: tuple[re.Pattern[str], ...] = (
@@ -150,7 +229,7 @@ TITLE_PREFIX_CLEANUP_PATTERN = re.compile(
     r"^(?:20\d{2}-\d{2}-\d{2}(?:까지)?|(?:내일|오늘|이번주|이번 주|다음주|다음 주|금일|이번달|이번 달)(?:까지)?|까지)\s*"
 )
 
-DEFAULT_PROMPT_VERSION = "openai-v2"
+DEFAULT_PROMPT_VERSION = "openai-v4"
 DEFAULT_MODEL_NAME = settings.openai_model
 MAX_ACTION_ITEMS = 5
 MAX_SUMMARY_SENTENCES = 4
@@ -241,6 +320,17 @@ def _normalize_text_value(value: Any) -> str:
     return WHITESPACE_PATTERN.sub(" ", str(value or "")).strip()
 
 
+def _build_context_block(context: Any | None) -> str:
+    normalized = normalize_rag_context(context)
+    if not normalized:
+        return ""
+
+    lines = normalized.to_prompt_lines()
+    if not lines:
+        return ""
+    return "\n".join(["추가 컨텍스트:", *lines])
+
+
 def _normalize_summary_value(summary: Any) -> str:
     normalized = _normalize_text_value(summary)
     if not normalized:
@@ -257,6 +347,8 @@ def _normalize_title_value(value: Any) -> str:
     title = _normalize_text_value(value).rstrip(".!?。")
     title = TITLE_CLEANUP_PATTERN.sub("", title)
     title = TITLE_PREFIX_CLEANUP_PATTERN.sub("", title)
+    title = title.replace("기회안", "기획안")
+    title = title.replace("인플로언서", "인플루언서")
     title = _normalize_text_value(title)
     return shorten(title, width=72, placeholder="...") if title else ""
 
@@ -379,6 +471,84 @@ def _normalize_string_list_value(items: Any, limit: int) -> list[str]:
     return normalized
 
 
+TENTATIVE_DECISION_MARKERS: tuple[str, ...] = (
+    "검토",
+    "우선",
+    "방향",
+    "후보",
+    "가능성",
+    "논의",
+    "조율",
+)
+
+FINAL_DECISION_MARKERS: tuple[str, ...] = (
+    "결정",
+    "확정",
+    "합의",
+    "동의",
+    "선정",
+    "채택",
+    "마무리",
+)
+
+
+def _is_tentative_decision_text(text: str) -> bool:
+    normalized = _normalize_text_value(text)
+    if not normalized:
+        return False
+
+    has_tentative_marker = any(marker in normalized for marker in TENTATIVE_DECISION_MARKERS)
+    has_final_marker = any(marker in normalized for marker in FINAL_DECISION_MARKERS)
+    return has_tentative_marker and not has_final_marker
+
+
+def _normalize_decisions_value(decisions: Any, limit: int) -> tuple[list[str], list[str]]:
+    normalized: list[str] = []
+    tentative: list[str] = []
+    seen: set[str] = set()
+
+    for item in decisions or []:
+        text = _normalize_text_value(item)
+        if not text:
+            continue
+
+        signature = text.lower()
+        if signature in seen:
+            continue
+        seen.add(signature)
+
+        if _is_tentative_decision_text(text) or not _is_strict_decision_text(text):
+            tentative.append(shorten(text, width=180, placeholder="..."))
+            continue
+
+        normalized.append(shorten(text, width=180, placeholder="..."))
+        if len(normalized) >= limit:
+            break
+
+    return normalized, tentative
+
+
+def _is_strict_decision_text(text: str) -> bool:
+    normalized = _normalize_text_value(text)
+    if not normalized:
+        return False
+
+    has_confirmation_marker = any(marker in normalized for marker in DECISION_CONFIRMATION_MARKERS)
+    has_timeline_marker = any(marker in normalized for marker in DECISION_TIMELINE_MARKERS)
+    return has_confirmation_marker and not has_timeline_marker
+
+
+def _is_followup_agenda_text(text: str) -> bool:
+    normalized = _normalize_text_value(text)
+    if not normalized:
+        return False
+
+    has_followup_marker = any(marker in normalized for marker in FOLLOWUP_AGENDA_MARKERS)
+    has_directional_declaration = any(marker in normalized for marker in DIRECTIONAL_DECLARATION_MARKERS)
+    has_disallowed_marker = any(marker in normalized for marker in NEXT_AGENDA_DISALLOWED_MARKERS)
+    return has_followup_marker and not has_directional_declaration and not has_disallowed_marker
+
+
 def _normalize_issues_value(issues: Any) -> list[dict[str, str]]:
     normalized: list[dict[str, str]] = []
     seen: set[str] = set()
@@ -405,7 +575,7 @@ def _normalize_issues_value(issues: Any) -> list[dict[str, str]]:
 
 class LLMAnalysisService(ABC):
     @abstractmethod
-    def summarize_and_extract_tickets(self, transcript: str) -> dict[str, Any]:
+    def summarize_and_extract_tickets(self, transcript: str, context: Any | None = None) -> dict[str, Any]:
         raise NotImplementedError
 
 
@@ -415,7 +585,7 @@ class HeuristicLLMAnalysisService(LLMAnalysisService):
     model_name = "heuristic-llm-v2"
     prompt_version = "heuristic-v2"
 
-    def summarize_and_extract_tickets(self, transcript: str) -> dict[str, Any]:
+    def summarize_and_extract_tickets(self, transcript: str, context: Any | None = None) -> dict[str, Any]:
         normalized = self._normalize_text(transcript)
         if not normalized:
             return {
@@ -426,14 +596,19 @@ class HeuristicLLMAnalysisService(LLMAnalysisService):
                 "extra_data": {"input_characters": 0, "sentence_count": 0},
             }
 
-        sentences = self._split_sentences(normalized)
+        analysis_text = self._normalize_dialogue_transcript(transcript)
+        sentences = self._split_sentences(analysis_text)
+        noisy_audio = self._has_noisy_audio_context(context)
+        if noisy_audio:
+            sentences = self._filter_noise_sentences(sentences)
+        context_block = _build_context_block(context)
         action_sentences = self._rank_action_sentences(sentences)
-        summary = self._build_summary(sentences, normalized)
+        summary = self._build_summary(sentences, analysis_text, noisy_context=noisy_audio)
         action_items = self._build_action_items(action_sentences)
         decisions = self._build_decisions(sentences)
         issues = self._build_issues(sentences)
         next_agenda = self._build_next_agenda(sentences)
-        keywords = self._build_keywords(normalized, summary, action_items, decisions, issues, next_agenda)
+        keywords = self._build_keywords(analysis_text, summary, action_items, decisions, issues, next_agenda)
         summary, action_items = self._normalize_analysis_output(summary, action_items)
 
         return {
@@ -445,26 +620,71 @@ class HeuristicLLMAnalysisService(LLMAnalysisService):
             "next_agenda": next_agenda,
             "model_name": self.model_name,
             "prompt_version": self.prompt_version,
-            "extra_data": {
-                "input_characters": len(normalized),
-                "sentence_count": len(sentences),
-                "action_sentence_count": len(action_sentences),
-                "keyword_hits": dict(self._keyword_counter(normalized)),
-                "decision_count": len(decisions),
-                "issue_count": len(issues),
-                "next_agenda_count": len(next_agenda),
-            },
-        }
+                "extra_data": {
+                    "input_characters": len(normalized),
+                    "sentence_count": len(sentences),
+                    "action_sentence_count": len(action_sentences),
+                    "keyword_hits": dict(self._keyword_counter(normalized)),
+                    "decision_count": len(decisions),
+                    "issue_count": len(issues),
+                    "next_agenda_count": len(next_agenda),
+                    "context_present": bool(context_block),
+                    "context_characters": len(context_block),
+                    "audio_noise_context": noisy_audio,
+                },
+            }
 
     @staticmethod
     def _normalize_text(text: str) -> str:
         return WHITESPACE_PATTERN.sub(" ", text or "").strip()
 
     @staticmethod
+    def _normalize_dialogue_transcript(text: str) -> str:
+        lines: list[str] = []
+        speaker_pattern = re.compile(r"^\s*(?:[가-힣]{2,6}|[A-Za-z][\w·-]{1,20})\s*:\s*")
+        bracket_pattern = re.compile(r"^\s*[\(\[][^\)\]]*[\)\]]\s*$")
+
+        for raw_line in str(text or "").splitlines():
+            line = raw_line.strip()
+            if not line or bracket_pattern.match(line):
+                continue
+
+            line = speaker_pattern.sub("", line)
+            line = line.strip()
+            if not line or line in FILLER_SENTENCES:
+                continue
+
+            lines.append(WHITESPACE_PATTERN.sub(" ", line))
+
+        return "\n".join(lines).strip()
+
+    @staticmethod
     def _split_sentences(text: str) -> list[str]:
         candidates = [part.strip() for part in SENTENCE_SPLIT_PATTERN.split(text) if part.strip()]
         candidates = [part for part in candidates if part not in FILLER_SENTENCES]
         if len(candidates) >= 2:
+            if any(len(part) > 160 for part in candidates):
+                expanded: list[str] = []
+                for part in candidates:
+                    if len(part) <= 160:
+                        expanded.append(part)
+                        continue
+
+                    clauses = [
+                        chunk.strip()
+                        for chunk in re.split(
+                            r"(?:,|;|:|\b그리고\b|\b그럼\b|\b그래서\b|\b하지만\b|\b다만\b|\b또한\b|\b일단\b|\b우선\b|\b마지막으로\b)",
+                            part,
+                        )
+                        if chunk.strip()
+                    ]
+                    if clauses:
+                        expanded.extend(clauses)
+                    else:
+                        expanded.append(part)
+
+                if len(expanded) >= 2:
+                    return expanded
             return candidates
 
         # Whisper transcripts often arrive as one long block, so chunk by clause.
@@ -498,15 +718,21 @@ class HeuristicLLMAnalysisService(LLMAnalysisService):
         if self._is_question_like(sentence):
             return 0
 
+        lowered = sentence.lower()
+        has_strong_action = any(pattern.search(sentence) for pattern in STRONG_ACTION_PATTERNS)
+        has_action_signal = any(pattern.search(sentence) for pattern in ACTION_SIGNAL_PATTERNS)
+        has_deadline_context = bool(DATE_PATTERN.findall(sentence)) or any(
+            marker in lowered for marker in ("까지", "마감", "완료", "목표", "담당", "확보", "협의", "공유", "정리", "결재", "오픈")
+        )
+
         if any(pattern.search(sentence) for pattern in BACKGROUND_PATTERNS):
-            if not any(pattern.search(sentence) for pattern in STRONG_ACTION_PATTERNS):
+            if not has_strong_action and not has_deadline_context:
                 return 0
 
-        if not any(pattern.search(sentence) for pattern in STRONG_ACTION_PATTERNS):
+        if not has_strong_action and not has_action_signal and not has_deadline_context:
             return 0
 
         score = 3
-        lowered = sentence.lower()
 
         for pattern in ACTION_SIGNAL_PATTERNS:
             if pattern.search(sentence):
@@ -531,25 +757,74 @@ class HeuristicLLMAnalysisService(LLMAnalysisService):
             if keyword.lower() in lowered:
                 score += 1
 
+        if has_deadline_context:
+            score += 2
+
         return score
 
     @staticmethod
     def _contains_negated_action(sentence: str) -> bool:
         return any(pattern.search(sentence) for pattern in NEGATION_PATTERNS)
 
-    def _build_summary(self, sentences: list[str], fallback_text: str) -> str:
-        picked = [sentence for sentence in sentences if sentence][:MAX_SUMMARY_SENTENCES]
+    def _build_summary(self, sentences: list[str], fallback_text: str, noisy_context: bool = False) -> str:
+        ranked = self._rank_summary_sentences(sentences, noisy_context=noisy_context)
+        picked = ranked[:MAX_SUMMARY_SENTENCES]
         if not picked:
             picked = [shorten(fallback_text, width=180, placeholder="...")]
 
         summary = " ".join(picked)
         return WHITESPACE_PATTERN.sub(" ", summary).strip()
 
+    def _rank_summary_sentences(self, sentences: list[str], noisy_context: bool = False) -> list[str]:
+        scored: list[tuple[int, int, str]] = []
+        for index, sentence in enumerate(sentences):
+            text = self._cleanup_sentence(sentence)
+            if not text or self._is_question_like(text):
+                continue
+            if noisy_context and self._looks_like_noise_sentence(text):
+                continue
+            if any(pattern.search(text) for pattern in BACKGROUND_PATTERNS) and not any(
+                pattern.search(text) for pattern in STRONG_ACTION_PATTERNS
+            ):
+                continue
+
+            token_count = len([token for token in text.split(" ") if token])
+            lowered = text.lower()
+            if token_count < 4 and not (
+                len(DATE_PATTERN.findall(text)) >= 1
+                or any(keyword in lowered for keyword in ACTION_KEYWORDS)
+                or any(marker in lowered for marker in DECISION_CONFIRMATION_MARKERS)
+                or any(marker in lowered for marker in FOLLOWUP_AGENDA_MARKERS)
+            ):
+                continue
+
+            score = token_count
+            if any(keyword in lowered for keyword in ACTION_KEYWORDS):
+                score += 2
+            if any(marker in lowered for marker in DECISION_CONFIRMATION_MARKERS):
+                score += 2
+            if any(marker in lowered for marker in FOLLOWUP_AGENDA_MARKERS):
+                score += 1
+            if len(DATE_PATTERN.findall(text)) >= 1:
+                score += 1
+            if "우선순위" in text or "일정" in text or "리스크" in text:
+                score += 2
+            if "담당" in text or "마감" in text or "완료" in text:
+                score += 1
+            scored.append((score, index, text))
+
+        scored.sort(key=lambda item: (-item[0], item[1]))
+        picked = sorted(scored[:MAX_SUMMARY_SENTENCES], key=lambda item: item[1])
+        return [sentence for _, _, sentence in picked]
+
     def _build_action_items(self, sentences: list[str]) -> list[dict[str, Any]]:
         items: list[dict[str, Any]] = []
         seen_titles: set[str] = set()
 
         for sentence in sentences:
+            if self._looks_like_noisy_action_candidate(sentence):
+                continue
+
             title = self._build_title(sentence)
             if title in seen_titles:
                 continue
@@ -569,6 +844,28 @@ class HeuristicLLMAnalysisService(LLMAnalysisService):
                 break
 
         return items
+
+    @staticmethod
+    def _looks_like_noisy_action_candidate(sentence: str) -> bool:
+        cleaned = WHITESPACE_PATTERN.sub(" ", sentence or "").strip()
+        if not cleaned:
+            return True
+
+        token_count = len([token for token in cleaned.split(" ") if token])
+        if token_count >= 20:
+            return True
+
+        if len(DATE_PATTERN.findall(cleaned)) >= 2:
+            return True
+
+        numeric_tokens = len(re.findall(r"\d+", cleaned))
+        if numeric_tokens >= 4:
+            return True
+
+        if len(cleaned) >= 120 and not any(keyword in cleaned for keyword in ACTION_KEYWORDS):
+            return True
+
+        return False
 
     @staticmethod
     def _build_title(sentence: str) -> str:
@@ -611,6 +908,8 @@ class HeuristicLLMAnalysisService(LLMAnalysisService):
                 continue
             text = self._cleanup_sentence(sentence)
             if not text:
+                continue
+            if not _is_strict_decision_text(text):
                 continue
             signature = text.lower()
             if signature in seen:
@@ -657,6 +956,50 @@ class HeuristicLLMAnalysisService(LLMAnalysisService):
             seen.add(signature)
             cleaned.append(text)
         return cleaned
+
+    @staticmethod
+    def _filter_noise_sentences(sentences: list[str]) -> list[str]:
+        filtered: list[str] = []
+        for sentence in sentences:
+            if HeuristicLLMAnalysisService._looks_like_noise_sentence(sentence):
+                continue
+            filtered.append(sentence)
+        return filtered or sentences
+
+    @staticmethod
+    def _looks_like_noise_sentence(sentence: str) -> bool:
+        cleaned = WHITESPACE_PATTERN.sub(" ", sentence or "").strip()
+        if not cleaned:
+            return True
+
+        if cleaned in FILLER_SENTENCES:
+            return True
+
+        compact = re.sub(r"[\s\W_]+", "", cleaned)
+        if len(compact) <= 1:
+            return True
+        if re.fullmatch(r"(.)\1{3,}", compact):
+            return True
+        if compact in {"음", "어", "네", "예", "아", "그", "응", "맞", "맞아", "아니", "좋아"}:
+            return True
+
+        return False
+
+    @staticmethod
+    def _has_noisy_audio_context(context: Any | None) -> bool:
+        normalized = normalize_rag_context(context)
+        if not normalized:
+            return False
+
+        extra = normalized.extra or {}
+        audio_preprocessing = extra.get("audio_preprocessing")
+        if isinstance(audio_preprocessing, dict):
+            if audio_preprocessing.get("raw_noisy") or audio_preprocessing.get("noisy_recording"):
+                return True
+            quality_flags = audio_preprocessing.get("quality_flags") or []
+            if any("noise" in str(flag).lower() for flag in quality_flags):
+                return True
+        return False
 
     def _build_keywords(
         self,
@@ -870,6 +1213,50 @@ class OpenAIAnalysisService(LLMAnalysisService):
         self.prompt_version = prompt_version
         self._client = self._load_client()
 
+    def _create_response_with_retry(self, normalized: str, context: Any | None = None) -> Any:
+        try:
+            from openai import APIConnectionError, APITimeoutError, RateLimitError
+        except ImportError:  # pragma: no cover - openai is available in runtime env
+            retryable_errors = ()
+        else:
+            retryable_errors = (APIConnectionError, APITimeoutError, RateLimitError)
+
+        last_error: Exception | None = None
+        max_attempts = 3
+
+        for attempt in range(1, max_attempts + 1):
+            try:
+                return self._client.responses.create(
+                    model=self.model_name,
+                    instructions=self._build_instructions(context),
+                    input=normalized,
+                    text={
+                        "format": {
+                            "type": "json_schema",
+                            "name": "meeting_analysis",
+                            "strict": True,
+                            "schema": MEETING_ANALYSIS_SCHEMA,
+                        }
+                    },
+                )
+            except retryable_errors as exc:  # type: ignore[misc]
+                last_error = exc
+                if attempt >= max_attempts:
+                    raise
+                delay_seconds = min(2.0, 0.75 * attempt)
+                logger.warning(
+                    "OpenAI analysis request failed on attempt %s/%s; retrying in %.2fs: %s",
+                    attempt,
+                    max_attempts,
+                    delay_seconds,
+                    exc,
+                )
+                time.sleep(delay_seconds)
+
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError("OpenAI request failed before a response was returned")
+
     @staticmethod
     @lru_cache(maxsize=1)
     def _load_client():
@@ -884,7 +1271,7 @@ class OpenAIAnalysisService(LLMAnalysisService):
 
         return OpenAI(api_key=api_key)
 
-    def summarize_and_extract_tickets(self, transcript: str) -> dict[str, Any]:
+    def summarize_and_extract_tickets(self, transcript: str, context: Any | None = None) -> dict[str, Any]:
         normalized = self._normalize_text(transcript)
         if not normalized:
             return {
@@ -893,63 +1280,83 @@ class OpenAIAnalysisService(LLMAnalysisService):
                 "model_name": self.model_name,
                 "prompt_version": self.prompt_version,
                 "extra_data": {"input_characters": 0, "source": "openai"},
-            }
-
-        response = self._client.responses.create(
-            model=self.model_name,
-            instructions=self._build_instructions(),
-            input=normalized,
-            text={
-                "format": {
-                    "type": "json_schema",
-                    "name": "meeting_analysis",
-                    "strict": True,
-                    "schema": MEETING_ANALYSIS_SCHEMA,
-                }
-            },
-        )
-
-        payload = self._parse_response_payload(response)
-        normalized_summary = _normalize_summary_value(payload.get("summary", ""))
-        normalized_action_items = _normalize_action_items_value(payload.get("action_items", []))
-        normalized_keywords = _normalize_keywords_value(payload.get("keywords", []))
-        normalized_decisions = _normalize_string_list_value(payload.get("decisions", []), MAX_DECISIONS)
-        normalized_issues = _normalize_issues_value(payload.get("issues", []))
-        normalized_next_agenda = _normalize_string_list_value(payload.get("next_agenda", []), MAX_NEXT_AGENDA)
-        return {
-            "summary": normalized_summary,
-            "keywords": normalized_keywords,
-            "decisions": normalized_decisions,
-            "action_items": normalized_action_items,
-            "issues": normalized_issues,
-            "next_agenda": normalized_next_agenda,
-            "model_name": self.model_name,
-            "prompt_version": self.prompt_version,
-            "extra_data": {
-                "source": "openai",
-                "input_characters": len(normalized),
-                "action_item_count": len(normalized_action_items),
-                "decision_count": len(normalized_decisions),
-                "issue_count": len(normalized_issues),
-                "next_agenda_count": len(normalized_next_agenda),
-                "usage": self._serialize_usage(getattr(response, "usage", None)),
-            },
         }
+
+        try:
+            noisy_audio = HeuristicLLMAnalysisService._has_noisy_audio_context(context)
+            response = self._create_response_with_retry(normalized, context)
+
+            payload = self._parse_response_payload(response)
+            normalized_summary = _normalize_summary_value(payload.get("summary", ""))
+            normalized_action_items = _normalize_action_items_value(payload.get("action_items", []))
+            normalized_keywords = _normalize_keywords_value(payload.get("keywords", []))
+            normalized_decisions, tentative_decisions = _normalize_decisions_value(payload.get("decisions", []), MAX_DECISIONS)
+            normalized_issues = _normalize_issues_value(payload.get("issues", []))
+            next_agenda_source = list(payload.get("next_agenda", []) or [])
+            next_agenda_candidates = [
+                item
+                for item in next_agenda_source + tentative_decisions
+                if _is_followup_agenda_text(item)
+            ]
+            normalized_next_agenda = _normalize_string_list_value(next_agenda_candidates, MAX_NEXT_AGENDA)
+            return {
+                "summary": normalized_summary,
+                "keywords": normalized_keywords,
+                "decisions": normalized_decisions,
+                "action_items": normalized_action_items,
+                "issues": normalized_issues,
+                "next_agenda": normalized_next_agenda,
+                "model_name": self.model_name,
+                "prompt_version": self.prompt_version,
+                "extra_data": {
+                    "source": "openai",
+                    "input_characters": len(normalized),
+                    "action_item_count": len(normalized_action_items),
+                    "decision_count": len(normalized_decisions),
+                    "issue_count": len(normalized_issues),
+                    "next_agenda_count": len(normalized_next_agenda),
+                    "context_present": bool(_build_context_block(context)),
+                    "audio_noise_context": noisy_audio,
+                    "usage": self._serialize_usage(getattr(response, "usage", None)),
+                },
+            }
+        except Exception as exc:
+            logger.warning("OpenAI analysis request failed; falling back to heuristic service: %s", exc)
+            fallback = HeuristicLLMAnalysisService().summarize_and_extract_tickets(normalized, context=context)
+            fallback["extra_data"] = dict(fallback.get("extra_data", {}))
+            fallback["extra_data"].update(
+                {
+                    "source": "openai_fallback",
+                    "fallback_error": str(exc),
+                    "input_characters": len(normalized),
+                    "context_present": bool(_build_context_block(context)),
+                    "audio_noise_context": HeuristicLLMAnalysisService._has_noisy_audio_context(context),
+                }
+            )
+            return fallback
 
     @staticmethod
     def _normalize_text(text: str) -> str:
         return WHITESPACE_PATTERN.sub(" ", text or "").strip()
 
     @staticmethod
-    def _build_instructions() -> str:
-        return (
+    def _build_instructions(context: Any | None = None) -> str:
+        context_block = _build_context_block(context)
+        instruction = (
             "너는 TIKI의 회의록 분석기다.\n"
             "출력은 반드시 JSON만 허용되며, 마크다운/설명문/코드펜스는 절대 쓰지 마라.\n"
             "아래 JSON 스키마를 정확히 지켜라.\n\n"
+        )
+        if context_block:
+            instruction += f"{context_block}\n\n"
+        instruction += (
             "작업 원칙:\n"
             "- 회의 핵심만 한국어로 2~4문장으로 요약하라. 장황한 부연 설명은 쓰지 마라.\n"
+            "- 입력에 잡음, 잔향, 끊긴 발화, 중복 음절이 섞여 있으면 의미 있는 회의 발화만 사용하고 소음성 문구는 무시하라.\n"
             "- keywords에는 회의의 핵심 주제 4~6개를 담아라. type은 cyan, purple, green, yellow 중 하나를 써라.\n"
             "- decisions에는 회의에서 확정된 주요 결정사항만 넣어라.\n"
+            "- decisions에는 실행 계획, 일정, 준비 작업, 배포, 수정, 테스트 같은 문장을 넣지 마라. 이런 문장은 action_items 또는 next_agenda로 옮겨라.\n"
+            "- 검토/우선/방향/후보/가능성/논의/조율처럼 아직 확정되지 않은 내용은 decisions에 넣지 말고 next_agenda에 넣어라.\n"
             "- action_items에는 '실제로 실행 가능한 일'만 넣어라.\n"
             "- 다음은 action item 후보가 아니다: 단순 의견, 잡담, 배경 설명, 반복 발언.\n"
             "- 다음은 반드시 action item으로 분리하라: 결정사항, 할당된 작업, 장애 대응, 검토 요청, 마감일이 있는 일.\n"
@@ -963,11 +1370,13 @@ class OpenAIAnalysisService(LLMAnalysisService):
             "- 애매하면 action_items를 비워도 된다. 억지로 채우지 마라.\n"
             "- 중복되는 항목은 하나로 합쳐라.\n"
             "- issues에는 진행 리스크, 장애, 성능 저하, 일정 압박 같은 항목만 넣어라.\n"
-            "- next_agenda에는 다음 회의에서 다룰 후속 안건만 넣어라.\n"
+            "- next_agenda에는 다음 회의에서 다룰 후속 안건, 검토 중인 선택지, 미확정 논점만 넣어라.\n"
+            "- '방향을 잡는다', '중심으로 진행한다' 같은 선언형 문장은 next_agenda가 아니라 decisions 또는 summary로 돌려라.\n"
             "- 회의 내용이 불완전하면 요약에서도 그 한계를 반영하되, 여전히 최선의 요약을 제공하라.\n"
             "- 제목과 설명이 사실상 같은 경우는 action item으로 내보내지 마라.\n"
             "- '추가 작업 없음', '공유사항', '참고'만 있는 문장은 action item으로 만들지 마라.\n"
         )
+        return instruction
 
     @staticmethod
     def _parse_response_payload(response: Any) -> dict[str, Any]:

@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     notion_token: str | None = Field(default=None, alias="NOTION_TOKEN")
     openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")
     openai_model: str = Field(default="gpt-5.4-mini", alias="OPENAI_MODEL")
+    whisper_model: str = Field(default="small", alias="WHISPER_MODEL")
 
     @property
     def cors_origins(self) -> list[str]:

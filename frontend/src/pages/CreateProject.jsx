@@ -93,6 +93,7 @@ function LIcon({ name, size = 18, color = "currentColor", sw = 2, className = ""
 export default function CreateProject() {
   const navigate = useNavigate();
   const categoryDropdownRef = useRef(null);
+  const templateDropdownRef = useRef(null);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
   const [activeTab, setActiveTab] = useState('home');
 
@@ -115,6 +116,9 @@ export default function CreateProject() {
       if (categoryDropdownRef.current && !categoryDropdownRef.current.contains(e.target)) {
         setIsCategoryOpen(false);
       }
+      if (templateDropdownRef.current && !templateDropdownRef.current.contains(e.target)) {
+        setIsTemplateOpen(false);
+      }
     };
 
     document.addEventListener('mousedown', handleOutsideClick);
@@ -134,11 +138,7 @@ export default function CreateProject() {
 
   // 템플릿/컨벤션 복사 옵션
   const [copyTemplate, setCopyTemplate] = useState('none');
-
-  // 고급 설정 아코디언 상태
-  const [isAdvancedOpen, setIsAdvancedOpen] = useState(false);
-  const [jiraIntegration, setJiraIntegration] = useState(false);
-  const [aiCustomRule, setAiCustomRule] = useState('');
+  const [isTemplateOpen, setIsTemplateOpen] = useState(false);
 
   // 2단계: 팀원 초대 상태
   const [email, setEmail] = useState('');
@@ -171,15 +171,14 @@ export default function CreateProject() {
     '기타': { color: '#FEF7E0', labelColor: '#F59E0B', name: '기타 직접 입력' }
   };
 
-  // 파스텔 톤 6종 프로젝트 상징색 리스트
-  const colorTags = [
-    { hex: '#EEF3FF', name: '소프트 블루', labelColor: '#0099CC' },
-    { hex: '#E6F4EA', name: '민트 그린', labelColor: '#10B981' },
-    { hex: '#FCE8E6', name: '블러썸 핑크', labelColor: '#EF4444' },
-    { hex: '#FEF7E0', name: '파스텔 옐로우', labelColor: '#F59E0B' },
-    { hex: '#F3E8FF', name: '라벤더 퍼플', labelColor: '#7C3AED' },
-    { hex: '#E2F7FC', name: '클리어 시안', labelColor: '#00A3C4' },
+  const templateOptions = [
+    { value: 'none', label: '새 환경으로 새로 시작하기', description: '복사 없음', icon: 'sparkles' },
+    { value: 'p1', label: 'TIKI 개발 파이프라인 컨벤션 복사', description: '개발 템플릿', icon: 'folder' },
+    { value: 'p2', label: '신규 모바일 디자인 가이드 컨벤션 복사', description: '디자인 템플릿', icon: 'eye' },
+    { value: 'p3', label: '마케팅 기획 연동 및 AI 분석 규칙 복사', description: '마케팅 템플릿', icon: 'mail' }
   ];
+
+  const selectedTemplate = templateOptions.find((option) => option.value === copyTemplate) || templateOptions[0];
 
   // 카테고리 변경 시 해당 도메인에 지정된 파스텔 상징색으로 자동 연동
   const handleCategoryChange = (val) => {
@@ -380,9 +379,9 @@ export default function CreateProject() {
                   <span 
                     style={{ 
                       backgroundColor: selectedColor, 
-                      color: colorTags.find(c => c.hex === selectedColor)?.labelColor || '#0099CC' 
+                      color: categoryConfig[category]?.labelColor || '#0099CC' 
                     }}
-                    className="text-xs font-bold px-3 py-1.5 rounded-lg border border-white/40 shadow-sm transition-all duration-300"
+                    className="text-xs font-bold px-3 py-1.5 rounded-full border border-white/40 shadow-sm transition-all duration-300"
                   >
                     {category === '기타' ? (customCategory || '기타') : category}
                   </span>
@@ -416,8 +415,8 @@ export default function CreateProject() {
 
           {/* AI 컨벤션 복사 예정 알림 */}
           {copyTemplate !== 'none' && (
-            <div className="p-3.5 bg-[#F3E8FF]/40 rounded-xl border border-[#7C3AED]/10 flex items-start space-x-2 text-xs text-[#7C3AED] animate-fadeIn">
-              <LIcon name="sparkles" size={16} className="mt-0.5 shrink-0" />
+            <div className="p-3.5 bg-[#F6F8FB] rounded-xl border border-[#CBD5E1]/60 flex items-start space-x-2 text-xs text-[#334155] animate-fadeIn">
+              <LIcon name="sparkles" size={16} className="mt-0.5 shrink-0 text-[#64748B]" />
               <p className="leading-relaxed">
                 <strong>템플릿 복제 예약됨</strong>: 선택하신 이전 프로젝트의 회의록 학습 데이터 및 AI 컨벤션 설정이 그대로 옮겨집니다.
               </p>
@@ -492,9 +491,26 @@ export default function CreateProject() {
                   aria-expanded={isCategoryOpen}
                   aria-haspopup="listbox"
                 >
-                  <span className={category ? 'text-[#0D1B2A] font-medium' : 'text-[#5A6F8A]'}>
-                    {category ? categoryConfig[category]?.name || category : '분야를 선택해 주세요'}
-                  </span>
+                  {category ? (
+                    <span className="flex items-center gap-2 text-[#0D1B2A] font-medium">
+                      <span>{categoryConfig[category]?.name || category}</span>
+                      {categoryConfig[category] && (
+                        <span
+                          style={{
+                            backgroundColor: categoryConfig[category].color,
+                            color: categoryConfig[category].labelColor,
+                          }}
+                          className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold border border-[rgba(0,100,180,0.08)]"
+                          aria-label="자동 지정 색상"
+                          title="자동 지정 색상"
+                        >
+                          카테고리 색상
+                        </span>
+                      )}
+                    </span>
+                  ) : (
+                    <span className="text-[#5A6F8A]">분야를 선택해 주세요</span>
+                  )}
                   <LIcon
                     name="chevronDown"
                     size={14}
@@ -527,7 +543,21 @@ export default function CreateProject() {
                             }`}
                           >
                             <span className="truncate">{option.label}</span>
-                            {isSelected && <LIcon name="check" size={14} className="text-[#0099CC]" />}
+                            <span className="flex items-center gap-2">
+                              {categoryConfig[option.value] && (
+                                <span
+                                  style={{
+                                    backgroundColor: categoryConfig[option.value].color,
+                                    color: categoryConfig[option.value].labelColor,
+                                  }}
+                                  className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold border border-[rgba(0,100,180,0.08)]"
+                                  aria-label="카테고리 자동 지정 색상"
+                                >
+                                  컬러
+                                </span>
+                              )}
+                              {isSelected && <LIcon name="check" size={14} className="text-[#0099CC]" />}
+                            </span>
                           </button>
                         );
                       })}
@@ -550,53 +580,6 @@ export default function CreateProject() {
                   />
                 </div>
               )}
-
-              {/* [개선된 UX] 프로젝트 상징색 그리드 배치 및 카테고리 색상 동기화 */}
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <label className="block text-xs sm:text-sm font-semibold text-[#0D1B2A]">
-                    프로젝트 상징색 (대시보드 태그 색상)
-                  </label>
-                  {/* 카테고리 변경 시 우측에 분야별 매칭 파스텔 배지 즉시 연동 (이모티콘 대체 가이드) */}
-                  {category && categoryConfig[category] && (
-                    <span 
-                      style={{ 
-                        backgroundColor: categoryConfig[category].color,
-                        color: categoryConfig[category].labelColor,
-                      }}
-                      className="px-2.5 py-1 rounded-lg text-[11px] font-bold border border-[rgba(0,100,180,0.06)] animate-fadeIn flex items-center space-x-1"
-                    >
-                      <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: categoryConfig[category].labelColor }} />
-                      <span>{category} 전용색 추천</span>
-                    </span>
-                  )}
-                </div>
-
-                {/* 6종 상징색 그리드 단추 패널 */}
-                <div className="grid grid-cols-3 sm:grid-cols-6 gap-3">
-                  {colorTags.map((color) => (
-                    <button
-                      key={color.hex}
-                      type="button"
-                      onClick={() => setSelectedColor(color.hex)}
-                      style={{ backgroundColor: color.hex }}
-                      className={`h-11 rounded-xl border transition-all flex items-center justify-center relative ${
-                        selectedColor === color.hex
-                          ? 'border-[#0099CC] ring-2 ring-[rgba(0,153,204,0.18)] scale-105 shadow-sm'
-                          : 'border-[rgba(0,100,180,0.12)] hover:border-gray-300'
-                      }`}
-                      title={color.name}
-                    >
-                      {selectedColor === color.hex && (
-                        <div className="absolute inset-0 bg-black/5 rounded-xl flex items-center justify-center">
-                          <LIcon name="check" size={14} color={color.labelColor} sw={3.5} />
-                        </div>
-                      )}
-                    </button>
-                  ))}
-                </div>
-                <p className="text-[10px] text-[#5A6F8A] mt-1.5">선택하신 상징색은 대시보드 메인 리스트 카드 식별 색상으로 지정됩니다.</p>
-              </div>
 
               {/* 설명 입력란 */}
               <div>
@@ -625,71 +608,67 @@ export default function CreateProject() {
                     <p className="text-[11px] sm:text-xs text-[#5A6F8A] mt-1 leading-relaxed">
                       사내에 이미 구축해둔 AI 요약 컨벤션이나 Notion 매핑 규칙 설정을 그대로 적용합니다.
                     </p>
-                    <div className="mt-3 relative">
-                      <select
-                        value={copyTemplate}
-                        onChange={(e) => setCopyTemplate(e.target.value)}
-                        className="w-full px-3 py-2 bg-white border border-[rgba(0,100,180,0.1)] rounded-lg text-xs text-[#0D1B2A] focus:outline-none cursor-pointer appearance-none"
+                    <div className="mt-3 relative" ref={templateDropdownRef}>
+                      <button
+                        type="button"
+                        onClick={() => setIsTemplateOpen((prev) => !prev)}
+                        className={`w-full px-3 py-2 bg-white border rounded-lg text-xs text-[#0D1B2A] transition flex items-center justify-between text-left ${
+                          isTemplateOpen
+                            ? 'border-[#0099CC] shadow-[0_0_0_3px_rgba(0,153,204,0.12)]'
+                            : 'border-[rgba(0,100,180,0.1)] hover:border-[rgba(0,100,180,0.22)]'
+                        }`}
+                        aria-expanded={isTemplateOpen}
+                        aria-haspopup="listbox"
                       >
-                        <option value="none">새 환경으로 새로 시작하기 (복사 없음)</option>
-                        <option value="p1">📂 TIKI 개발 파이프라인 컨벤션 복사</option>
-                        <option value="p2">📂 신규 모바일 디자인 가이드 컨벤션 복사</option>
-                        <option value="p3">📂 마케팅 기획 연동 및 AI 분석 규칙 복사</option>
-                      </select>
-                      <div className="absolute top-1/2 right-3 transform -translate-y-1/2 pointer-events-none text-[#5A6F8A]">
-                        <LIcon name="chevronDown" size={12} />
-                      </div>
+                        <span className="flex items-center gap-3 min-w-0">
+                          <LIcon name={selectedTemplate.icon} size={13} className="text-[#5A6F8A] shrink-0" />
+                          <span className="truncate">{selectedTemplate.label}</span>
+                        </span>
+                        <LIcon
+                          name="chevronDown"
+                          size={12}
+                          className={`text-[#5A6F8A] transition-transform duration-200 ${isTemplateOpen ? 'rotate-180' : ''}`}
+                        />
+                      </button>
+
+                      {isTemplateOpen && (
+                        <div className="absolute left-0 right-0 z-20 mt-2 overflow-hidden rounded-xl border border-[rgba(0,100,180,0.12)] bg-white shadow-[0_10px_28px_rgba(0,100,180,0.16)]">
+                          <div className="max-h-64 overflow-y-auto py-1.5">
+                            {templateOptions.map((option) => {
+                              const isSelected = copyTemplate === option.value;
+                              return (
+                                <button
+                                  key={option.value}
+                                  type="button"
+                                  role="option"
+                                  aria-selected={isSelected}
+                                  onClick={() => {
+                                    setCopyTemplate(option.value);
+                                    setIsTemplateOpen(false);
+                                  }}
+                                  className={`w-full px-3.5 py-2.5 text-left text-sm flex items-center justify-between transition-colors ${
+                                    isSelected
+                                      ? 'bg-[#EEF3FF] text-[#0099CC] font-semibold'
+                                      : 'text-[#0D1B2A] hover:bg-[#F8FAFF]'
+                                  }`}
+                                >
+                                  <span className="flex items-center gap-3 min-w-0 pr-4">
+                                    <LIcon name={option.icon} size={14} className={isSelected ? 'text-[#0099CC]' : 'text-[#5A6F8A]'} />
+                                    <span className="truncate">{option.label}</span>
+                                  </span>
+                                  <span className="flex items-center gap-2 pl-3 border-l border-[rgba(0,100,180,0.08)]">
+                                    <span className="text-[10px] font-medium text-[#5A6F8A] whitespace-nowrap">{option.description}</span>
+                                    {isSelected && <LIcon name="check" size={14} className="text-[#0099CC]" />}
+                                  </span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
-              </div>
-
-              {/* 고급 설정 아코디언 */}
-              <div className="border border-[rgba(0,100,180,0.12)] rounded-xl overflow-hidden bg-white">
-                <button
-                  type="button"
-                  onClick={() => setIsAdvancedOpen(!isAdvancedOpen)}
-                  className="w-full flex items-center justify-between p-4 bg-gray-50 hover:bg-[#EEF3FF] transition text-left"
-                >
-                  <div className="flex items-center space-x-2">
-                    <LIcon name="info" className="text-[#0099CC]" size={16} />
-                    <span className="text-xs sm:text-sm font-semibold text-[#0D1B2A]">고급 설정 (Jira 연동 설정 미리 지정)</span>
-                  </div>
-                  <LIcon name={isAdvancedOpen ? "chevronUp" : "chevronDown"} size={14} className="text-[#5A6F8A]" />
-                </button>
-
-                {isAdvancedOpen && (
-                  <div className="p-4 border-t border-[rgba(0,100,180,0.08)] space-y-4 animate-fadeIn">
-                    <div className="flex items-center justify-between p-2.5 bg-[#F8FAFF] rounded-lg">
-                      <div className="flex-1 pr-4">
-                        <span className="block text-xs font-bold text-[#0D1B2A]">생성 즉시 Jira 연동 활성화</span>
-                        <span className="text-[10px] text-[#5A6F8A]">협업에 연결할 Jira API 커넥션 모듈을 활성화 상태로 출발합니다.</span>
-                      </div>
-                      <label className="relative inline-flex items-center cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={jiraIntegration}
-                          onChange={(e) => setJiraIntegration(e.target.checked)}
-                          className="sr-only peer"
-                        />
-                        <div className="w-9 h-5 bg-gray-200 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-[#0099CC]"></div>
-                      </label>
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-semibold text-[#0D1B2A] mb-1.5">
-                        AI 추출 컨벤션 강제 룰 지정
-                      </label>
-                      <input
-                        type="text"
-                        value={aiCustomRule}
-                        onChange={(e) => setAiCustomRule(e.target.value)}
-                        placeholder="예: 마감일을 지정하지 않을 시 3영업일 안으로 자동 매핑"
-                        className="w-full px-3 py-2.5 bg-[#F8FAFF] border border-[rgba(0,100,180,0.1)] rounded-lg text-xs text-[#0D1B2A] focus:outline-none focus:border-[#0099CC]"
-                      />
-                    </div>
-                  </div>
-                )}
               </div>
 
               {/* 하단 제어 */}

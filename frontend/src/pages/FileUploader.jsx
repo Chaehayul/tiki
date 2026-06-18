@@ -105,11 +105,19 @@ function useIsMobile() {
   return mobile;
 }
 
+const CATEGORY_PALETTE = {
+  개발: { bg: "#EEF3FF", text: "#0099CC", border: "rgba(0,153,204,0.28)" },
+  디자인: { bg: "#F3E8FF", text: "#7C3AED", border: "rgba(124,58,237,0.28)" },
+  기획: { bg: "#E6F4EA", text: "#10B981", border: "rgba(16,185,129,0.28)" },
+  마케팅: { bg: "#FCE8E6", text: "#EF4444", border: "rgba(239,68,68,0.28)" },
+  기타: { bg: "#FEF7E0", text: "#F59E0B", border: "rgba(245,158,11,0.28)" },
+};
+
 const PROJECTS = [
-  { id: "proj-1", key: "TIKI", name: "TIKI 앱 개발", color: "#0099CC" },
-  { id: "proj-2", key: "MKT",  name: "마케팅 캠페인 Q3", color: "#7C3AED" },
-  { id: "proj-3", key: "DS",   name: "데이터 인프라 구축", color: "#10B981" },
-  { id: "proj-4", key: "OPS",  name: "운영 자동화", color: "#F59E0B" },
+  { id: "proj-1", name: "TIKI 앱 개발", category: "개발" },
+  { id: "proj-2", name: "마케팅 캠페인 Q3", category: "마케팅" },
+  { id: "proj-3", name: "데이터 인프라 구축", category: "개발" },
+  { id: "proj-4", name: "운영 자동화", category: "기타" },
 ];
 
 const STEPS = [
@@ -189,15 +197,20 @@ function StepItem({ step, status, isLast }) {
 // 프로젝트 배지
 function ProjectBadge({ project, size = "sm" }) {
   const isSmall = size === "sm";
+  const palette = CATEGORY_PALETTE[project?.category] || CATEGORY_PALETTE.기타;
   return (
     <span
       className={cn(
-        "inline-flex items-center justify-center rounded font-bold text-white shrink-0",
-        isSmall ? "h-5 min-w-[36px] px-1.5 text-[10px]" : "h-6 min-w-[44px] px-2 text-[11px]",
+        "inline-flex items-center justify-center rounded-full font-bold shrink-0 border",
+        isSmall ? "h-5 min-w-[46px] px-2 text-[10px]" : "h-6 min-w-[56px] px-2.5 text-[11px]",
       )}
-      style={{ backgroundColor: project.color }}
+      style={{
+        backgroundColor: palette.bg,
+        color: palette.text,
+        borderColor: palette.border,
+      }}
     >
-      {project.key}
+      {project.category || "기타"}
     </span>
   );
 }
@@ -871,7 +884,7 @@ export default function TikiApp() {
               {[
                 { icon: "clock", text: "처리 시간", val: elapsedTime },
                 { icon: "mic", text: "화자", val: "3명 감지" },
-                { icon: "checkCircle", text: "Jira 티켓", val: `${selectedProject?.key ?? ""} · 3개 생성` },
+                { icon: "checkCircle", text: "Jira 티켓", val: `${selectedProject?.category ?? "기타"} · 3개 생성` },
               ].map(({ icon, text, val }) => (
                 <div key={text} className="inline-flex items-center gap-1 text-[13px] text-[#5A6F8A]">
                   <IIcon name={icon} size={13} color="#10B981" />

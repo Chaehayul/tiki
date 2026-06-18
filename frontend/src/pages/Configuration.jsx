@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import Header from '../components/Header';
 import Footer from '../components/Footer';
@@ -50,14 +50,62 @@ function IIcon({ name, size = 16, className = "", color = "currentColor", sw = 2
 }
 
 const categoryMeta = {
-  '개발': { dot: 'bg-[#0099CC]', text: 'text-[#0099CC]', soft: 'bg-[#EEF3FF]' },
-  '디자인': { dot: 'bg-[#7C3AED]', text: 'text-[#7C3AED]', soft: 'bg-[#F3E8FF]' },
-  '기획': { dot: 'bg-[#10B981]', text: 'text-[#10B981]', soft: 'bg-[#E6F4EA]' },
-  '마케팅': { dot: 'bg-[#EF4444]', text: 'text-[#EF4444]', soft: 'bg-[#FCE8E6]' },
-  '기타': { dot: 'bg-[#F59E0B]', text: 'text-[#F59E0B]', soft: 'bg-[#FEF7E0]' },
+  '개발': { color: '#EEF3FF', labelColor: '#0099CC' },
+  '디자인': { color: '#F3E8FF', labelColor: '#7C3AED' },
+  '기획': { color: '#E6F4EA', labelColor: '#10B981' },
+  '마케팅': { color: '#FCE8E6', labelColor: '#EF4444' },
+  '기타': { color: '#FEF7E0', labelColor: '#F59E0B' },
 };
 
 const avatarPalette = ['bg-sky-500', 'bg-violet-500', 'bg-amber-500', 'bg-emerald-500', 'bg-rose-500', 'bg-indigo-500'];
+
+const PROJECT_OVERRIDE_STORAGE_KEY = 'tiki_project_overrides';
+
+const MEMBER_DIRECTORY = [
+  { name: '정아름', email: 'areum.jung@tiki.ai', role: 'PM' },
+  { name: '김민수', email: 'minsu.kim@tiki.ai', role: 'Backend' },
+  { name: '송지영', email: 'jiyoung.song@tiki.ai', role: 'PM' },
+  { name: '김소현', email: 'sohyun.kim@tiki.ai', role: 'ML Engineer' },
+  { name: '채하율', email: 'hayul.chae@tiki.ai', role: 'Frontend' },
+  { name: '박디자이너', email: 'designer.park@tiki.ai', role: 'Designer' },
+  { name: '외부리서처A', email: 'researcher.a@external.com', role: 'QA' },
+  { name: '정다은', email: 'daeun.jung@tiki.ai', role: 'QA' },
+  { name: '한유진', email: 'yujin.han@tiki.ai', role: 'Designer' },
+];
+
+const TOAST_COLORS = {
+  info: '#0099CC',
+  ai: '#7C3AED',
+  success: '#10B981',
+  warning: '#F59E0B',
+  error: '#EF4444',
+};
+
+const TOAST_VARIANTS = {
+  info: { background: '#0D1B2A', text: '#FFFFFF', icon: TOAST_COLORS.info, border: 'rgba(255,255,255,0.12)' },
+  ai: { background: '#0D1B2A', text: '#FFFFFF', icon: TOAST_COLORS.ai, border: 'rgba(255,255,255,0.12)' },
+  success: { background: '#0D1B2A', text: '#FFFFFF', icon: TOAST_COLORS.success, border: 'rgba(255,255,255,0.12)' },
+  warning: { background: '#0D1B2A', text: '#FFFFFF', icon: TOAST_COLORS.warning, border: 'rgba(255,255,255,0.12)' },
+  error: { background: '#0D1B2A', text: '#FFFFFF', icon: TOAST_COLORS.error, border: 'rgba(255,255,255,0.12)' },
+};
+
+const readProjectOverrides = () => {
+  try {
+    const raw = localStorage.getItem(PROJECT_OVERRIDE_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+};
+
+const writeProjectOverride = (projectId, projectData) => {
+  if (!projectId) return;
+  const next = readProjectOverrides();
+  next[String(projectId)] = projectData;
+  localStorage.setItem(PROJECT_OVERRIDE_STORAGE_KEY, JSON.stringify(next));
+};
 
 const avatarColor = (name = '') => {
   let hash = 0;
@@ -127,12 +175,14 @@ const Configuration = () => {
 
   const [formData, setFormData] = useState(() => buildInitialState(selectedProject));
   const [status, setStatus] = useState({ jira: 'disconnected', notion: 'disconnected' });
-  const [showToast, setShowToast] = useState(false);
+  const [toast, setToast] = useState({ message: '', type: 'info' });
+  const toastTimerRef = useRef(null);
   const [guideModal, setGuideModal] = useState(null);
   const [showGuideDetails, setShowGuideDetails] = useState(false);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
-  const [participantDraft, setParticipantDraft] = useState('');
+  const [inviteQuery, setInviteQuery] = useState('');
   const [adminNames, setAdminNames] = useState([]);
+  const currentToastVariant = TOAST_VARIANTS[toast.type] || TOAST_VARIANTS.info;
 
   const buildInitialAdminNames = (project, participants) => {
     const fromProject = Array.isArray(project?.admins)
@@ -152,10 +202,14 @@ const Configuration = () => {
 
   useEffect(() => {
     setFormData(buildInitialState(selectedProject));
-    setParticipantDraft('');
+    setInviteQuery('');
     const initialParticipants = Array.isArray(selectedProject?.participants) ? selectedProject.participants : [];
     setAdminNames(buildInitialAdminNames(selectedProject, initialParticipants));
   }, [selectedProject]);
+
+  useEffect(() => () => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+  }, []);
 
   const updateField = (field, value) => setFormData(prev => ({ ...prev, [field]: value }));
 
@@ -177,27 +231,44 @@ const Configuration = () => {
   const handleReset = () => {
     const resetState = buildInitialState(selectedProject);
     setFormData(resetState);
-    setParticipantDraft('');
+    setInviteQuery('');
     setAdminNames(buildInitialAdminNames(selectedProject, resetState.participants));
     setShowConfirmModal(false);
+    showToast('설정이 초기화되었습니다.', 'success');
   };
 
-  const addParticipant = () => {
-    const email = participantDraft.trim().toLowerCase();
-    if (!email) return;
-    if (!isValidEmail(email)) return;
+  const showToast = (message, type = 'info') => {
+    setToast({ message, type });
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = window.setTimeout(() => setToast({ message: '', type: 'info' }), 2200);
+  };
 
-    const hasDuplicate = formData.participants.some((item) => item.toLowerCase() === email);
-    if (hasDuplicate) {
-      setParticipantDraft('');
-      return;
-    }
+  const matchedMembers = useMemo(() => {
+    const q = inviteQuery.trim().toLowerCase();
+    if (!q) return [];
+    return MEMBER_DIRECTORY
+      .filter((member) => (
+        member.email.toLowerCase().includes(q)
+        || member.name.toLowerCase().includes(q)
+      ))
+      .slice(0, 6);
+  }, [inviteQuery]);
 
-    setFormData((prev) => ({ ...prev, participants: [...prev.participants, email] }));
+  const inviteMember = (member) => {
+    if (!member) return;
+
+    setFormData((prev) => {
+      const exists = prev.participants.includes(member.name);
+      if (exists) return prev;
+      return { ...prev, participants: [...prev.participants, member.name] };
+    });
+
     if (adminNames.length === 0) {
-      setAdminNames([email]);
+      setAdminNames([member.name]);
     }
-    setParticipantDraft('');
+
+    setInviteQuery('');
+    showToast(`초대 메일 발송 완료: ${member.name} (${member.email})`, 'success');
   };
 
   const removeParticipant = (name) => {
@@ -223,6 +294,35 @@ const Configuration = () => {
   const openGuideModal = (type) => {
     setGuideModal(type);
     setShowGuideDetails(false);
+  };
+
+  const handleSaveSettings = () => {
+    if (!selectedProject?.id) {
+      showToast('프로젝트 정보를 찾을 수 없어 저장할 수 없습니다.', 'error');
+      return;
+    }
+
+    const participants = [...new Set(formData.participants.map((name) => name.trim()).filter(Boolean))];
+    const resolvedAdmins = adminNames.filter((name) => participants.includes(name));
+    if (resolvedAdmins.length === 0 && participants[0]) {
+      resolvedAdmins.push(participants[0]);
+    }
+
+    const category = formData.projectCategory === '기타'
+      ? (formData.projectCategoryCustom.trim() || '기타(직접입력)')
+      : formData.projectCategory;
+
+    const nextProject = {
+      ...selectedProject,
+      name: formData.projectName.trim() || selectedProject.name,
+      category,
+      participants,
+      admins: resolvedAdmins,
+      teamLead: resolvedAdmins[0] || selectedProject.teamLead || participants[0] || '담당자',
+    };
+
+    writeProjectOverride(selectedProject.id, nextProject);
+    showToast('설정이 저장되었습니다.', 'success');
   };
 
   const goBack = () => {
@@ -378,14 +478,23 @@ const Configuration = () => {
                                   updateField('projectCategoryCustom', '');
                                 }
                               }}
-                              className={`rounded-full border px-3 py-1.5 text-sm font-semibold transition-all ${
-                                selected
-                                  ? `${meta.soft} ${meta.text} border-current shadow-sm`
-                                  : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
-                              }`}
+                              className="rounded-full border px-3 py-1.5 text-sm font-semibold transition-all hover:brightness-[0.99]"
+                              style={selected
+                                ? {
+                                  backgroundColor: meta.color,
+                                  color: meta.labelColor,
+                                  borderColor: meta.labelColor,
+                                  boxShadow: '0 1px 2px rgba(15,23,42,0.08)',
+                                }
+                                : {
+                                  backgroundColor: meta.color,
+                                  color: meta.labelColor,
+                                  borderColor: `${meta.labelColor}55`,
+                                  opacity: 0.82,
+                                }}
                             >
                               <span className="inline-flex items-center gap-2">
-                                <span className={`h-2 w-2 rounded-full ${meta.dot}`} />
+                                <span className="h-2 w-2 rounded-full" style={{ backgroundColor: meta.labelColor }} />
                                 {option}
                               </span>
                             </button>
@@ -435,40 +544,62 @@ const Configuration = () => {
                   </div>
 
                   <div className="mt-6">
-                    <label className={labelClass}>참여 인원 추가 (이메일)</label>
+                    <label className={labelClass}>참여 인원 초대 (이메일 검색)</label>
                     <div className="flex flex-col gap-2 sm:flex-row">
                       <div className="relative flex-1">
                         <IIcon name="userPlus" size={16} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
                         <input
                           type="email"
-                          value={participantDraft}
-                          placeholder="이메일 입력 후 엔터 또는 추가"
+                          value={inviteQuery}
+                          placeholder="이메일 또는 이름 입력"
                           className={`${inputClass} pl-10`}
-                          onChange={(e) => setParticipantDraft(e.target.value)}
+                          onChange={(e) => setInviteQuery(e.target.value)}
                           onKeyDown={(e) => {
-                            if (e.key === 'Enter') {
+                            if (e.key === 'Enter' && matchedMembers.length > 0) {
                               e.preventDefault();
-                              addParticipant();
+                              inviteMember(matchedMembers[0]);
                             }
                           }}
                         />
+                        {inviteQuery.trim() && (
+                          <div className="absolute left-0 right-0 top-[calc(100%+0.35rem)] z-20 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg">
+                            {matchedMembers.length === 0 ? (
+                              <p className="px-3.5 py-3 text-xs text-slate-400">일치하는 사용자가 없습니다.</p>
+                            ) : (
+                              matchedMembers.map((member) => (
+                                <button
+                                  key={member.email}
+                                  type="button"
+                                  onClick={() => inviteMember(member)}
+                                  className="flex w-full items-center justify-between gap-3 border-b border-slate-100 px-3.5 py-2.5 text-left last:border-b-0 hover:bg-sky-50"
+                                >
+                                  <div className="min-w-0">
+                                    <p className="text-sm font-semibold text-slate-800 truncate">{member.name}</p>
+                                    <p className="text-xs text-slate-400 truncate">{member.email}</p>
+                                  </div>
+                                  <span className="text-[11px] font-semibold text-sky-600 shrink-0">초대</span>
+                                </button>
+                              ))
+                            )}
+                          </div>
+                        )}
                       </div>
                       <button
                         type="button"
-                        onClick={addParticipant}
-                        disabled={!participantDraft.trim() || !isValidEmail(participantDraft.trim())}
+                        onClick={() => {
+                          if (matchedMembers.length > 0) inviteMember(matchedMembers[0]);
+                        }}
+                        disabled={matchedMembers.length === 0}
                         className={`shrink-0 rounded-xl px-5 py-3 text-sm font-semibold text-white transition-colors ${
-                          participantDraft.trim() && isValidEmail(participantDraft.trim())
+                          matchedMembers.length > 0
                             ? 'bg-sky-600 hover:bg-sky-700'
                             : 'bg-slate-300 cursor-not-allowed'
                         }`}
                       >
-                        인원 추가
+                        초대 발송
                       </button>
                     </div>
-                    {participantDraft.trim() && !isValidEmail(participantDraft.trim()) && (
-                      <p className="mt-1.5 text-xs text-red-500">유효한 이메일 형식을 입력해 주세요.</p>
-                    )}
+                    <p className="mt-1.5 text-xs text-slate-400">목록에서 사용자를 선택하면 초대 메일 발송 후 참여 인원에 이름으로 추가됩니다.</p>
                   </div>
 
                   <div className="mt-6">
@@ -688,7 +819,7 @@ const Configuration = () => {
           </button>
           <button
             type="button"
-            onClick={() => { setShowToast(true); setTimeout(() => setShowToast(false), 2000); }}
+            onClick={handleSaveSettings}
             className="flex items-center gap-2 rounded-xl bg-gradient-to-br from-sky-500 to-blue-600 px-6 py-2.5 text-sm font-bold text-white shadow-[0_8px_20px_-10px_rgba(14,165,233,0.7)] transition-all hover:brightness-105"
           >
             <IIcon name="save" size={17} /> 저장
@@ -798,7 +929,7 @@ const Configuration = () => {
 
       {showConfirmModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-2xl">
+          <div className="w-full max-w-sm rounded-3xl border border-[rgba(0,100,180,0.12)] bg-white p-6 shadow-2xl">
             <div className="mb-4 flex items-center gap-3 text-red-500">
               <IIcon name="alertTriangle" size={24} />
               <h3 className="text-lg font-bold">설정 초기화</h3>
@@ -812,11 +943,34 @@ const Configuration = () => {
         </div>
       )}
 
-      {showToast && (
-        <div className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div className="flex items-center gap-2 rounded-xl border border-white/35 bg-gradient-to-br from-sky-500 to-blue-600 px-5 py-3 text-white shadow-xl">
-            <IIcon name="checkCircle" size={16} />
-            <span className="text-sm font-semibold">설정이 저장되었습니다.</span>
+      {toast.message && (
+        <div
+          className="pointer-events-none fixed left-1/2 -translate-x-1/2 z-50 px-4 w-full sm:w-auto"
+          style={{
+            bottom: isMobile ? 'calc(env(safe-area-inset-bottom) + 9.5rem)' : '1.5rem',
+          }}
+        >
+          <div
+            className="relative text-xs sm:text-sm font-semibold py-3.5 px-5 rounded-2xl shadow-xl border flex items-center gap-2 w-full sm:w-auto sm:min-w-[260px]"
+            style={{
+              backgroundColor: currentToastVariant.background,
+              color: currentToastVariant.text,
+              borderColor: currentToastVariant.border,
+            }}
+          >
+            {toast.type === 'success' ? (
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <circle cx="12" cy="12" r="10" fill={TOAST_COLORS.success} />
+                <path d="M16.7 9.2 10.6 15.3 7.2 11.9" stroke="#FFFFFF" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            ) : (
+              <IIcon
+                name={toast.type === 'error' ? 'x' : toast.type === 'warning' ? 'alertTriangle' : 'info'}
+                size={16}
+                color={currentToastVariant.icon}
+              />
+            )}
+            <span>{toast.message}</span>
           </div>
         </div>
       )}

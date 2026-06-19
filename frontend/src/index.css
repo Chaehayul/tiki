@@ -11,3 +11,26 @@ body {
   margin: 0;
   font-family: "Pretendard", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
+
+/* Show hand cursor consistently for interactive UI elements across pages. */
+a,
+button,
+select,
+summary,
+label,
+input[type="button"],
+input[type="submit"],
+input[type="reset"],
+[role="button"],
+[onclick],
+[tabindex]:not([tabindex="-1"]) {
+  cursor: pointer;
+}
+
+button:disabled,
+input:disabled,
+select:disabled,
+textarea:disabled,
+[aria-disabled="true"] {
+  cursor: not-allowed;
+}

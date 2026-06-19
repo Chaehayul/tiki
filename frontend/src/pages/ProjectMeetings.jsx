@@ -9,154 +9,70 @@ const PROJECTS = [
 		id: 1,
 		name: 'AI 회의록 자동화',
 		category: '개발',
+		description: '회의 녹음 파일 기반으로 AI가 요약하고 Jira 액션 아이템까지 자동 매핑하는 프로젝트입니다.',
 		createdAt: '2026-06-01',
 		status: '진행 중',
 		teamLead: '정아름',
 		participants: ['정아름', '김민수', '송지영', '김소현', '채하율'],
 		myActionItems: [
-			{ id: 'ai-1', text: 'STT 응답 속도 5초 이하로 최적화', due: '2026.06.18' },
-			{ id: 'ai-2', text: 'Jira 발행 규칙 QA 시나리오 검증', due: '2026.06.20' },
-			{ id: 'ai-3', text: '화자 분리 모델 재학습 데이터 정리', due: '2026.06.22' },
+			{ id: 'ai-1', text: 'STT 응답 속도 5초 이하로 최적화', due: '2026.06.18', assignee: '김민수', status: '검증 전', source: '주간 스프린트 회의' },
+			{ id: 'ai-2', text: 'Jira 발행 규칙 QA 시나리오 검증', due: '2026.06.20', assignee: '정아름', status: '연동 완료', source: '요구사항 정제 미팅' },
+			{ id: 'ai-3', text: '화자 분리 모델 재학습 데이터 정리', due: '2026.06.22', assignee: '김소현', status: '완료', source: '배포 리스크 점검' },
 		],
 		meetings: [
-			{
-				id: 'm-101',
-				date: '2026.06.16',
-				title: '주간 스프린트 회의',
-				status: '진행 중',
-				type: '정기',
-				tags: ['#개발', '#Jira연동'],
-				participants: ['정아름', '김민수', '송지영'],
-				summary: 'Sprint 12 목표를 정리하고 STT 성능 최적화 일정과 Jira 발행 기준을 확정했습니다.',
-				actionItems: 6,
-				jiraLinked: 2,
-			},
-			{
-				id: 'm-102',
-				date: '2026.06.13',
-				title: '요구사항 정제 미팅',
-				status: '완료',
-				type: '수시',
-				tags: ['#기획', '#개발'],
-				participants: ['정아름', '김소현', '채하율'],
-				summary: '업로드 단계 UX 개선안과 회의록 자동 분류 태그 정책을 합의했습니다.',
-				actionItems: 4,
-				jiraLinked: 1,
-			},
-			{
-				id: 'm-103',
-				date: '2026.06.11',
-				title: '배포 리스크 점검',
-				status: 'Jira 발행됨',
-				type: '정기',
-				tags: ['#개발', '#배포'],
-				participants: ['정아름', '김민수'],
-				summary: '배포 전 체크리스트와 장애 대응 절차를 재정의했습니다.',
-				actionItems: 5,
-				jiraLinked: 3,
-			},
+			{ id: 'm-101', date: '2026.06.16', title: '주간 스프린트 회의', status: '진행 중', type: '정기', tags: ['#개발', '#Jira연동'], participants: ['정아름', '김민수', '송지영'], summary: 'Sprint 12 목표를 정리하고 STT 성능 최적화 일정과 Jira 발행 기준을 확정했습니다.', actionItems: 6, jiraLinked: 2 },
+			{ id: 'm-102', date: '2026.06.13', title: '요구사항 정제 미팅', status: '완료', type: '수시', tags: ['#기획', '#개발'], participants: ['정아름', '김소현', '채하율'], summary: '업로드 단계 UX 개선안과 회의록 자동 분류 태그 정책을 합의했습니다.', actionItems: 4, jiraLinked: 1 },
+			{ id: 'm-103', date: '2026.06.11', title: '배포 리스크 점검', status: 'Jira 발행됨', type: '정기', tags: ['#개발', '#배포'], participants: ['정아름', '김민수'], summary: '배포 전 체크리스트와 장애 대응 절차를 재정의했습니다.', actionItems: 5, jiraLinked: 3 },
 		],
 	},
 	{
 		id: 2,
 		name: '디자인 시스템 구축',
 		category: '디자인',
+		description: '컴포넌트/토큰 규칙을 통일해 제품 전반의 UI 일관성과 협업 속도를 높이는 프로젝트입니다.',
 		createdAt: '2026-05-27',
 		status: '진행 중',
 		teamLead: '박디자이너',
 		participants: ['박디자이너', '정아름', '송지영'],
 		myActionItems: [
-			{ id: 'ds-1', text: '컴포넌트 토큰 문서 버전업', due: '2026.06.18' },
-			{ id: 'ds-2', text: '버튼/폼 공통 스타일 QA', due: '2026.06.21' },
+			{ id: 'ds-1', text: '컴포넌트 토큰 문서 버전업', due: '2026.06.18', assignee: '박디자이너', status: '검증 전', source: '컴포넌트 토큰 정리' },
+			{ id: 'ds-2', text: '버튼/폼 공통 스타일 QA', due: '2026.06.21', assignee: '송지영', status: '연동 완료', source: '컴포넌트 토큰 정리' },
 		],
 		meetings: [
-			{
-				id: 'm-201',
-				date: '2026.06.12',
-				title: '컴포넌트 토큰 정리',
-				status: '완료',
-				type: '정기',
-				tags: ['#디자인'],
-				participants: ['박디자이너', '송지영'],
-				summary: '컬러/타이포 토큰 네이밍 규칙을 통일하고 릴리즈 정책을 정했습니다.',
-				actionItems: 3,
-				jiraLinked: 1,
-			},
+			{ id: 'm-201', date: '2026.06.12', title: '컴포넌트 토큰 정리', status: '완료', type: '정기', tags: ['#디자인'], participants: ['박디자이너', '송지영'], summary: '컬러/타이포 토큰 네이밍 규칙을 통일하고 릴리즈 정책을 정했습니다.', actionItems: 3, jiraLinked: 1 },
 		],
 	},
 	{
 		id: 3,
 		name: '사용자 인터뷰 분석',
-		category: '기타(직접입력)',
+		category: '기타',
+		description: '인터뷰 VOC를 구조화해 핵심 인사이트를 도출하고 기능 우선순위 수립에 반영하는 프로젝트입니다.',
 		createdAt: '2026-05-19',
 		status: '보류',
 		teamLead: '김소현',
 		participants: ['김소현', '송지영', '채하율', '외부리서처A'],
-		myActionItems: [{ id: 'ux-1', text: 'VOC 태깅 기준 재정의', due: '2026.06.24' }],
+		myActionItems: [{ id: 'ux-1', text: 'VOC 태깅 기준 재정의', due: '2026.06.24', assignee: '김소현', status: '검증 전', source: 'VOC 인사이트 공유' }],
 		meetings: [
-			{
-				id: 'm-301',
-				date: '2026.06.05',
-				title: '인터뷰 질문지 정합성 점검',
-				status: '완료',
-				type: '정기',
-				tags: ['#리서치'],
-				participants: ['김소현', '외부리서처A'],
-				summary: '질문 플로우 중복 항목을 정리하고 인터뷰 기록 템플릿을 표준화했습니다.',
-				actionItems: 2,
-				jiraLinked: 0,
-			},
-			{
-				id: 'm-302',
-				date: '2026.06.11',
-				title: 'VOC 인사이트 공유',
-				status: '진행 중',
-				type: '수시',
-				tags: ['#VOC', '#기획'],
-				participants: ['김소현', '송지영', '채하율'],
-				summary: '주요 페인포인트 3개를 도출해 우선순위 액션 아이템으로 등록했습니다.',
-				actionItems: 4,
-				jiraLinked: 1,
-			},
+			{ id: 'm-301', date: '2026.06.05', title: '인터뷰 질문지 정합성 점검', status: '완료', type: '정기', tags: ['#리서치'], participants: ['김소현', '외부리서처A'], summary: '질문 플로우 중복 항목을 정리하고 인터뷰 기록 템플릿을 표준화했습니다.', actionItems: 2, jiraLinked: 0 },
+			{ id: 'm-302', date: '2026.06.11', title: 'VOC 인사이트 공유', status: '진행 중', type: '수시', tags: ['#VOC', '#기획'], participants: ['김소현', '송지영', '채하율'], summary: '주요 페인포인트 3개를 도출해 우선순위 액션 아이템으로 등록했습니다.', actionItems: 4, jiraLinked: 1 },
 		],
 	},
 	{
 		id: 4,
 		name: '분기별 기획안',
 		category: '기획',
+		description: '분기 로드맵과 핵심 과제를 정리하고 실행 우선순위를 확정하는 기획 프로젝트입니다.',
 		createdAt: '2026-06-08',
 		status: '완료',
 		teamLead: '송지영',
 		participants: ['송지영', '김소현', '정아름', '김민수'],
 		myActionItems: [
-			{ id: 'p-1', text: '분기 로드맵 공유안 확정', due: '2026.06.17' },
-			{ id: 'p-2', text: '기획 QA 체크리스트 배포', due: '2026.06.20' },
+			{ id: 'p-1', text: '분기 로드맵 공유안 확정', due: '2026.06.17', assignee: '송지영', status: '완료', source: 'Q3 로드맵 정리' },
+			{ id: 'p-2', text: '기획 QA 체크리스트 배포', due: '2026.06.20', assignee: '김민수', status: '연동 완료', source: '백로그 우선순위 재조정' },
 		],
 		meetings: [
-			{
-				id: 'm-401',
-				date: '2026.06.15',
-				title: 'Q3 로드맵 정리',
-				status: '완료',
-				type: '정기',
-				tags: ['#기획', '#로드맵'],
-				participants: ['송지영', '정아름', '김소현'],
-				summary: 'Q3 목표와 주요 마일스톤을 확정했습니다.',
-				actionItems: 5,
-				jiraLinked: 2,
-			},
-			{
-				id: 'm-402',
-				date: '2026.06.13',
-				title: '백로그 우선순위 재조정',
-				status: 'Jira 발행됨',
-				type: '수시',
-				tags: ['#기획', '#Jira연동'],
-				participants: ['송지영', '김민수'],
-				summary: '핵심 과제 우선순위를 업데이트하고 Jira 티켓을 재배치했습니다.',
-				actionItems: 7,
-				jiraLinked: 4,
-			},
+			{ id: 'm-401', date: '2026.06.15', title: 'Q3 로드맵 정리', status: '완료', type: '정기', tags: ['#기획', '#로드맵'], participants: ['송지영', '정아름', '김소현'], summary: 'Q3 목표와 주요 마일스톤을 확정했습니다.', actionItems: 5, jiraLinked: 2 },
+			{ id: 'm-402', date: '2026.06.13', title: '백로그 우선순위 재조정', status: 'Jira 발행됨', type: '수시', tags: ['#기획', '#Jira연동'], participants: ['송지영', '김민수'], summary: '핵심 과제 우선순위를 업데이트하고 Jira 티켓을 재배치했습니다.', actionItems: 7, jiraLinked: 4 },
 		],
 	},
 ];
@@ -168,36 +84,21 @@ function statusBadgeClass(status) {
 	return 'bg-[#FEF7E0] text-[#F59E0B]';
 }
 
+const CATEGORY_TEXT_COLOR = {
+	개발: '#0099CC', 디자인: '#7C3AED', 기획: '#10B981', 마케팅: '#EF4444', 기타: '#F59E0B', '기타(직접입력)': '#F59E0B',
+};
+
 const ROLE_MAP = {
-	'정아름': 'PM',
-	'김민수': 'Backend',
-	'송지영': 'PM',
-	'김소현': 'ML Engineer',
-	'채하율': 'Frontend',
-	'박디자이너': 'Designer',
-	'외부리서처A': 'QA',
+	'정아름': 'PM', '김민수': 'Backend', '송지영': 'PM', '김소현': 'ML Engineer', '채하율': 'Frontend', '박디자이너': 'Designer', '외부리서처A': 'QA',
 };
 
 const PARTICIPANT_COLOR_MAP = {
-	'정아름': '#0099CC',
-	'김민수': '#10B981',
-	'송지영': '#7C3AED',
-	'김소현': '#F59E0B',
-	'채하율': '#0EA5E9',
-	'박디자이너': '#EF4444',
-	'외부리서처A': '#5A6F8A',
+	'정아름': '#0099CC', '김민수': '#10B981', '송지영': '#7C3AED', '김소현': '#F59E0B', '채하율': '#0EA5E9', '박디자이너': '#EF4444', '외부리서처A': '#5A6F8A',
 };
 
 const PROJECT_OVERRIDE_STORAGE_KEY = 'tiki_project_overrides';
 
-const TOAST_COLORS = {
-	info: '#0099CC',
-	ai: '#7C3AED',
-	success: '#10B981',
-	warning: '#F59E0B',
-	error: '#EF4444',
-};
-
+const TOAST_COLORS = { info: '#0099CC', ai: '#7C3AED', success: '#10B981', warning: '#F59E0B', error: '#EF4444' };
 const TOAST_VARIANTS = {
 	info: { background: '#0D1B2A', text: '#FFFFFF', icon: TOAST_COLORS.info, border: 'rgba(255,255,255,0.12)' },
 	ai: { background: '#0D1B2A', text: '#FFFFFF', icon: TOAST_COLORS.ai, border: 'rgba(255,255,255,0.12)' },
@@ -212,9 +113,7 @@ const readProjectOverrides = () => {
 		if (!raw) return {};
 		const parsed = JSON.parse(raw);
 		return parsed && typeof parsed === 'object' ? parsed : {};
-	} catch {
-		return {};
-	}
+	} catch { return {}; }
 };
 
 function normalizeProject(project) {
@@ -222,22 +121,23 @@ function normalizeProject(project) {
 	const participants = Array.isArray(project.participants) ? project.participants : [];
 	const meetings = Array.isArray(project.meetings)
 		? project.meetings.map((meeting, idx) => ({
-				id: meeting.id || `m-${project.id}-${idx + 1}`,
-				date: meeting.date || '',
-				title: meeting.title || '회의 제목 없음',
-				status: meeting.status || '진행 중',
-				type: meeting.type || '정기',
-				tags: Array.isArray(meeting.tags) && meeting.tags.length > 0 ? meeting.tags : [`#${project.category || '회의'}`],
-				participants: Array.isArray(meeting.participants) && meeting.participants.length > 0 ? meeting.participants : participants,
-				summary: meeting.summary || '회의 요약이 아직 등록되지 않았습니다.',
-				actionItems: typeof meeting.actionItems === 'number' ? meeting.actionItems : 0,
-				jiraLinked: typeof meeting.jiraLinked === 'number' ? meeting.jiraLinked : 0,
-			}))
+			id: meeting.id || `m-${project.id}-${idx + 1}`,
+			date: meeting.date || '',
+			title: meeting.title || '회의 제목 없음',
+			status: meeting.status || '진행 중',
+			type: meeting.type || '정기',
+			tags: Array.isArray(meeting.tags) && meeting.tags.length > 0 ? meeting.tags : [`#${project.category || '회의'}`],
+			participants: Array.isArray(meeting.participants) && meeting.participants.length > 0 ? meeting.participants : participants,
+			summary: meeting.summary || '회의 요약이 아직 등록되지 않았습니다.',
+			actionItems: typeof meeting.actionItems === 'number' ? meeting.actionItems : 0,
+			jiraLinked: typeof meeting.jiraLinked === 'number' ? meeting.jiraLinked : 0,
+		}))
 		: [];
 	return {
 		id: project.id,
 		name: project.name || '프로젝트',
 		category: project.category || '기타',
+		description: project.description || '',
 		createdAt: project.createdAt || '',
 		status: project.status || '진행 중',
 		teamLead: project.teamLead || participants[0] || '담당자',
@@ -245,6 +145,27 @@ function normalizeProject(project) {
 		myActionItems: Array.isArray(project.myActionItems) ? project.myActionItems : [],
 		meetings,
 	};
+}
+
+// SettingsIcon
+function SettingsIcon() {
+	return (
+		<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+			<circle cx="12" cy="12" r="3" />
+			<path d="M19.4 15a1.7 1.7 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.82-.33 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.5 1Z" />
+		</svg>
+	);
+}
+
+// MoreVertical icon
+function MoreVerticalIcon() {
+	return (
+		<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+			<circle cx="12" cy="5" r="1" fill="currentColor" stroke="none" />
+			<circle cx="12" cy="12" r="1" fill="currentColor" stroke="none" />
+			<circle cx="12" cy="19" r="1" fill="currentColor" stroke="none" />
+		</svg>
+	);
 }
 
 export default function ProjectMeetings() {
@@ -257,6 +178,7 @@ export default function ProjectMeetings() {
 	const toastTimerRef = useRef(null);
 	const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
 	const [activeTab, setActiveTab] = useState('home');
+	const [activePageTab, setActivePageTab] = useState('meetings'); // 'meetings' | 'actions'
 	const [isParticipantsModalOpen, setIsParticipantsModalOpen] = useState(false);
 	const [participantsModalMembers, setParticipantsModalMembers] = useState([]);
 	const [participantsModalTitle, setParticipantsModalTitle] = useState('회의 참여자');
@@ -270,6 +192,12 @@ export default function ProjectMeetings() {
 	const [isCreateOpen, setIsCreateOpen] = useState(false);
 	const [isSortOpen, setIsSortOpen] = useState(false);
 	const [isTypeOpen, setIsTypeOpen] = useState(false);
+	const [actionAssigneeFilter, setActionAssigneeFilter] = useState('전체');
+	const [actionStatusFilter, setActionStatusFilter] = useState('전체');
+	const [actionSourceFilter, setActionSourceFilter] = useState('전체');
+	const [actionItems, setActionItems] = useState([]);
+	const [openMoreMenuId, setOpenMoreMenuId] = useState(null);
+	const moreMenuRef = useRef(null);
 
 	useEffect(() => {
 		const handleResize = () => setIsMobile(window.innerWidth < 768);
@@ -282,22 +210,15 @@ export default function ProjectMeetings() {
 			if (createDropdownRef.current && !createDropdownRef.current.contains(e.target)) setIsCreateOpen(false);
 			if (sortDropdownRef.current && !sortDropdownRef.current.contains(e.target)) setIsSortOpen(false);
 			if (typeDropdownRef.current && !typeDropdownRef.current.contains(e.target)) setIsTypeOpen(false);
+			if (!e.target.closest('[data-more-menu-root]')) setOpenMoreMenuId(null);
 		};
 		document.addEventListener('mousedown', handleOutsideClick);
 		return () => document.removeEventListener('mousedown', handleOutsideClick);
 	}, []);
 
-	useEffect(() => () => {
-		if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
-	}, []);
+	useEffect(() => () => { if (toastTimerRef.current) clearTimeout(toastTimerRef.current); }, []);
 
-	const stateLabels = {
-		IDLE: '대기 중',
-		UPLOADING: '업로드 중',
-		PROCESSING: 'AI 분석 중',
-		COMPLETED: '분석 완료',
-		FAILED: '오류 발생',
-	};
+	const stateLabels = { IDLE: '대기 중', UPLOADING: '업로드 중', PROCESSING: 'AI 분석 중', COMPLETED: '분석 완료', FAILED: '오류 발생' };
 
 	const projectOverrides = useMemo(() => readProjectOverrides(), [location.key]);
 
@@ -306,21 +227,11 @@ export default function ProjectMeetings() {
 		const override = projectOverrides[String(id)] || null;
 		const byId = PROJECTS.find((p) => p.id === id);
 		if (byId) {
-			return normalizeProject({
-				...byId,
-				...(override || {}),
-				participants: Array.isArray(override?.participants) ? override.participants : byId.participants,
-				admins: Array.isArray(override?.admins) ? override.admins : byId.admins,
-			});
+			return normalizeProject({ ...byId, ...(override || {}), participants: Array.isArray(override?.participants) ? override.participants : byId.participants, admins: Array.isArray(override?.admins) ? override.admins : byId.admins });
 		}
 		const stateProject = location.state?.project;
 		if (stateProject && Number(stateProject.id) === id) {
-			return normalizeProject({
-				...stateProject,
-				...(override || {}),
-				participants: Array.isArray(override?.participants) ? override.participants : stateProject.participants,
-				admins: Array.isArray(override?.admins) ? override.admins : stateProject.admins,
-			});
+			return normalizeProject({ ...stateProject, ...(override || {}), participants: Array.isArray(override?.participants) ? override.participants : stateProject.participants, admins: Array.isArray(override?.admins) ? override.admins : stateProject.admins });
 		}
 		if (override && Number(override.id) === id) return normalizeProject(override);
 		return null;
@@ -330,14 +241,8 @@ export default function ProjectMeetings() {
 		const merged = PROJECTS.map((item) => {
 			const override = projectOverrides[String(item.id)];
 			if (!override) return item;
-			return normalizeProject({
-				...item,
-				...override,
-				participants: Array.isArray(override.participants) ? override.participants : item.participants,
-				admins: Array.isArray(override.admins) ? override.admins : item.admins,
-			});
+			return normalizeProject({ ...item, ...override, participants: Array.isArray(override.participants) ? override.participants : item.participants, admins: Array.isArray(override.admins) ? override.admins : item.admins });
 		});
-
 		if (!project) return merged;
 		const exists = merged.some((p) => p.id === project.id);
 		return exists ? merged : [project, ...merged];
@@ -358,17 +263,54 @@ export default function ProjectMeetings() {
 			const searchOk = !q || m.title.toLowerCase().includes(q) || m.summary.toLowerCase().includes(q) || m.tags.join(' ').toLowerCase().includes(q);
 			return typeOk && searchOk;
 		});
-		result = result.sort((a, b) => (sortOrder === '과거순' ? a.date.localeCompare(b.date) : b.date.localeCompare(a.date)));
-		return result;
+		return result.sort((a, b) => (sortOrder === '과거순' ? a.date.localeCompare(b.date) : b.date.localeCompare(a.date)));
 	}, [project, meetingSearch, meetingType, sortOrder, deletedMeetingIds]);
 
-	const stats = useMemo(() => {
-		if (!project) return { totalMeetings: 0, totalActionItems: 0, totalJiraLinked: 0 };
-		const totalMeetings = project.meetings.length;
-		const totalActionItems = project.meetings.reduce((sum, m) => sum + m.actionItems, 0);
-		const totalJiraLinked = project.meetings.reduce((sum, m) => sum + m.jiraLinked, 0);
-		return { totalMeetings, totalActionItems, totalJiraLinked };
+	useEffect(() => {
+		if (!project) {
+			setActionItems([]);
+			return;
+		}
+		setActionItems(
+			(project.myActionItems || []).map((item) => ({
+				id: item.id,
+				text: item.text,
+				due: item.due || '-',
+				assignee: item.assignee || project.teamLead || '담당자 미지정',
+				status: item.status || '검증 전',
+				source: item.source || '내 할 일',
+				meeting: null,
+			}))
+		);
 	}, [project]);
+
+	const allActionItems = actionItems;
+
+	const actionAssigneeOptions = useMemo(() => ['전체', ...new Set(allActionItems.map((item) => item.assignee))], [allActionItems]);
+	const actionStatusOptions = useMemo(() => {
+		const statusSet = new Set(['검증 전', '연동 완료', '완료']);
+		allActionItems.forEach((item) => statusSet.add(item.status));
+		return ['전체', ...statusSet];
+	}, [allActionItems]);
+	const actionSourceOptions = useMemo(() => ['전체', ...new Set(allActionItems.map((item) => item.source))], [allActionItems]);
+
+	const filteredActionItems = useMemo(() => {
+		return allActionItems.filter((item) => {
+			const assigneeOk = actionAssigneeFilter === '전체' || item.assignee === actionAssigneeFilter;
+			const statusOk = actionStatusFilter === '전체' || item.status === actionStatusFilter;
+			const sourceOk = actionSourceFilter === '전체' || item.source === actionSourceFilter;
+			return assigneeOk && statusOk && sourceOk;
+		});
+	}, [allActionItems, actionAssigneeFilter, actionStatusFilter, actionSourceFilter]);
+
+	const actionDashboardStats = useMemo(() => {
+		const total = allActionItems.length;
+		const pending = allActionItems.filter((item) => item.status === '검증 전').length;
+		const linked = allActionItems.filter((item) => item.status === '연동 완료').length;
+		const completed = allActionItems.filter((item) => item.status === '완료').length;
+		const progress = total > 0 ? Math.round(((linked + completed) / total) * 100) : 0;
+		return { total, pending, linked, completed, progress };
+	}, [allActionItems]);
 
 	if (!project) {
 		return (
@@ -378,9 +320,7 @@ export default function ProjectMeetings() {
 					<div className="max-w-4xl mx-auto rounded-2xl border border-[rgba(0,100,180,0.12)] bg-white p-8 text-center">
 						<p className="text-lg font-bold text-[#0D1B2A]">프로젝트를 찾을 수 없습니다.</p>
 						<p className="text-sm text-[#5A6F8A] mt-2">프로젝트 목록에서 다시 선택해 주세요.</p>
-						<button type="button" onClick={() => navigate('/project-list')} className="mt-5 px-4 py-2 rounded-lg bg-[#0099CC] text-white text-sm font-semibold hover:bg-[#007EA7]">
-							프로젝트 목록으로 이동
-						</button>
+						<button type="button" onClick={() => navigate('/project-list')} className="mt-5 px-4 py-2 rounded-lg bg-[#0099CC] text-white text-sm font-semibold hover:bg-[#007EA7]">프로젝트 목록으로 이동</button>
 					</div>
 				</main>
 				{!isMobile && <Footer />}
@@ -393,20 +333,12 @@ export default function ProjectMeetings() {
 	const hiddenParticipantsCount = Math.max(project.participants.length - visibleParticipants.length, 0);
 	const adminNames = useMemo(() => {
 		const participants = Array.isArray(project.participants) ? project.participants : [];
-		const fromProject = Array.isArray(project.admins)
-			? project.admins.filter((name) => participants.includes(name))
-			: [];
-
-		if (fromProject.length > 0) {
-			return [...new Set(fromProject)];
-		}
-
-		if (project.teamLead && participants.includes(project.teamLead)) {
-			return [project.teamLead];
-		}
-
+		const fromProject = Array.isArray(project.admins) ? project.admins.filter((name) => participants.includes(name)) : [];
+		if (fromProject.length > 0) return [...new Set(fromProject)];
+		if (project.teamLead && participants.includes(project.teamLead)) return [project.teamLead];
 		return [];
 	}, [project]);
+
 	const showToast = (msg, type = 'info') => {
 		setToast({ message: msg, type });
 		if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
@@ -419,11 +351,11 @@ export default function ProjectMeetings() {
 		setIsParticipantsModalOpen(true);
 	};
 	const closeParticipantsModal = () => setIsParticipantsModalOpen(false);
-	const handleEditMeeting = () => {
-		showToast('수정 기능은 다음 단계에서 연결 예정입니다.', 'ai');
-	};
-	const handleDeleteMeeting = (meetingId) => {
-		setPendingDeleteMeeting(meetingId);
+	const handleEditMeeting = () => { showToast('수정 기능은 다음 단계에서 연결 예정입니다.', 'ai'); };
+	const handleDeleteMeeting = (meetingId) => { setPendingDeleteMeeting(meetingId); };
+	const handleActionStatusChange = (itemId, nextStatus) => {
+		setActionItems((prev) => prev.map((item) => (item.id === itemId ? { ...item, status: nextStatus } : item)));
+		showToast('액션 아이템 상태가 변경되었습니다.', 'success');
 	};
 	const confirmDeleteMeeting = () => {
 		if (!pendingDeleteMeeting) return;
@@ -432,16 +364,12 @@ export default function ProjectMeetings() {
 		setPendingDeleteMeeting(null);
 	};
 	const currentToastVariant = TOAST_VARIANTS[toast.type] || TOAST_VARIANTS.info;
+	const projectCategoryColor = CATEGORY_TEXT_COLOR[project.category] || '#F59E0B';
+	const projectDescriptionText = project.description?.trim() || '프로젝트 설명이 아직 입력되지 않았습니다.';
 
 	useEffect(() => {
 		if (!isParticipantsModalOpen) return undefined;
-
-		const handleEscClose = (e) => {
-			if (e.key === 'Escape') {
-				closeParticipantsModal();
-			}
-		};
-
+		const handleEscClose = (e) => { if (e.key === 'Escape') closeParticipantsModal(); };
 		document.addEventListener('keydown', handleEscClose);
 		return () => document.removeEventListener('keydown', handleEscClose);
 	}, [isParticipantsModalOpen]);
@@ -454,7 +382,9 @@ export default function ProjectMeetings() {
 					<div className="mb-4">
 						<button type="button" onClick={() => navigate('/project-list')} className="text-sm text-[#5A6F8A] hover:text-[#0D1B2A]">← 프로젝트 목록</button>
 					</div>
+
 					<div className="grid grid-cols-1 xl:grid-cols-12 gap-6">
+						{/* 사이드바 */}
 						<aside className="hidden md:block xl:col-span-3">
 							<section className="rounded-2xl border border-[rgba(0,100,180,0.12)] bg-white p-4">
 								<h3 className="text-sm font-bold text-[#0D1B2A] mb-3">프로젝트</h3>
@@ -469,15 +399,27 @@ export default function ProjectMeetings() {
 								</div>
 							</section>
 						</aside>
+
+						{/* 메인 콘텐츠 */}
 						<section className="xl:col-span-9 space-y-4">
+
+							{/* ── 프로젝트 헤더 (통계 카드 제거) ── */}
 							<section className="rounded-2xl border border-[rgba(0,100,180,0.12)] bg-white p-5">
 								<div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
-									<div>
+									<div className="flex-1 min-w-0">
 										<div className="flex flex-wrap items-center gap-2">
+											<span className="text-xs font-semibold" style={{ color: projectCategoryColor }}>{project.category}</span>
+											<span className="text-xs text-[#8A9AB0]">생성일 {project.createdAt}</span>
+										</div>
+
+										{/* 프로젝트명 + 상태 */}
+										<div className="mt-1 flex flex-wrap items-center gap-2">
 											<h1 className="text-2xl font-bold text-[#0D1B2A]">{project.name}</h1>
 											<span className={`px-2.5 py-1 rounded-full text-xs font-bold ${statusBadgeClass(project.status)}`}>{project.status}</span>
 										</div>
-										<p className="text-sm text-[#5A6F8A] mt-1">생성일 {project.createdAt}</p>
+
+										<p className="text-sm text-[#5A6F8A] mt-2 leading-relaxed">{projectDescriptionText}</p>
+
 										<div className="mt-3 flex items-center gap-2.5">
 											<div className="flex -space-x-2 cursor-pointer" onClick={() => openParticipantsModal(project.participants, '프로젝트 참여자')}>
 												{visibleParticipants.map((name) => (
@@ -492,57 +434,280 @@ export default function ProjectMeetings() {
 											</button>
 										</div>
 									</div>
-									<button type="button" onClick={() => navigate('/configuration', { state: { project } })} className="shrink-0 w-10 h-10 rounded-xl border border-[rgba(0,100,180,0.12)] text-[#5A6F8A] hover:text-[#0099CC] hover:border-[#0099CC]/35 flex items-center justify-center" aria-label="프로젝트 설정 이동">
-										<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.82-.33 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.5 1Z" /></svg>
+									<button
+										type="button"
+										onClick={() => navigate('/configuration', { state: { project } })}
+										className="shrink-0 w-10 h-10 rounded-xl border border-[rgba(0,100,180,0.12)] text-[#5A6F8A] hover:text-[#0099CC] hover:border-[#0099CC]/35 flex items-center justify-center transition"
+										aria-label="프로젝트 설정"
+									>
+										<SettingsIcon />
 									</button>
 								</div>
 							</section>
 
-							<section className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-								<div className="rounded-2xl border border-[rgba(0,100,180,0.12)] bg-white p-4"><h3 className="text-sm font-bold text-[#0D1B2A] mb-3">요약</h3><div className="grid grid-cols-3 gap-2"><div className="rounded-xl bg-[#F8FAFF] border border-[rgba(0,100,180,0.1)] p-3 text-center"><p className="text-[11px] text-[#5A6F8A]">총 회의</p><p className="text-lg font-bold text-[#0D1B2A]">{stats.totalMeetings}회</p></div><div className="rounded-xl bg-[#F8FAFF] border border-[rgba(0,100,180,0.1)] p-3 text-center"><p className="text-[11px] text-[#5A6F8A]">완료 Action</p><p className="text-lg font-bold text-[#0D1B2A]">{stats.totalActionItems}개</p></div><div className="rounded-xl bg-[#F8FAFF] border border-[rgba(0,100,180,0.1)] p-3 text-center"><p className="text-[11px] text-[#5A6F8A]">Jira 연동</p><p className="text-lg font-bold text-[#0D1B2A]">{stats.totalJiraLinked}개</p></div></div></div>
-								<div className="rounded-2xl border border-[rgba(0,100,180,0.12)] bg-white p-4"><h3 className="text-sm font-bold text-[#0D1B2A] mb-3">내 할 일</h3><div className="space-y-2">{project.myActionItems.slice(0, 5).map((item) => (<label key={item.id} className="flex items-start gap-2 rounded-xl border border-[rgba(0,100,180,0.1)] bg-[#F8FAFF] p-2.5"><input type="checkbox" className="mt-0.5" /><span className="flex-1 text-sm text-[#0D1B2A]">{item.text}</span><span className="text-[11px] text-[#5A6F8A]">{item.due}</span></label>))}</div></div>
-							</section>
+							{/* ── 탭 네비게이션 ── */}
+							<div className="flex items-center gap-1 bg-white rounded-2xl border border-[rgba(0,100,180,0.12)] p-1.5">
+								<button
+									type="button"
+									onClick={() => setActivePageTab('meetings')}
+									className={`flex-1 py-2 px-4 rounded-xl text-sm font-semibold transition ${activePageTab === 'meetings' ? 'bg-[#EEF3FF] text-[#0099CC] shadow-sm' : 'text-[#5A6F8A] hover:text-[#0D1B2A]'}`}
+								>
+									회의 기록
+								</button>
+								<button
+									type="button"
+									onClick={() => setActivePageTab('actions')}
+									className={`flex-1 py-2 px-4 rounded-xl text-sm font-semibold transition ${activePageTab === 'actions' ? 'bg-[#EEF3FF] text-[#0099CC] shadow-sm' : 'text-[#5A6F8A] hover:text-[#0D1B2A]'}`}
+								>
+									액션 아이템
+									{allActionItems.length > 0 && (
+										<span className={`ml-1.5 text-[11px] px-1.5 py-0.5 rounded-full font-bold ${activePageTab === 'actions' ? 'bg-[#0099CC] text-white' : 'bg-[#F0F2F5] text-[#5A6F8A]'}`}>
+											{allActionItems.length}
+										</span>
+									)}
+								</button>
+							</div>
 
-							<section className="rounded-2xl border border-[rgba(0,100,180,0.12)] bg-white p-4">
-								<div className="grid grid-cols-1 lg:grid-cols-12 gap-3">
-									<div className="lg:col-span-3 relative" ref={createDropdownRef}>
-										<button type="button" onClick={() => setIsCreateOpen((prev) => !prev)} className={`w-full px-4 py-2.5 rounded-xl text-white font-semibold transition flex items-center justify-center ${isCreateOpen ? 'bg-[#007EA7]' : 'bg-[#0099CC] hover:bg-[#007EA7]'}`}>
-											<span>+ 새 회의록</span>
-										</button>
-										{isCreateOpen && (
-											<div className="absolute left-0 right-0 z-30 mt-2 overflow-hidden rounded-xl border border-[rgba(0,100,180,0.16)] bg-white shadow-[0_12px_28px_rgba(0,100,180,0.18)]">
-												<button type="button" onClick={() => { setIsCreateOpen(false); navigate('/meeting-create', { state: { projectId: project.id, projectName: project.name } }); }} className="w-full px-3.5 py-3 text-left hover:bg-[#EEF3FF]"><p className="text-sm font-semibold text-[#0D1B2A]">회의록 직접 작성</p><p className="text-xs text-[#5A6F8A] mt-0.5">템플릿에 바로 입력해서 회의록을 생성합니다.</p></button>
-												<button type="button" onClick={() => { setIsCreateOpen(false); navigate('/upload', { state: { from: 'project-meetings', projectId: project.id, projectName: project.name } }); }} className="w-full px-3.5 py-3 text-left border-t border-[rgba(0,100,180,0.08)] hover:bg-[#EEF3FF]"><p className="text-sm font-semibold text-[#0D1B2A]">회의 파일 업로드</p><p className="text-xs text-[#5A6F8A] mt-0.5">녹음 파일을 올려 AI 회의록을 자동 생성합니다.</p></button>
+							{/* ── 회의 기록 탭 ── */}
+							{activePageTab === 'meetings' && (
+								<>
+									{/* 컨트롤 영역: 좌측 검색+필터 / 우측 새 회의록 버튼 */}
+									<section className="rounded-2xl border border-[rgba(0,100,180,0.12)] bg-white p-4">
+										<div className="space-y-2.5 sm:space-y-0 sm:flex sm:items-center sm:gap-3">
+											<input
+												value={meetingSearch}
+												onChange={(e) => setMeetingSearch(e.target.value)}
+												placeholder="회의록 검색"
+												className="w-full sm:flex-1 sm:min-w-[220px] px-3.5 py-2.5 text-sm bg-[#F8FAFF] border border-[rgba(0,100,180,0.12)] rounded-xl focus:outline-none focus:border-[#0099CC]"
+											/>
+											<div className="grid grid-cols-2 gap-2 sm:flex sm:items-center sm:gap-2 sm:shrink-0">
+												<div className="relative" ref={sortDropdownRef}>
+													<button type="button" onClick={() => { setIsSortOpen((prev) => !prev); setIsTypeOpen(false); }} className={`w-full sm:w-auto px-3.5 py-2.5 text-sm rounded-xl border transition flex items-center justify-between gap-1.5 ${isSortOpen ? 'bg-[#EEF3FF] border-[#0099CC]/40 shadow-[0_0_0_3px_rgba(0,153,204,0.12)] text-[#0D1B2A]' : 'bg-[#F8FAFF] border-[rgba(0,100,180,0.12)] text-[#0D1B2A] hover:border-[rgba(0,153,204,0.4)]'}`}>
+														<span className="font-medium">{sortOrder}</span>
+														<span className={`text-xs text-[#5A6F8A] transition-transform inline-block ${isSortOpen ? 'rotate-180' : ''}`}>▼</span>
+													</button>
+													{isSortOpen && (
+														<div className="absolute left-0 z-20 mt-2 w-32 overflow-hidden rounded-xl border border-[rgba(0,100,180,0.14)] bg-white shadow-[0_10px_28px_rgba(0,100,180,0.16)]">
+															{['최신순', '과거순'].map((option) => (
+																<button key={option} type="button" onClick={() => { setSortOrder(option); setIsSortOpen(false); }} className={`w-full px-3.5 py-2.5 text-sm text-left flex items-center justify-between transition-colors ${sortOrder === option ? 'bg-[#EEF3FF] text-[#0099CC] font-semibold' : 'text-[#0D1B2A] hover:bg-[#F8FAFF]'}`}>
+																	<span>{option}</span>
+																	{sortOrder === option && <span className="text-[#0099CC] text-xs">✓</span>}
+																</button>
+															))}
+														</div>
+													)}
+												</div>
+													<div className="relative" ref={typeDropdownRef}>
+														<button type="button" onClick={() => { setIsTypeOpen((prev) => !prev); setIsSortOpen(false); }} className={`w-full sm:w-auto px-3.5 py-2.5 text-sm rounded-xl border transition flex items-center justify-between gap-1.5 ${isTypeOpen ? 'bg-[#EEF3FF] border-[#0099CC]/40 shadow-[0_0_0_3px_rgba(0,153,204,0.12)] text-[#0D1B2A]' : 'bg-[#F8FAFF] border-[rgba(0,100,180,0.12)] text-[#0D1B2A] hover:border-[rgba(0,153,204,0.4)]'}`}>
+														<span className="font-medium">{meetingType}</span>
+														<span className={`text-xs text-[#5A6F8A] transition-transform inline-block ${isTypeOpen ? 'rotate-180' : ''}`}>▼</span>
+													</button>
+													{isTypeOpen && (
+														<div className="absolute left-0 z-20 mt-2 w-32 overflow-hidden rounded-xl border border-[rgba(0,100,180,0.14)] bg-white shadow-[0_10px_28px_rgba(0,100,180,0.16)]">
+															{['전체', '정기', '수시'].map((option) => (
+																<button key={option} type="button" onClick={() => { setMeetingType(option); setIsTypeOpen(false); }} className={`w-full px-3.5 py-2.5 text-sm text-left flex items-center justify-between transition-colors ${meetingType === option ? 'bg-[#EEF3FF] text-[#0099CC] font-semibold' : 'text-[#0D1B2A] hover:bg-[#F8FAFF]'}`}>
+																	<span>{option}</span>
+																	{meetingType === option && <span className="text-[#0099CC] text-xs">✓</span>}
+																</button>
+															))}
+														</div>
+													)}
+												</div>
+													<div className="relative col-span-2 sm:col-auto shrink-0" ref={createDropdownRef}>
+														<button type="button" onClick={() => setIsCreateOpen((prev) => !prev)} className={`w-full sm:w-auto flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl text-white text-sm font-semibold transition ${isCreateOpen ? 'bg-[#007EA7]' : 'bg-[#0099CC] hover:bg-[#007EA7]'}`}>
+													<span>+ 새 회의록</span>
+													<span className={`text-xs transition-transform inline-block ${isCreateOpen ? 'rotate-180' : ''}`}>▼</span>
+														</button>
+														{isCreateOpen && (
+															<div className="absolute right-0 z-30 mt-2 w-56 overflow-hidden rounded-xl border border-[rgba(0,100,180,0.16)] bg-white shadow-[0_12px_28px_rgba(0,100,180,0.18)]">
+														<button type="button" onClick={() => { setIsCreateOpen(false); navigate('/meeting-create', { state: { projectId: project.id, projectName: project.name } }); }} className="w-full px-3.5 py-3 text-left hover:bg-[#EEF3FF]">
+															<p className="text-sm font-semibold text-[#0D1B2A]">회의록 직접 작성</p>
+															<p className="text-xs text-[#5A6F8A] mt-0.5">템플릿에 바로 입력해서 회의록을 생성합니다.</p>
+														</button>
+														<button type="button" onClick={() => { setIsCreateOpen(false); navigate('/upload', { state: { from: 'project-meetings', projectId: project.id, projectName: project.name } }); }} className="w-full px-3.5 py-3 text-left border-t border-[rgba(0,100,180,0.08)] hover:bg-[#EEF3FF]">
+															<p className="text-sm font-semibold text-[#0D1B2A]">회의 파일 업로드</p>
+															<p className="text-xs text-[#5A6F8A] mt-0.5">녹음 파일을 올려 AI 회의록을 자동 생성합니다.</p>
+														</button>
+													</div>
+													)}
+												</div>
 											</div>
-										)}
-									</div>
-									<input value={meetingSearch} onChange={(e) => setMeetingSearch(e.target.value)} placeholder="회의록 검색" className="lg:col-span-5 px-3.5 py-2.5 text-sm bg-[#F8FAFF] border border-[rgba(0,100,180,0.12)] rounded-xl focus:outline-none focus:border-[#0099CC]" />
-									<div className="lg:col-span-2 relative" ref={sortDropdownRef}>
-										<button type="button" onClick={() => setIsSortOpen((prev) => !prev)} className={`w-full px-3.5 py-2.5 text-sm rounded-xl border transition flex items-center justify-between ${isSortOpen ? 'bg-[#EEF3FF] border-[#0099CC]/40 shadow-[0_0_0_3px_rgba(0,153,204,0.12)] text-[#0D1B2A]' : 'bg-[#F8FAFF] border-[rgba(0,100,180,0.12)] text-[#0D1B2A] hover:border-[rgba(0,153,204,0.4)]'}`}><span className="font-medium">{sortOrder}</span><span className={`text-xs text-[#5A6F8A] transition-transform ${isSortOpen ? 'rotate-180' : ''}`}>▼</span></button>
-										{isSortOpen && <div className="absolute left-0 right-0 z-20 mt-2 overflow-hidden rounded-xl border border-[rgba(0,100,180,0.14)] bg-white shadow-[0_10px_28px_rgba(0,100,180,0.16)]">{['최신순', '과거순'].map((option) => (<button key={option} type="button" onClick={() => { setSortOrder(option); setIsSortOpen(false); }} className={`w-full px-3.5 py-2.5 text-sm text-left flex items-center justify-between transition-colors ${sortOrder === option ? 'bg-[#EEF3FF] text-[#0099CC] font-semibold' : 'text-[#0D1B2A] hover:bg-[#F8FAFF]'}`}><span>{option}</span>{sortOrder === option && <span className="text-[#0099CC]">✓</span>}</button>))}</div>}
-									</div>
-									<div className="lg:col-span-2 relative" ref={typeDropdownRef}>
-										<button type="button" onClick={() => setIsTypeOpen((prev) => !prev)} className={`w-full px-3.5 py-2.5 text-sm rounded-xl border transition flex items-center justify-between ${isTypeOpen ? 'bg-[#EEF3FF] border-[#0099CC]/40 shadow-[0_0_0_3px_rgba(0,153,204,0.12)] text-[#0D1B2A]' : 'bg-[#F8FAFF] border-[rgba(0,100,180,0.12)] text-[#0D1B2A] hover:border-[rgba(0,153,204,0.4)]'}`}><span className="font-medium">{meetingType}</span><span className={`text-xs text-[#5A6F8A] transition-transform ${isTypeOpen ? 'rotate-180' : ''}`}>▼</span></button>
-										{isTypeOpen && <div className="absolute left-0 right-0 z-20 mt-2 overflow-hidden rounded-xl border border-[rgba(0,100,180,0.14)] bg-white shadow-[0_10px_28px_rgba(0,100,180,0.16)]">{['전체', '정기', '수시'].map((option) => (<button key={option} type="button" onClick={() => { setMeetingType(option); setIsTypeOpen(false); }} className={`w-full px-3.5 py-2.5 text-sm text-left flex items-center justify-between transition-colors ${meetingType === option ? 'bg-[#EEF3FF] text-[#0099CC] font-semibold' : 'text-[#0D1B2A] hover:bg-[#F8FAFF]'}`}><span>{option}</span>{meetingType === option && <span className="text-[#0099CC]">✓</span>}</button>))}</div>}
-									</div>
-								</div>
-							</section>
+										</div>
+									</section>
 
-							<section className="rounded-2xl border border-[rgba(0,100,180,0.12)] bg-white overflow-hidden">
-								{visibleMeetings.length === 0 ? (
-									<div className="px-4 py-12 text-center"><p className="text-sm font-semibold text-[#0D1B2A]">아직 생성된 회의록이 없습니다.</p><p className="text-xs text-[#5A6F8A] mt-1">첫 회의록을 작성해보세요.</p><div className="mt-4 inline-flex gap-2"><button type="button" onClick={() => navigate('/meeting-create', { state: { projectId: project.id, projectName: project.name } })} className="px-4 py-2 rounded-lg bg-[#0099CC] text-white text-sm font-semibold hover:bg-[#007EA7]">회의록 직접 작성</button><button type="button" onClick={() => navigate('/upload', { state: { from: 'project-meetings', projectId: project.id, projectName: project.name } })} className="px-4 py-2 rounded-lg border border-[rgba(0,100,180,0.16)] text-[#5A6F8A] text-sm font-semibold hover:bg-[#F8FAFF]">회의 파일 업로드</button></div></div>
-								) : (
-									<>
-										<div className="hidden md:grid grid-cols-12 px-4 py-3 text-xs font-bold text-[#5A6F8A] bg-[#F8FAFF] border-b border-[rgba(0,100,180,0.1)]"><div className="col-span-2">회의 날짜</div><div className="col-span-3">회의 제목</div><div className="col-span-2">상태</div><div className="col-span-3">주요 태그</div><div className="col-span-2 text-right">관리</div></div>
-										<div className="hidden md:block">{visibleMeetings.map((meeting) => (<div key={meeting.id} className="grid grid-cols-12 px-4 py-3 items-center border-b border-[rgba(0,100,180,0.08)] last:border-b-0"><div className="col-span-2 text-sm text-[#5A6F8A]">{meeting.date}</div><button type="button" onClick={() => navigate('/meeting-detail')} className="col-span-3 text-left text-sm font-semibold text-[#0D1B2A] hover:text-[#0099CC]">{meeting.title}</button><div className="col-span-2"><span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${statusBadgeClass(meeting.status)}`}>{meeting.status}</span></div><div className="col-span-3 flex flex-wrap gap-1">{meeting.tags.map((tag) => (<span key={tag} className="px-2 py-0.5 rounded-full text-xs bg-[#EEF3FF] text-[#0099CC]">{tag}</span>))}</div><div className="col-span-2 flex justify-end gap-2"><button type="button" onClick={handleEditMeeting} className="text-xs text-[#5A6F8A] hover:text-[#0099CC]">수정</button><button type="button" onClick={() => handleDeleteMeeting(meeting.id)} className="text-xs text-[#5A6F8A] hover:text-[#EF4444]">삭제</button></div></div>))}</div>
-										<div className="md:hidden divide-y divide-[rgba(0,100,180,0.08)]">{visibleMeetings.map((meeting) => (<article key={meeting.id} className="p-4 space-y-2.5"><div className="flex items-start justify-between gap-2"><span className="text-xs text-[#5A6F8A]">{meeting.date}</span><span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${statusBadgeClass(meeting.status)}`}>{meeting.status}</span></div><button type="button" onClick={() => navigate('/meeting-detail')} className="text-left text-sm font-semibold text-[#0D1B2A] leading-snug">{meeting.title}</button><div className="flex flex-wrap gap-1">{meeting.tags.map((tag) => (<span key={tag} className="px-2 py-0.5 rounded-full text-xs bg-[#EEF3FF] text-[#0099CC]">{tag}</span>))}</div><div className="flex justify-end gap-3 pt-1"><button type="button" onClick={handleEditMeeting} className="text-xs text-[#5A6F8A] hover:text-[#0099CC]">수정</button><button type="button" onClick={() => handleDeleteMeeting(meeting.id)} className="text-xs text-[#5A6F8A] hover:text-[#EF4444]">삭제</button></div></article>))}</div>
-									</>
-								)}
-							</section>
+									{/* 회의 리스트 */}
+									<section className="rounded-2xl border border-[rgba(0,100,180,0.12)] bg-white overflow-visible">
+										{visibleMeetings.length === 0 ? (
+											<div className="px-4 py-12 text-center">
+												<p className="text-sm font-semibold text-[#0D1B2A]">아직 생성된 회의록이 없습니다.</p>
+												<p className="text-xs text-[#5A6F8A] mt-1">첫 회의록을 작성해보세요.</p>
+												<div className="mt-4 inline-flex gap-2">
+													<button type="button" onClick={() => navigate('/meeting-create', { state: { projectId: project.id, projectName: project.name } })} className="px-4 py-2 rounded-lg bg-[#0099CC] text-white text-sm font-semibold hover:bg-[#007EA7]">회의록 직접 작성</button>
+													<button type="button" onClick={() => navigate('/upload', { state: { from: 'project-meetings', projectId: project.id, projectName: project.name } })} className="px-4 py-2 rounded-lg border border-[rgba(0,100,180,0.16)] text-[#5A6F8A] text-sm font-semibold hover:bg-[#F8FAFF]">회의 파일 업로드</button>
+												</div>
+											</div>
+										) : (
+											<>
+												{/* PC 테이블 헤더 — 관리 컬럼 제거, ⋮ 컬럼으로 대체 */}
+												<div className="hidden md:grid grid-cols-12 px-4 py-3 text-xs font-bold text-[#5A6F8A] bg-[#F8FAFF] border-b border-[rgba(0,100,180,0.1)]">
+													<div className="col-span-2">회의 날짜</div>
+													<div className="col-span-3">회의 제목</div>
+													<div className="col-span-2">상태</div>
+													<div className="col-span-4">주요 태그</div>
+													<div className="col-span-1" />
+												</div>
+												<div className="hidden md:block">
+													{visibleMeetings.map((meeting) => (
+														<div key={meeting.id} className="grid grid-cols-12 px-4 py-3 items-center border-b border-[rgba(0,100,180,0.08)] last:border-b-0">
+															<div className="col-span-2 text-sm text-[#5A6F8A]">{meeting.date}</div>
+															<button type="button" onClick={() => navigate('/meeting-detail')} className="col-span-3 text-left text-sm font-semibold text-[#0D1B2A] hover:text-[#0099CC]">{meeting.title}</button>
+															<div className="col-span-2">
+																<span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${statusBadgeClass(meeting.status)}`}>{meeting.status}</span>
+															</div>
+															<div className="col-span-4 flex flex-wrap gap-1">
+																{meeting.tags.map((tag) => (<span key={tag} className="px-2 py-0.5 rounded-full text-xs bg-[#EEF3FF] text-[#0099CC]">{tag}</span>))}
+															</div>
+															{/* ⋮ 모어 메뉴 */}
+															<div className="col-span-1 flex justify-end" data-more-menu-root>
+																<div className="relative">
+																	<button
+																		type="button"
+																		onClick={() => setOpenMoreMenuId((prev) => (prev === meeting.id ? null : meeting.id))}
+																		className="w-8 h-8 flex items-center justify-center rounded-lg text-[#5A6F8A] hover:text-[#0D1B2A] hover:bg-[#F8FAFF] transition"
+																		aria-label="더 보기"
+																	>
+																		<MoreVerticalIcon />
+																	</button>
+																	{openMoreMenuId === meeting.id && (
+																		<div className="absolute right-full mr-1 top-0 z-40 w-28 overflow-hidden rounded-xl border border-[rgba(0,100,180,0.14)] bg-white shadow-[0_10px_24px_rgba(0,100,180,0.14)]">
+																			<button type="button" onClick={() => { setOpenMoreMenuId(null); handleEditMeeting(); }} className="w-full px-3.5 py-2.5 text-left text-sm text-[#0D1B2A] hover:bg-[#EEF3FF]">수정</button>
+																			<button type="button" onClick={() => { setOpenMoreMenuId(null); handleDeleteMeeting(meeting.id); }} className="w-full px-3.5 py-2.5 text-left text-sm text-[#EF4444] hover:bg-[#FCE8E6]">삭제</button>
+																		</div>
+																	)}
+																</div>
+															</div>
+														</div>
+													))}
+												</div>
+
+												{/* 모바일 카드 */}
+												<div className="md:hidden divide-y divide-[rgba(0,100,180,0.08)]">
+													{visibleMeetings.map((meeting) => (
+														<article key={meeting.id} className="p-4 space-y-2.5">
+															<div className="flex items-start justify-between gap-2">
+																<span className="text-xs text-[#5A6F8A]">{meeting.date}</span>
+																<div className="flex items-center gap-2">
+																	<span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${statusBadgeClass(meeting.status)}`}>{meeting.status}</span>
+																	<div className="relative" data-more-menu-root>
+																		<button type="button" onClick={() => setOpenMoreMenuId((prev) => (prev === meeting.id ? null : meeting.id))} className="w-7 h-7 flex items-center justify-center rounded-lg text-[#5A6F8A] hover:bg-[#F8FAFF] transition">
+																			<MoreVerticalIcon />
+																		</button>
+																		{openMoreMenuId === meeting.id && (
+																			<div className="absolute right-full mr-1 top-0 z-40 w-28 overflow-hidden rounded-xl border border-[rgba(0,100,180,0.14)] bg-white shadow-[0_10px_24px_rgba(0,100,180,0.14)]">
+																				<button type="button" onClick={() => { setOpenMoreMenuId(null); handleEditMeeting(); }} className="w-full px-3.5 py-2.5 text-left text-sm text-[#0D1B2A] hover:bg-[#EEF3FF]">수정</button>
+																				<button type="button" onClick={() => { setOpenMoreMenuId(null); handleDeleteMeeting(meeting.id); }} className="w-full px-3.5 py-2.5 text-left text-sm text-[#EF4444] hover:bg-[#FCE8E6]">삭제</button>
+																			</div>
+																		)}
+																	</div>
+																</div>
+															</div>
+															<button type="button" onClick={() => navigate('/meeting-detail')} className="text-left text-sm font-semibold text-[#0D1B2A] leading-snug">{meeting.title}</button>
+															<div className="flex flex-wrap gap-1">
+																{meeting.tags.map((tag) => (<span key={tag} className="px-2 py-0.5 rounded-full text-xs bg-[#EEF3FF] text-[#0099CC]">{tag}</span>))}
+															</div>
+														</article>
+													))}
+												</div>
+											</>
+										)}
+									</section>
+								</>
+							)}
+
+							{/* ── 액션 아이템 탭 ── */}
+							{activePageTab === 'actions' && (
+								<section className="rounded-2xl border border-[rgba(0,100,180,0.12)] bg-white overflow-hidden">
+									<div className="px-4 py-3.5 border-b border-[rgba(0,100,180,0.08)] bg-[#F8FAFF]">
+										<div className="grid grid-cols-1 md:grid-cols-3 gap-2.5">
+											<select value={actionAssigneeFilter} onChange={(e) => setActionAssigneeFilter(e.target.value)} className="w-full px-3 py-2.5 text-sm bg-white border border-[rgba(0,100,180,0.12)] rounded-xl focus:outline-none focus:border-[#0099CC]">
+												{actionAssigneeOptions.map((option) => <option key={option} value={option}>담당자: {option}</option>)}
+											</select>
+											<select value={actionStatusFilter} onChange={(e) => setActionStatusFilter(e.target.value)} className="w-full px-3 py-2.5 text-sm bg-white border border-[rgba(0,100,180,0.12)] rounded-xl focus:outline-none focus:border-[#0099CC]">
+												{actionStatusOptions.map((option) => <option key={option} value={option}>상태: {option}</option>)}
+											</select>
+											<select value={actionSourceFilter} onChange={(e) => setActionSourceFilter(e.target.value)} className="w-full px-3 py-2.5 text-sm bg-white border border-[rgba(0,100,180,0.12)] rounded-xl focus:outline-none focus:border-[#0099CC]">
+												{actionSourceOptions.map((option) => <option key={option} value={option}>회의록 출처: {option}</option>)}
+											</select>
+										</div>
+									</div>
+									<div className="px-4 py-3.5 border-b border-[rgba(0,100,180,0.08)] bg-white">
+										<div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
+											<div className="rounded-xl border border-[rgba(0,100,180,0.1)] bg-[#F8FAFF] p-3">
+												<p className="text-[11px] text-[#5A6F8A]">프로젝트 진행률</p>
+												<p className="text-lg font-bold text-[#0D1B2A]">{actionDashboardStats.progress}%</p>
+											</div>
+											<div className="rounded-xl border border-[rgba(0,100,180,0.1)] bg-[#F8FAFF] p-3">
+												<p className="text-[11px] text-[#5A6F8A]">검증 전</p>
+												<p className="text-lg font-bold text-[#F59E0B]">{actionDashboardStats.pending}</p>
+											</div>
+											<div className="rounded-xl border border-[rgba(0,100,180,0.1)] bg-[#F8FAFF] p-3">
+												<p className="text-[11px] text-[#5A6F8A]">연동 완료</p>
+												<p className="text-lg font-bold text-[#0099CC]">{actionDashboardStats.linked}</p>
+											</div>
+											<div className="rounded-xl border border-[rgba(0,100,180,0.1)] bg-[#F8FAFF] p-3">
+												<p className="text-[11px] text-[#5A6F8A]">완료 히스토리</p>
+												<p className="text-lg font-bold text-[#10B981]">{actionDashboardStats.completed}</p>
+											</div>
+										</div>
+									</div>
+									{filteredActionItems.length === 0 ? (
+										<div className="px-4 py-12 text-center">
+											<p className="text-sm font-semibold text-[#0D1B2A]">조건에 맞는 액션 아이템이 없습니다.</p>
+											<p className="text-xs text-[#5A6F8A] mt-1">필터를 초기화하거나 다른 조건을 선택해 보세요.</p>
+										</div>
+									) : (
+										<>
+											<div className="hidden md:grid grid-cols-12 px-4 py-3 text-xs font-bold text-[#5A6F8A] bg-[#F8FAFF] border-b border-[rgba(0,100,180,0.1)]">
+												<div className="col-span-1" />
+												<div className="col-span-4">액션 아이템</div>
+												<div className="col-span-2">담당자</div>
+												<div className="col-span-2">상태 관리</div>
+												<div className="col-span-2">회의록 출처</div>
+												<div className="col-span-1">마감일</div>
+											</div>
+											<div className="divide-y divide-[rgba(0,100,180,0.08)]">
+												{filteredActionItems.map((item) => (
+													<div key={item.id} className="grid grid-cols-1 md:grid-cols-12 px-4 py-3.5 items-center gap-2">
+														<div className="md:col-span-1 flex items-center justify-start">
+															<input type="checkbox" className="w-4 h-4 accent-[#0099CC]" />
+														</div>
+														<div className="md:col-span-4 text-sm text-[#0D1B2A] font-medium">{item.text}</div>
+														<div className="md:col-span-2 text-sm text-[#0D1B2A]">{item.assignee}</div>
+														<div className="md:col-span-2">
+															<select value={item.status} onChange={(e) => handleActionStatusChange(item.id, e.target.value)} className="w-full px-2.5 py-2 text-xs bg-white border border-[rgba(0,100,180,0.12)] rounded-lg focus:outline-none focus:border-[#0099CC]">
+																<option value="검증 전">검증 전</option>
+																<option value="연동 완료">연동 완료</option>
+																<option value="완료">완료</option>
+															</select>
+														</div>
+														<div className="md:col-span-2">
+															<span className="text-xs px-2 py-0.5 rounded-full bg-[#EEF3FF] text-[#0099CC] font-medium">{item.source}</span>
+														</div>
+														<div className="md:col-span-1 text-xs text-[#5A6F8A]">{item.due}</div>
+													</div>
+												))}
+											</div>
+										</>
+									)}
+								</section>
+							)}
+
 						</section>
 					</div>
 				</div>
 			</main>
+
+			{/* 참여자 모달 */}
 			{isParticipantsModalOpen && (
 				<div className="fixed inset-0 z-50 flex items-center justify-center p-4" aria-modal="true" role="dialog">
 					<div className="absolute inset-0 bg-[#0D1B2A]/40 backdrop-blur-[2px]" onClick={closeParticipantsModal} />
@@ -578,6 +743,8 @@ export default function ProjectMeetings() {
 					</div>
 				</div>
 			)}
+
+			{/* 삭제 확인 모달 */}
 			{pendingDeleteMeeting && (
 				<div className="fixed inset-0 z-[65] flex items-center justify-center p-4" aria-modal="true" role="dialog">
 					<div className="absolute inset-0 bg-[#0D1B2A]/45" onClick={() => setPendingDeleteMeeting(null)} />
@@ -591,39 +758,24 @@ export default function ProjectMeetings() {
 					</div>
 				</div>
 			)}
+
+			{/* 토스트 */}
 			{toast.message && (
-				<div
-					className="pointer-events-none fixed left-1/2 -translate-x-1/2 z-[70] px-4 w-full sm:w-auto"
-					style={{
-						bottom: isMobile ? 'calc(env(safe-area-inset-bottom) + 5.75rem)' : '1.5rem',
-					}}
-				>
-					<div
-						className="relative text-xs sm:text-sm font-semibold py-3.5 px-5 rounded-2xl shadow-xl border flex items-center gap-2 w-full sm:w-auto sm:min-w-[260px]"
-						style={{
-							backgroundColor: currentToastVariant.background,
-							color: currentToastVariant.text,
-							borderColor: currentToastVariant.border,
-						}}
-					>
+				<div className="pointer-events-none fixed left-1/2 -translate-x-1/2 z-[70] px-4 w-full sm:w-auto" style={{ bottom: isMobile ? 'calc(env(safe-area-inset-bottom) + 5.75rem)' : '1.5rem' }}>
+					<div className="relative text-xs sm:text-sm font-semibold py-3.5 px-5 rounded-2xl shadow-xl border flex items-center gap-2 w-full sm:w-auto sm:min-w-[260px]" style={{ backgroundColor: currentToastVariant.background, color: currentToastVariant.text, borderColor: currentToastVariant.border }}>
 						<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={currentToastVariant.icon} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
 							{toast.type === 'error' && <><path d="M18 6 6 18" /><path d="m6 6 12 12" /></>}
 							{toast.type === 'warning' && <><path d="M10.29 3.86 1.82 18A2 2 0 0 0 3.53 21h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z" /><path d="M12 9v4" /><path d="M12 17h.01" /></>}
-							{toast.type === 'success' && (
-								<>
-									<circle cx="12" cy="12" r="10" fill={TOAST_COLORS.success} stroke="none" />
-									<path d="M16.7 9.2 10.6 15.3 7.2 11.9" stroke="#FFFFFF" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round" />
-								</>
-							)}
+							{toast.type === 'success' && (<><circle cx="12" cy="12" r="10" fill={TOAST_COLORS.success} stroke="none" /><path d="M16.7 9.2 10.6 15.3 7.2 11.9" stroke="#FFFFFF" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round" /></>)}
 							{(toast.type === 'info' || toast.type === 'ai') && <><circle cx="12" cy="12" r="10" /><path d="M12 10v6" /><path d="M12 7h.01" /></>}
 						</svg>
 						{toast.message}
 					</div>
 				</div>
 			)}
+
 			{!isMobile && <Footer />}
 			{isMobile && <MobileTab active={activeTab} onChange={setActiveTab} />}
 		</div>
 	);
 }
-

@@ -3,6 +3,7 @@ from typing import TYPE_CHECKING
 from uuid import UUID
 
 from sqlalchemy import BigInteger, DateTime, Enum, ForeignKey, Integer, String, Text
+from sqlalchemy.dialects.postgresql import UUID as PostgresUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.database import Base
@@ -11,12 +12,18 @@ from app.models.enums import FileKind, ProcessingStatus, enum_values
 
 if TYPE_CHECKING:
     from app.models.analysis import AnalysisResult
+    from app.models.project import Project
 
 
 class UploadedFile(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "uploaded_files"
 
-    project_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    project_id: Mapped[UUID | None] = mapped_column(
+        PostgresUUID(as_uuid=True),
+        ForeignKey("projects.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     project_key: Mapped[str] = mapped_column(String(50), nullable=False)
     project_name: Mapped[str] = mapped_column(String(255), nullable=False)
     original_filename: Mapped[str] = mapped_column(String(255), nullable=False)

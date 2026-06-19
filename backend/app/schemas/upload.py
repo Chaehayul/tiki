@@ -5,7 +5,7 @@ from pydantic import BaseModel
 
 class UploadedFileResponse(BaseModel):
     id: UUID
-    project_id: str
+    project_id: UUID | None
     project_key: str
     project_name: str
     original_filename: str

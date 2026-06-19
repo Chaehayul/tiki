@@ -2,12 +2,14 @@ from pathlib import Path
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, UploadFile, status
-from sqlalchemy.orm import Session
+from sqlalchemy import select
+from sqlalchemy.orm import Session, selectinload
 
 from app.core.config import BACKEND_DIR, settings
 from app.core.exceptions import AppException
 from app.db.database import get_db
-from app.models.file import UploadedFile
+from app.models.file import ExtractedContent, UploadedFile
+from app.schemas.analysis import AnalysisResultResponse
 from app.schemas.upload import UploadBatchResponse, UploadedFileResponse
 from app.workers.tasks import process_uploaded_file
 from app.services.pipeline.file_processing import (
@@ -27,7 +29,7 @@ router = APIRouter(prefix="/uploads", tags=["uploads"])
 )
 async def upload_files(
     background_tasks: BackgroundTasks,
-    project_id: str = Form(...),
+    project_id: UUID | None = Form(default=None),
     project_key: str = Form(...),
     project_name: str = Form(...),
     files: list[UploadFile] = File(...),
@@ -108,3 +110,37 @@ def get_uploaded_file(
         raise AppException(detail="Uploaded file not found", status_code=404, code="not_found")
 
     return UploadedFileResponse.model_validate(uploaded_file)
+
+
+@router.get("/{file_id}/analysis", response_model=AnalysisResultResponse)
+def get_analysis(
+    file_id: UUID,
+    db: Session = Depends(get_db),
+) -> AnalysisResultResponse:
+    uploaded_file = db.scalar(
+        select(UploadedFile)
+        .where(UploadedFile.id == file_id)
+        .options(
+            selectinload(UploadedFile.extracted_content).selectinload(
+                ExtractedContent.analysis_result
+            )
+        )
+    )
+    if uploaded_file is None:
+        raise AppException(detail="Uploaded file not found", status_code=404, code="not_found")
+
+    content = uploaded_file.extracted_content
+    analysis = content.analysis_result if content else None
+
+    return AnalysisResultResponse(
+        file_id=uploaded_file.id,
+        file_status=uploaded_file.status,
+        original_filename=uploaded_file.original_filename,
+        project_id=uploaded_file.project_id,
+        summary=analysis.summary if analysis else None,
+        action_items=analysis.action_items if analysis else None,
+        model_name=analysis.model_name if analysis else None,
+        prompt_version=analysis.prompt_version if analysis else None,
+        masked_transcript=content.masked_text if content else None,
+        extraction_method=content.extraction_method if content else None,
+    )

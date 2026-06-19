@@ -9,7 +9,7 @@ from app.core.exceptions import AppException
 from app.core.security import create_access_token, hash_password, verify_password
 from app.db.database import get_db
 from app.models.user import User
-from app.schemas.auth import AuthResponse, UserCreate, UserLogin, UserResponse
+from app.schemas.auth import AuthResponse, UserCreate, UserLogin, UserResponse, UserUpdate
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -71,4 +71,17 @@ def login(payload: UserLogin, db: Session = Depends(get_db)) -> AuthResponse:
 
 @router.get("/me", response_model=UserResponse)
 def me(current_user: User = Depends(get_current_user)) -> UserResponse:
+    return UserResponse.model_validate(current_user)
+
+
+@router.patch("/me", response_model=UserResponse)
+def update_me(
+    payload: UserUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> UserResponse:
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        setattr(current_user, field, value)
+    db.commit()
+    db.refresh(current_user)
     return UserResponse.model_validate(current_user)

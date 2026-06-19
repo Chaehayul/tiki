@@ -487,7 +487,7 @@ export default function TikiApp() {
           <div className="mb-4 rounded-[14px] border border-[rgba(0,100,180,.12)] bg-white px-5 py-4 shadow-[0_2px_12px_rgba(0,60,150,.05)]">
             <div className="mb-2.5 flex items-center gap-2">
               <IIcon name="box" size={14} color="#0099CC" />
-              <span className="text-sm font-semibold text-[#0D1B2A]">Jira 프로젝트</span>
+              <span className="text-sm font-semibold text-[#0D1B2A]">프로젝트</span>
               <span className="ml-0.5 rounded-full bg-[rgba(239,68,68,.1)] px-2 py-0.5 text-[10px] font-bold text-[#DC2626]">
                 필수
               </span>
@@ -812,29 +812,30 @@ export default function TikiApp() {
         {/* ── 처리 중 ── */}
         {phase === "PROCESSING" && (
           <div className="mt-4 rounded-[20px] border border-[rgba(0,100,180,.12)] bg-white px-4 py-5 shadow-[0_2px_16px_rgba(0,60,150,.06)] sm:px-8 sm:py-8">
-            <div className={cn("mb-7 flex items-center justify-between gap-2.5", isMobile ? "flex-wrap" : "flex-nowrap")}>
-              <div className="flex items-center gap-2.5">
-                <div className="flex items-end gap-[1px] shrink-0">
-                  {["T", "I", "K", "I"].map((ch, index) => (
-                    <span
-                      key={ch}
-                      className="inline-block text-[20px] font-bold leading-none tracking-[-0.5px] text-[#0099CC] animate-tikiBounce drop-shadow-[0_1px_0_rgba(255,255,255,.45)]"
-                      style={{ animationDelay: `${index * 0.15}s` }}
-                    >
-                      {ch}
-                    </span>
-                  ))}
-                </div>
-                <div className="whitespace-nowrap text-[13px] font-medium text-[#5A6F8A]">
-                  가 분석 중<AnimatedDots />
-                </div>
-                {/* 처리 중 프로젝트 표시 */}
+            <div className={cn("mb-2 flex items-start justify-between gap-2.5", isMobile ? "flex-wrap" : "flex-nowrap")}>
+              <div className="flex flex-col gap-2.5">
                 {selectedProject && (
-                  <div className="flex items-center gap-1.5 rounded-full border border-[rgba(0,100,180,.15)] bg-[rgba(0,60,150,.05)] px-2.5 py-1">
+                  <div className="inline-flex items-center gap-1.5">
                     <ProjectBadge project={selectedProject} size="sm" />
                     <span className="text-[12px] text-[#5A6F8A]">{selectedProject.name}</span>
                   </div>
                 )}
+                <div className={cn("flex items-center gap-2.5", selectedProject && "ml-3")}>
+                  <div className="flex items-end gap-[1px] shrink-0">
+                    {["T", "I", "K", "I"].map((ch, index) => (
+                      <span
+                        key={ch}
+                        className="inline-block text-[20px] font-bold leading-none tracking-[-0.5px] text-[#0099CC] animate-tikiBounce drop-shadow-[0_1px_0_rgba(255,255,255,.45)]"
+                        style={{ animationDelay: `${index * 0.15}s` }}
+                      >
+                        {ch}
+                      </span>
+                    ))}
+                  </div>
+                  <div className="whitespace-nowrap text-[13px] font-medium text-[#5A6F8A]">
+                    가 분석 중<AnimatedDots />
+                  </div>
+                </div>
               </div>
               <button className="inline-flex items-center gap-1.5 rounded-[7px] border border-[rgba(0,0,0,.1)] bg-[rgba(0,0,0,.04)] px-[14px] py-1.5 text-xs font-semibold text-[#5A6F8A]" onClick={cancel}>
                 <IIcon name="square" size={11} color="currentColor" />
@@ -870,15 +871,6 @@ export default function TikiApp() {
             </div>
             <div className="mb-2 text-[22px] font-bold tracking-[-0.3px]">분석이 완료됐습니다!</div>
             <div className="mb-1 text-sm text-[#5A6F8A]">회의록이 생성되고 Jira 티켓이 자동으로 등록됐습니다.</div>
-
-            {/* 연결된 프로젝트 표시 */}
-            {selectedProject && (
-              <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-[rgba(0,100,180,.12)] bg-[rgba(0,60,150,.04)] px-3 py-1.5">
-                <ProjectBadge project={selectedProject} />
-                <span className="text-[13px] font-medium text-[#0D1B2A]">{selectedProject.name}</span>
-                <span className="text-[13px] text-[#5A6F8A]">에 연결됨</span>
-              </div>
-            )}
 
             <div className="mb-6 inline-flex flex-wrap justify-center gap-4 rounded-[10px] border border-[rgba(16,185,129,.15)] bg-[rgba(16,185,129,.06)] px-5 py-[10px]">
               {[

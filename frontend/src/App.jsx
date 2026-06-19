@@ -38,7 +38,10 @@ function App() {
       <Route path="/landing" element={<Landingpage />} />
       <Route path="/login" element={<LoginPage />} />
       <Route path="/signup" element={<SignUpPage />} />
-      <Route path="*" element={<Navigate to="/dashboard" replace />} />
+      <Route
+        path="*"
+        element={<Navigate to={isAuthenticated ? '/upload' : '/dashboard'} replace />}
+      />
     </Routes>
   );
 };

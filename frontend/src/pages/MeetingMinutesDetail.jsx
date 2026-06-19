@@ -185,12 +185,7 @@ function LucideIcon({ name, size = 14, color = "currentColor", strokeWidth = 2, 
 }
 
 /* ─── 배지 헬퍼 ──────────────────────────────────────── */
-const KW_BADGE = {
-  cyan:   "bg-cyan-50 text-cyan-600 border border-cyan-200",
-  purple: "bg-purple-50 text-purple-600 border border-purple-200",
-  green:  "bg-emerald-50 text-emerald-600 border border-emerald-200",
-  yellow: "bg-amber-50 text-amber-600 border border-amber-200",
-};
+const KW_BADGE = "bg-slate-50 text-slate-600 border border-slate-200";
 
 const ISSUE_CFG = {
   high:   { bg: "bg-red-50",    border: "border-red-200",    icon: "alert-triangle", badge: "bg-red-100 text-red-500",     label: "높음" },
@@ -262,7 +257,7 @@ function Modal({ open, onClose, title, children, footer, maxWidth = 448 }) {
       >
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 flex-shrink-0">
           <span className="font-bold text-sm text-slate-900">{title}</span>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-700 leading-none">
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-700 leading-none cursor-pointer">
             <LucideIcon name="x" size={18} />
           </button>
         </div>
@@ -277,6 +272,83 @@ function Modal({ open, onClose, title, children, footer, maxWidth = 448 }) {
   );
 }
 
+function CustomDropdown({
+  value,
+  onChange,
+  options,
+  placeholder,
+  disabled = false,
+  hasError = false,
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef(null);
+
+  useEffect(() => {
+    const handleOutside = (event) => {
+      if (rootRef.current && !rootRef.current.contains(event.target)) {
+        setOpen(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handleOutside);
+    return () => document.removeEventListener("mousedown", handleOutside);
+  }, []);
+
+  return (
+    <div ref={rootRef} className="relative">
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => !disabled && setOpen(prev => !prev)}
+        className="w-full text-sm px-3 py-2.5 rounded-lg border outline-none transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer flex items-center justify-between gap-2"
+        style={{
+          borderColor: hasError ? "rgba(239,68,68,0.4)" : "rgba(0,100,180,0.12)",
+          background: "#F8FAFF",
+          color: value ? "#0D1B2A" : "#9CA3AF",
+          fontFamily: "inherit",
+        }}
+      >
+        <span className="truncate">{value || placeholder}</span>
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" className="flex-shrink-0">
+          <path
+            d="M3 5.5L7 9.5L11 5.5"
+            stroke="currentColor"
+            strokeWidth="1.6"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            style={{ transform: open ? "rotate(180deg)" : "rotate(0deg)", transformOrigin: "50% 50%", transition: "transform 0.2s ease" }}
+          />
+        </svg>
+      </button>
+
+      {open && !disabled && (
+        <div
+          className="absolute z-20 mt-1 w-full rounded-lg border overflow-hidden max-h-52 overflow-y-auto"
+          style={{ borderColor: "rgba(0,100,180,0.12)", background: "#fff", boxShadow: "0 8px 24px rgba(13,27,42,0.12)" }}
+        >
+          {options.map(option => (
+            <button
+              key={option}
+              type="button"
+              onClick={() => {
+                onChange(option);
+                setOpen(false);
+              }}
+              className={`w-full text-left px-3 py-2 text-sm transition-colors cursor-pointer ${
+                option === value
+                  ? "bg-cyan-50 text-cyan-700"
+                  : "text-slate-700 hover:bg-slate-50"
+              }`}
+            >
+              {option}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ─── 연동 서비스 뱃지 (실시간 카운트 반영) ─────────── */
 function IntegrationBadge({ svc, onClick }) {
   const done = svc.tickets.filter(t => t.status === "done").length;
@@ -287,7 +359,7 @@ function IntegrationBadge({ svc, onClick }) {
   return (
     <button
       onClick={() => onClick(svc)}
-      className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border transition-all hover:scale-105 active:scale-95"
+      className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border transition-all hover:scale-105 active:scale-95 cursor-pointer"
       style={{
         background: allDone
           ? "rgba(16,185,129,0.06)"
@@ -459,14 +531,12 @@ function IndividualTicketRow({ item, index }) {
       </div>
       <div>
         <label className="text-xs font-semibold text-slate-400 block mb-1">담당자</label>
-        <select
+        <CustomDropdown
           value={assignee}
-          onChange={e => setAssignee(e.target.value)}
-          className="w-full text-xs px-2.5 py-1.5 rounded-lg border outline-none"
-          style={{ borderColor: "rgba(0,100,180,0.12)", background: "#fff", color: "#0D1B2A", fontFamily: "inherit" }}
-        >
-          {ASSIGNEE_OPTIONS.map(a => <option key={a}>{a}</option>)}
-        </select>
+          onChange={setAssignee}
+          options={ASSIGNEE_OPTIONS}
+          placeholder="담당자 선택"
+        />
       </div>
     </div>
   );
@@ -589,13 +659,13 @@ function IssueModal({ open, onClose, onIssued, services }) {
       footer={
         step === 1 ? (
           <>
-            <button onClick={handleClose} className="text-sm font-semibold px-4 py-2 rounded-xl text-slate-500 hover:bg-slate-100">
+            <button onClick={handleClose} className="text-sm font-semibold px-4 py-2 rounded-xl text-slate-500 hover:bg-slate-100 cursor-pointer">
               취소
             </button>
             <button
               onClick={goStep2}
               disabled={!canNext}
-              className="text-sm font-bold px-5 py-2 rounded-xl text-white transition-all hover:-translate-y-0.5 disabled:opacity-40 disabled:cursor-not-allowed disabled:translate-y-0"
+              className="text-sm font-bold px-5 py-2 rounded-xl text-white transition-all hover:-translate-y-0.5 disabled:opacity-40 disabled:cursor-not-allowed disabled:translate-y-0 cursor-pointer"
               style={{ background: "linear-gradient(135deg,#0099CC,#7C3AED)" }}
             >
               다음 →
@@ -606,14 +676,14 @@ function IssueModal({ open, onClose, onIssued, services }) {
             <button
               onClick={() => { setStep(1); setIssueError(null); }}
               disabled={issuing}
-              className="text-sm font-semibold px-4 py-2 rounded-xl text-slate-500 hover:bg-slate-100 disabled:opacity-40"
+              className="text-sm font-semibold px-4 py-2 rounded-xl text-slate-500 hover:bg-slate-100 disabled:opacity-40 cursor-pointer"
             >
               ← 이전
             </button>
             <button
               onClick={handleIssue}
               disabled={issuing || !canIssue}
-              className="text-sm font-bold px-5 py-2 rounded-xl text-white transition-all hover:-translate-y-0.5 disabled:opacity-70 disabled:cursor-not-allowed disabled:translate-y-0 flex items-center gap-2"
+              className="text-sm font-bold px-5 py-2 rounded-xl text-white transition-all hover:-translate-y-0.5 disabled:opacity-70 disabled:cursor-not-allowed disabled:translate-y-0 flex items-center gap-2 cursor-pointer"
               style={{ background: selectedSvc ? SVC_ISSUE_BTN[selectedSvc] : "#10B981", minWidth: 130 }}
             >
               {issuing ? (
@@ -651,7 +721,7 @@ function IssueModal({ open, onClose, onIssued, services }) {
                   <button
                     key={svc.id}
                     onClick={() => setSelectedSvc(svc.id)}
-                    className="flex flex-col items-center gap-2 py-3 px-2 rounded-xl border transition-all hover:-translate-y-0.5"
+                    className="flex flex-col items-center gap-2 py-3 px-2 rounded-xl border transition-all hover:-translate-y-0.5 cursor-pointer"
                     style={{
                       borderColor: isSelected ? "#0099CC" : "rgba(0,100,180,0.12)",
                       background: isSelected
@@ -729,7 +799,7 @@ function IssueModal({ open, onClose, onIssued, services }) {
                 <p className="text-xs text-slate-500 leading-relaxed mb-2.5">{issueError.message}</p>
                 <button
                   onClick={() => window.open("/settings/integrations", "_blank")}
-                  className="text-xs font-bold px-3 py-1.5 rounded-lg text-white transition-all hover:-translate-y-0.5"
+                  className="text-xs font-bold px-3 py-1.5 rounded-lg text-white transition-all hover:-translate-y-0.5 cursor-pointer"
                   style={{ background: "linear-gradient(135deg,#EF4444,#DC2626)" }}
                 >
                   설정으로 이동 →
@@ -745,7 +815,7 @@ function IssueModal({ open, onClose, onIssued, services }) {
           >
             <button
               onClick={() => setIssueMode("merged")}
-              className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-bold transition-all"
+              className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer"
               style={{
                 background: issueMode === "merged" ? "#fff" : "transparent",
                 color: issueMode === "merged" ? "#0099CC" : "#5A6F8A",
@@ -757,7 +827,7 @@ function IssueModal({ open, onClose, onIssued, services }) {
             </button>
             <button
               onClick={() => setIssueMode("individual")}
-              className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-bold transition-all"
+              className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer"
               style={{
                 background: issueMode === "individual" ? "#fff" : "transparent",
                 color: issueMode === "individual" ? "#7C3AED" : "#5A6F8A",
@@ -838,21 +908,14 @@ function IssueModal({ open, onClose, onIssued, services }) {
               <div className="flex gap-3">
                 <div className="flex-1">
                   <label className="text-xs font-semibold text-slate-400 block mb-1.5">담당자</label>
-                  <select
-                    value={assignee || "__placeholder__"}
-                    onChange={e => setAssignee(e.target.value === "__placeholder__" ? "" : e.target.value)}
+                  <CustomDropdown
+                    value={assignee}
+                    onChange={setAssignee}
+                    options={ASSIGNEE_OPTIONS}
+                    placeholder="담당자 선택"
                     disabled={issuing}
-                    className="w-full text-sm px-3 py-2.5 rounded-lg border outline-none transition-colors disabled:opacity-50"
-                    style={{
-                      borderColor: isMultiple && !assignee ? "rgba(239,68,68,0.4)" : "rgba(0,100,180,0.12)",
-                      background: "#F8FAFF",
-                      color: assignee ? "#0D1B2A" : "#9CA3AF",
-                      fontFamily: "inherit",
-                    }}
-                  >
-                    <option value="__placeholder__" disabled style={{ display: "none" }}>담당자 선택</option>
-                    {ASSIGNEE_OPTIONS.map(a => <option key={a} value={a}>{a}</option>)}
-                  </select>
+                    hasError={isMultiple && !assignee}
+                  />
                   {isMultiple && (
                     <p className="text-xs mt-1" style={{ color: "#EF4444" }}>
                       * 통합 발행 시 대표 담당자를 선택해주세요.
@@ -861,15 +924,13 @@ function IssueModal({ open, onClose, onIssued, services }) {
                 </div>
                 <div className="flex-1">
                   <label className="text-xs font-semibold text-slate-400 block mb-1.5">우선순위</label>
-                  <select
+                  <CustomDropdown
                     value={priority}
-                    onChange={e => setPriority(e.target.value)}
+                    onChange={setPriority}
+                    options={["Medium", "High", "Low", "Critical"]}
+                    placeholder="우선순위 선택"
                     disabled={issuing}
-                    className="w-full text-sm px-3 py-2.5 rounded-lg border outline-none disabled:opacity-50"
-                    style={{ borderColor: "rgba(0,100,180,0.12)", background: "#F8FAFF", color: "#0D1B2A", fontFamily: "inherit" }}
-                  >
-                    {["Medium", "High", "Low", "Critical"].map(p => <option key={p}>{p}</option>)}
-                  </select>
+                  />
                 </div>
               </div>
             </div>
@@ -1134,7 +1195,7 @@ function SummaryPanel({ onOpenRegen, onOpenIssue, transcriptVisible, onToggleTra
           {!isMobile && (
             <button
               onClick={onToggleTranscript}
-              className={`flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1.5 rounded-lg border transition-all ${
+              className={`flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1.5 rounded-lg border transition-all cursor-pointer ${
                 transcriptVisible
                   ? "bg-slate-50 text-slate-500 border-slate-200 hover:bg-slate-100"
                   : "bg-cyan-50 text-cyan-600 border-cyan-200 hover:bg-cyan-100"
@@ -1164,7 +1225,7 @@ function SummaryPanel({ onOpenRegen, onOpenIssue, transcriptVisible, onToggleTra
           )}
           <button
             onClick={onOpenRegen}
-            className="text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-purple-50 text-purple-600 border border-purple-200 hover:bg-purple-100 transition-colors"
+            className="text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-purple-50 text-purple-600 border border-purple-200 hover:bg-purple-100 transition-colors cursor-pointer"
           >
             다시 생성
           </button>
@@ -1178,7 +1239,7 @@ function SummaryPanel({ onOpenRegen, onOpenIssue, transcriptVisible, onToggleTra
               <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-2">핵심 키워드</p>
               <div className="flex flex-wrap gap-1.5">
                 {SUMMARY_DATA.keywords.map(k => (
-                  <span key={k.text} className={`text-xs font-semibold px-2.5 py-1 rounded-full ${KW_BADGE[k.type]}`}>
+                  <span key={k.text} className={`text-xs font-semibold px-2.5 py-1 rounded-full ${KW_BADGE}`}>
                     {k.text}
                   </span>
                 ))}
@@ -1388,7 +1449,7 @@ function IssueButton({ onClick, issuingGlobal = false }) {
     <button
       onClick={onClick}
       disabled={issuingGlobal}
-      className="flex items-center justify-center gap-1.5 px-3.5 py-2 text-white text-xs font-bold transition-all hover:-translate-y-0.5 active:scale-95 disabled:opacity-60 disabled:cursor-not-allowed disabled:translate-y-0"
+      className="flex items-center justify-center gap-1.5 px-3.5 py-2 text-white text-xs font-bold transition-all hover:-translate-y-0.5 active:scale-95 disabled:opacity-60 disabled:cursor-not-allowed disabled:translate-y-0 cursor-pointer"
       style={{
         background: "linear-gradient(135deg,#0099CC,#7C3AED)",
         borderRadius: "10px",
@@ -1700,7 +1761,7 @@ export default function TikiSprint12() {
                 </div>
                 <button
                   onClick={() => { setBmFilter(f => !f); setShownCount(PAGE_SIZE); }}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors ${
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors cursor-pointer ${
                     bmFilter ? "bg-amber-50 text-amber-500 border-amber-200" : "bg-white text-slate-400 border-slate-200 hover:bg-blue-50"
                   }`}
                 >
@@ -1708,7 +1769,7 @@ export default function TikiSprint12() {
                 </button>
                 <button
                   onClick={toggleAllCollapse}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors bg-white text-slate-400 border-slate-200 hover:bg-blue-50"
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors bg-white text-slate-400 border-slate-200 hover:bg-blue-50 cursor-pointer"
                 >
                   <svg width="13" height="13" viewBox="0 0 13 13" fill="none"
                     style={{ transform: allCollapsed ? "rotate(-90deg)" : "rotate(0deg)", transition: "transform 0.2s" }}>
@@ -1743,7 +1804,7 @@ export default function TikiSprint12() {
               {remaining > 0 && (
                 <button
                   onClick={() => setShownCount(c => c + PAGE_SIZE)}
-                  className="w-full py-3 rounded-xl text-sm font-semibold text-slate-400 hover:text-slate-700 bg-white border border-slate-200 hover:-translate-y-0.5 hover:shadow-sm transition-all"
+                  className="w-full py-3 rounded-xl text-sm font-semibold text-slate-400 hover:text-slate-700 bg-white border border-slate-200 hover:-translate-y-0.5 hover:shadow-sm transition-all cursor-pointer"
                 >
                   대화 {remaining}개 더 보기 ↓
                 </button>

@@ -33,6 +33,20 @@ const PROJECTS = {
   DS: { key: "DS", name: "데이터 인프라 구축", color: "#10B981", bg: "#E6F4EA", border: "rgba(16,185,129,0.3)" }
 };
 
+// 프로젝트별 회의명 — 대시보드 곳곳(오늘의 최우선 업무, AI 리마인드 등)에서 동일하게 참조
+const MEETING_TITLES = {
+  TIKI: "네오테크 6월 3주차 스프린트 회의",
+  MKT: "마케팅 캠페인 Q3 킥오프 회의",
+  DS: "데이터 인프라 구축 점검 회의"
+};
+
+// 우선순위 → 영문 배지 표기 (오늘의 최우선 업무 카드에서 사용)
+const PRIORITY_EN = {
+  "높음": { label: "High", bg: "#FCE8E6", text: "#EF4444" },
+  "보통": { label: "Medium", bg: "#EEF3FF", text: "#0099CC" },
+  "낮음": { label: "Low", bg: "#F1F4F8", text: "#5A6F8A" }
+};
+
 // AI가 분석한 액션 아이템 초기 데이터
 const INITIAL_ACTION_ITEMS = [
   {
@@ -109,6 +123,52 @@ const INITIAL_ACTION_ITEMS = [
     description: "데이터 인프라 회의 기인. 야간 배치 실패 시 Slack 알림이 누락되는 문제 해결 및 모니터링 대시보드 연동.",
     contextTime: "15:02",
     jiraLink: ""
+  },
+  {
+    id: 6,
+    title: "정아름 - 디자인 시스템 컴포넌트 네이밍 컨벤션 문서화",
+    priority: "낮음",
+    projectKey: "TIKI",
+    assignee: "정아름",
+    assignees: ["정아름"],
+    avatar: "user",
+    status: "검증 전",
+    dueDate: "2026-07-03",
+    meetingDate: "2026-06-16",
+    description: "회의록 31분 20초 영역 기인. 팀 전체가 참고할 수 있도록 디자인 시스템 컴포넌트의 네이밍 규칙과 명명 기준을 정리해 문서로 남길 것.",
+    contextTime: "31:20",
+    jiraLink: ""
+  }
+];
+
+// AI가 회의록에서 추출한 "약속/리마인드" 초기 데이터 (액션 아이템과 별개 트랙)
+const INITIAL_REMINDERS = [
+  {
+    id: 1,
+    name: "김민수",
+    task: "레퍼런스 조사 자료 전달",
+    deadlineLabel: "오늘까지",
+    projectKey: "TIKI",
+    contextTime: "31:54",
+    dismissed: false
+  },
+  {
+    id: 2,
+    name: "송지영",
+    task: "A/B 테스트 시안 공유",
+    deadlineLabel: "이번 주 안으로",
+    projectKey: "MKT",
+    contextTime: "14:08",
+    dismissed: false
+  },
+  {
+    id: 3,
+    name: "박디자이너",
+    task: "Figma 최종 업로드 확인 회신",
+    deadlineLabel: "내일까지",
+    projectKey: "TIKI",
+    contextTime: "24:40",
+    dismissed: true
   }
 ];
 
@@ -272,6 +332,33 @@ function LucideIcon({ name, size = 16, className = "" }) {
         <line x1="4.93" y1="19.07" x2="7.76" y2="16.24" />
         <line x1="16.24" y1="7.76" x2="19.07" y2="4.93" />
       </svg>
+    ),
+    target: (
+      <svg className={className} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="12" cy="12" r="10" />
+        <circle cx="12" cy="12" r="6" />
+        <circle cx="12" cy="12" r="2" />
+      </svg>
+    ),
+    grid: (
+      <svg className={className} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <rect x="3" y="3" width="8" height="8" rx="1.5" />
+        <rect x="13" y="3" width="8" height="8" rx="1.5" />
+        <rect x="3" y="13" width="8" height="8" rx="1.5" />
+        <rect x="13" y="13" width="8" height="8" rx="1.5" />
+      </svg>
+    ),
+    bell: (
+      <svg className={className} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
+        <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
+      </svg>
+    ),
+    inbox: (
+      <svg className={className} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <polyline points="22 12 16 12 14 15 10 15 8 12 2 12" />
+        <path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11Z" />
+      </svg>
     )
   };
 
@@ -328,6 +415,23 @@ function ProjectBadge({ project, size = "sm" }) {
   );
 }
 
+// D-day 배지 — 전 항목 공통 표시. urgent(D-3 이내/지연)만 강조색, 그 외엔 중립색.
+function DDayBadge({ dday }) {
+  return (
+    <span
+      className={`text-[11px] font-bold px-2 py-0.5 rounded-full border whitespace-nowrap ${
+        dday.overdue
+          ? "border-[#EF4444]/40 text-[#EF4444]"
+          : dday.urgent
+          ? "border-[#F59E0B]/40 text-[#B97309]"
+          : "border-[#9AA7B8]/30 text-[#5A6F8A]"
+      }`}
+    >
+      {dday.label}
+    </span>
+  );
+}
+
 export default function App() {
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
   const [activeTab, setActiveTab] = useState("home");
@@ -372,6 +476,8 @@ export default function App() {
   const [statusFilter, setStatusFilter] = useState("전체");
   const [projectFilter, setProjectFilter] = useState("전체"); // ProjectList의 카테고리 필터와 동일한 패턴
   const [searchQuery, setSearchQuery] = useState(""); // 실시간 검색어
+  const [isProjectFilterOpen, setIsProjectFilterOpen] = useState(false); // 프로젝트 드롭다운 열림 상태
+  const [isSummaryExpanded, setIsSummaryExpanded] = useState(false); // 오늘의 최우선 업무 + AI 리마인드 통합 패널 — 기본 접힘
   const [selectedItem, setSelectedItem] = useState(null);
   const [isAssigneeOpen, setIsAssigneeOpen] = useState(false);
   const [isStatusSortOpen, setIsStatusSortOpen] = useState(false);
@@ -379,9 +485,13 @@ export default function App() {
   const [integratingId, setIntegratingId] = useState(null); // Jira 연동 모션 진행 중인 행
   const [justCompletedId, setJustCompletedId] = useState(null); // 방금 연동 완료되어 하이라이트할 행
 
+  // AI 리마인드 상태 관리 (액션 아이템과는 별개의 "약속 확인" 트랙)
+  const [reminders, setReminders] = useState(INITIAL_REMINDERS);
+
   const dueDateInputRef = useRef(null);
   const assigneeDropdownRef = useRef(null);
   const statusDropdownRef = useRef(null);
+  const projectDropdownRef = useRef(null);
 
   // 업로드 시뮬레이션 관련 상태
   const [uploadFile, setUploadFile] = useState(null);
@@ -413,7 +523,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!isAssigneeOpen && !isStatusSortOpen) return;
+    if (!isAssigneeOpen && !isStatusSortOpen && !isProjectFilterOpen) return;
     const handleOutsideClick = (e) => {
       if (isAssigneeOpen && assigneeDropdownRef.current && !assigneeDropdownRef.current.contains(e.target)) {
         setIsAssigneeOpen(false);
@@ -421,10 +531,13 @@ export default function App() {
       if (isStatusSortOpen && statusDropdownRef.current && !statusDropdownRef.current.contains(e.target)) {
         setIsStatusSortOpen(false);
       }
+      if (isProjectFilterOpen && projectDropdownRef.current && !projectDropdownRef.current.contains(e.target)) {
+        setIsProjectFilterOpen(false);
+      }
     };
     document.addEventListener("mousedown", handleOutsideClick);
     return () => document.removeEventListener("mousedown", handleOutsideClick);
-  }, [isAssigneeOpen, isStatusSortOpen]);
+  }, [isAssigneeOpen, isStatusSortOpen, isProjectFilterOpen]);
 
   useEffect(() => {
     if (!selectedItem) setDeleteTargetId(null);
@@ -472,6 +585,19 @@ export default function App() {
     triggerToast("액션 아이템이 성공적으로 수정(사용자 변경)되었습니다.", "success");
   };
 
+  // A-1. 검증 (Verify) 기능 — "검증 전" 항목을 빠르게 "진행중"으로 전환 (모달을 열지 않는 1-click 액션)
+  const handleVerify = (itemId) => {
+    setActionItems(prev => prev.map(item => (
+      item.id === itemId ? { ...item, status: "진행중" } : item
+    )));
+    triggerToast("액션 아이템이 검증되어 진행중 상태로 전환되었습니다.", "success");
+  };
+
+  const handleQuickVerify = (e, itemId) => {
+    e.stopPropagation();
+    handleVerify(itemId);
+  };
+
   // B. 승인 (Approve) 기능 — 연동 완료 처리 전, 짧은 모션(연동 중 표시)을 거쳐 자연스럽게 정리
   const handleApprove = (itemId) => {
     setIntegratingId(itemId);
@@ -511,6 +637,14 @@ export default function App() {
     setSelectedItem(null);
     setDeleteTargetId(null);
     triggerToast("액션 아이템이 삭제되었습니다.", "warning");
+  };
+
+  // D. AI 리마인드 — "준비 완료"로 표시(해당 약속 확인 처리)
+  const handleDismissReminder = (reminderId) => {
+    setReminders(prev => prev.map(r => (
+      r.id === reminderId ? { ...r, dismissed: true } : r
+    )));
+    triggerToast("리마인드를 확인 완료로 표시했습니다.", "success");
   };
 
   // 업로드 체험 시뮬레이션
@@ -579,10 +713,15 @@ export default function App() {
   };
 
   // 상태 필터 + 프로젝트 필터 + 실시간 검색 필터링 (제목/담당자 대상)
+  // 리스트는 항상 내 담당 항목만 노출
+  const isAnyFilterActive = statusFilter !== "전체" || projectFilter !== "전체" || searchQuery.trim() !== "";
+
   const filteredItems = useMemo(() => {
+    const byAssignee = actionItems.filter((item) => isAssignedToMe(item));
+
     const byStatus = statusFilter === "전체"
-      ? actionItems
-      : actionItems.filter((item) => item.status === statusFilter);
+      ? byAssignee
+      : byAssignee.filter((item) => item.status === statusFilter);
 
     const byProject = projectFilter === "전체"
       ? byStatus
@@ -601,6 +740,7 @@ export default function App() {
       return haystack.includes(query);
     });
   }, [actionItems, statusFilter, projectFilter, searchQuery]);
+
 
   // 프로젝트별 그룹핑 — ProjectList의 카테고리 그룹 섹션 구조를 동일하게 적용
   // 각 그룹 내부에서는 연동 완료 항목을 하단으로 자연스럽게 정렬
@@ -625,11 +765,26 @@ export default function App() {
       .map((key) => ({ projectKey: key, items: groups[key] }));
   }, [filteredItems]);
 
-  // 헤더 개인화 인사 및 업무 요약에 쓰이는 값
+  // 헤더 개인화 인사에 쓰이는 값 — "오늘 처리할 내 아이템 개수"만 한 줄로 보여준다.
   const firstName = user?.name || "사용자";
-  const pendingCount = actionItems.filter((item) => item.status !== "연동 완료").length;
-  const doneCount = actionItems.length - pendingCount;
   const myPendingCount = actionItems.filter((item) => item.status !== "연동 완료" && isAssignedToMe(item)).length;
+
+  // 내 업무 기준 파생 데이터 — "오늘의 최우선 업무" 카드에서 사용
+  // AI Score(정렬 가중치)는 화면에는 노출하지 않고 정렬 기준으로만 사용한다.
+  const myActiveItems = useMemo(() => {
+    const priorityWeight = { "높음": 3, "보통": 2, "낮음": 1 };
+    return actionItems
+      .filter((item) => isAssignedToMe(item) && item.status !== "연동 완료")
+      .sort((a, b) => {
+        const weightDiff = (priorityWeight[b.priority] || 0) - (priorityWeight[a.priority] || 0);
+        if (weightDiff !== 0) return weightDiff;
+        return new Date(a.dueDate) - new Date(b.dueDate);
+      });
+  }, [actionItems]);
+
+  const topPriorityItems = myActiveItems.slice(0, 2);
+
+  const activeReminderCount = reminders.filter((r) => !r.dismissed).length;
 
   const projectFilterOptions = ["전체", ...Object.keys(PROJECTS)];
 
@@ -683,7 +838,7 @@ export default function App() {
         stateLabels={uploadStateLabels}
       />
 
-      {/* 1단계: 랜딩 페이지 (비인증 상태) — 기존 유지 */}
+      {/* 1단계: 랜딩 페이지 (비인증 상태) — 기존 유지, 절대 수정하지 않음 */}
       {!isAuthenticated && (
         <div className="flex-1 flex flex-col">
           <section className="relative overflow-hidden pt-16 pb-20 lg:pt-24 lg:pb-28 bg-gradient-to-b from-[#F8FAFF] via-white to-[#F8FAFF]">
@@ -840,91 +995,297 @@ export default function App() {
         </div>
       )}
 
-      {/* 2단계: 메인 대시보드 (인증 상태) — ProjectList와 동일한 구성 언어로 재구성 */}
+      {/* 2단계: 메인 대시보드 (인증 상태) — 조망/필터링/실행 3단 구조로 재구성 */}
       {isAuthenticated && (
         <div className="flex-1 w-full px-4 md:px-8 py-6 md:py-8">
-          <div className="max-w-6xl mx-auto flex flex-col gap-6">
+          <div className="max-w-6xl mx-auto flex flex-col gap-8">
 
-            {/* 상단 헤더 영역 — ProjectList의 "타이틀 + 설명 / 액션 버튼" 패턴과 동일 */}
+            {/* 상단 헤더 영역 — 개인화 인사 + 요약 패널 펼치기 토글 */}
             <div>
-              <div>
-                <h1 className="text-2xl font-bold text-[#0D1B2A]">
-                  안녕하세요, {firstName}님
-                </h1>
-                <p className="text-[#5A6F8A] mt-1">
-                  오늘 처리할 내 액션 아이템이 <span className="font-bold text-[#0099CC]">{myPendingCount}개</span> 있어요
-                  <span className="text-[#D7DEE8] mx-1.5">·</span>전체 대기 {pendingCount}개
-                  <span className="text-[#D7DEE8] mx-1.5">·</span>연동 완료 {doneCount}개
-                </p>
+              <div className="flex items-center justify-between gap-3 flex-wrap">
+                <div>
+                  <h1 className="text-2xl font-bold text-[#0D1B2A]">
+                    안녕하세요, {firstName}님
+                  </h1>
+                  <p className="text-[#5A6F8A] mt-1">
+                    오늘 처리할 내 액션 아이템이 <span className="font-bold text-[#0099CC]">{myPendingCount}개</span> 있어요
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsSummaryExpanded((prev) => !prev)}
+                  aria-expanded={isSummaryExpanded}
+                  className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-[#0099CC] hover:text-[#0086b3] transition-colors cursor-pointer"
+                >
+                  {isSummaryExpanded ? "오늘의 요약 접기" : "오늘의 요약 보기"}
+                  <LucideIcon
+                    name="chevronDown"
+                    size={15}
+                    className={`transition-transform duration-300 ${isSummaryExpanded ? "rotate-180" : ""}`}
+                  />
+                </button>
               </div>
             </div>
 
-            {/* 검색/정렬/필터 — ProjectList의 흰 카드 필터 패널과 동일한 구성 */}
-            <div className="rounded-2xl border border-[rgba(0,100,180,0.12)] bg-white p-4 sm:p-5 shadow-sm">
-              <div className="grid grid-cols-1 lg:grid-cols-12 gap-3">
-                <div className="lg:col-span-7 relative">
-                  <LucideIcon name="search" size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[#9AA7B8]" />
-                  <input
-                    type="text"
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder="제목, 담당자, 프로젝트 검색"
-                    className="w-full pl-10 pr-9 py-2.5 text-sm bg-[#F8FAFF] border border-[rgba(0,100,180,0.12)] rounded-xl focus:outline-none focus:border-[#0099CC] placeholder:text-[#9AA7B8]"
-                  />
-                  {searchQuery && (
-                    <button
-                      onClick={() => setSearchQuery("")}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-[#9AA7B8] hover:text-[#5A6F8A] transition-colors"
-                    >
-                      <LucideIcon name="x" size={14} />
-                    </button>
-                  )}
+            {/* 오늘의 최우선 업무 + AI 리마인드 — 하나의 통합 요약 패널, 기본 접힘. 테두리/배경 없이 메인 리스트 흐름을 방해하지 않음 */}
+            <div
+              className={`grid transition-[grid-template-rows,opacity] duration-300 ease-in-out ${
+                isSummaryExpanded ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"
+              }`}
+            >
+              <div className="overflow-hidden">
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 pb-2">
+                  {/* 오늘의 최우선 업무 */}
+                  <section className="flex flex-col gap-3">
+                    <div className="flex items-center gap-2">
+                      <span className="w-7 h-7 rounded-lg bg-[#EEF3FF] text-[#0099CC] flex items-center justify-center">
+                        <LucideIcon name="target" size={14} />
+                      </span>
+                      <h2 className="text-base font-bold text-[#0D1B2A]">오늘의 최우선 업무</h2>
+                      <span className="text-[11px] font-bold text-[#7C3AED] bg-[#7C3AED]/10 px-2 py-0.5 rounded-full">AI 산정</span>
+                    </div>
+
+                    {topPriorityItems.length === 0 ? (
+                      <div className="flex-1 rounded-2xl border border-dashed border-[rgba(0,100,180,0.18)] bg-white p-8 text-center flex items-center justify-center">
+                        <p className="text-sm text-[#5A6F8A]">오늘 처리할 우선 업무가 없어요. 잘 하고 계세요! 🎉</p>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        {topPriorityItems.map((item, idx) => {
+                          const dday = getDDayInfo(item.dueDate);
+                          const pr = PRIORITY_EN[item.priority] || PRIORITY_EN["보통"];
+                          return (
+                            <div
+                              key={item.id}
+                              onClick={() => openEditModal(item)}
+                              className="cursor-pointer rounded-2xl border border-[rgba(0,100,180,0.12)] bg-white p-4 hover:border-[rgba(0,153,204,0.4)] hover:shadow-md transition-all"
+                            >
+                              <div className="flex items-center justify-between mb-3">
+                                <span className="text-[11px] font-bold text-[#9AA7B8]">#{idx + 1} 우선</span>
+                                <span
+                                  className="text-[11px] font-bold px-2 py-0.5 rounded-full"
+                                  style={{ backgroundColor: pr.bg, color: pr.text }}
+                                >
+                                  {pr.label}
+                                </span>
+                              </div>
+                              <h3 className="text-sm font-bold text-[#0D1B2A] leading-snug mb-3 line-clamp-2">
+                                {item.title}
+                              </h3>
+                              <button
+                                type="button"
+                                onClick={(e) => e.stopPropagation()}
+                                className="inline-flex items-center gap-1.5 text-[12px] text-[#5A6F8A] hover:text-[#0099CC] underline-offset-2 hover:underline"
+                              >
+                                <LucideIcon name="calendar" size={11} className="text-[#9AA7B8]" />
+                                {MEETING_TITLES[item.projectKey]}
+                              </button>
+                              <div className="mt-3 flex justify-end">
+                                <DDayBadge dday={dday} />
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </section>
+
+                  {/* AI 리마인드 */}
+                  <section className="flex flex-col gap-3">
+                    <div className="flex items-center gap-2">
+                      <span className="w-7 h-7 rounded-lg bg-[#EEF3FF] text-[#0099CC] flex items-center justify-center">
+                        <LucideIcon name="bell" size={14} />
+                      </span>
+                      <h2 className="text-base font-bold text-[#0D1B2A]">AI 리마인드</h2>
+                      <span className="text-[11px] font-bold text-white bg-[#0099CC] px-2 py-0.5 rounded-full">
+                        {activeReminderCount}건 확인 필요
+                      </span>
+                    </div>
+
+                    <div className="flex flex-col gap-3">
+                      {reminders.map((r) => (
+                        <div
+                          key={r.id}
+                          className={`flex items-start sm:items-center justify-between gap-3 rounded-2xl border border-[rgba(0,100,180,0.12)] bg-white p-4 transition-opacity ${
+                            r.dismissed ? "opacity-45" : ""
+                          }`}
+                        >
+                          <div className="flex items-start gap-3 min-w-0">
+                            <span className="shrink-0 w-7 h-7 rounded-full bg-[#F8FAFF] text-[#9AA7B8] flex items-center justify-center mt-0.5">
+                              <LucideIcon name="bell" size={13} />
+                            </span>
+                            <div className="min-w-0">
+                              <p className="text-sm text-[#0D1B2A] leading-snug">
+                                어제 회의에서 <strong className="font-bold">'{r.name}'</strong>님에게{" "}
+                                <strong className="font-bold">'{r.task}'</strong>를 전달하기로 말씀하셨습니다.
+                              </p>
+                              <p className="mt-1.5 text-[11px] text-[#8A9AB0] flex items-center gap-1.5 flex-wrap">
+                                <span className={`font-bold ${r.dismissed ? "text-[#9AA7B8]" : "text-[#B97309]"}`}>
+                                  {r.deadlineLabel}
+                                </span>
+                                <span className="text-[#D7DEE8]">·</span>
+                                <span>{MEETING_TITLES[r.projectKey]}</span>
+                                <span className="text-[#D7DEE8]">·</span>
+                                <span className="font-mono">{r.contextTime}</span>
+                              </p>
+                            </div>
+                          </div>
+
+                          {!r.dismissed && (
+                            <button
+                              type="button"
+                              onClick={() => handleDismissReminder(r.id)}
+                              className="shrink-0 inline-flex items-center gap-1.5 text-[12px] font-semibold text-[#0099CC] border border-[#0099CC]/40 hover:bg-[#0099CC] hover:text-white hover:border-[#0099CC] px-2.5 py-1.5 rounded-lg transition-colors cursor-pointer"
+                            >
+                              <LucideIcon name="check" size={12} />
+                              준비 완료
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+                </div>
+              </div>
+            </div>
+
+            {/* 전체 액션 아이템 */}
+            <section className="flex flex-col gap-4">
+              <h2 className="text-lg font-bold text-[#0D1B2A]">전체 액션 아이템</h2>
+
+              {/* 검색/상태/프로젝트 필터 — ProjectList의 흰 카드 필터 패널과 동일한 구성 */}
+              <div className="rounded-2xl border border-[rgba(0,100,180,0.12)] bg-white p-4 sm:p-5 shadow-sm">
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-3">
+                  <div className="lg:col-span-7 relative">
+                    <LucideIcon name="search" size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[#9AA7B8]" />
+                    <input
+                      type="text"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      placeholder="제목, 담당자, 프로젝트 검색"
+                      className="w-full pl-10 pr-9 py-2.5 text-sm bg-[#F8FAFF] border border-[rgba(0,100,180,0.12)] rounded-xl focus:outline-none focus:border-[#0099CC] placeholder:text-[#9AA7B8]"
+                    />
+                    {searchQuery && (
+                      <button
+                        onClick={() => setSearchQuery("")}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-[#9AA7B8] hover:text-[#5A6F8A] transition-colors"
+                      >
+                        <LucideIcon name="x" size={14} />
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="lg:col-span-5">
+                    <div className="relative" ref={statusDropdownRef}>
+                      <button
+                        type="button"
+                        onClick={() => setIsStatusSortOpen((prev) => !prev)}
+                        className={`w-full px-3.5 py-2.5 text-sm rounded-xl border transition flex items-center justify-between cursor-pointer ${
+                          isStatusSortOpen
+                            ? "bg-[#EEF3FF] border-[#0099CC]/40 shadow-[0_0_0_3px_rgba(0,153,204,0.12)] text-[#0D1B2A]"
+                            : "bg-[#F8FAFF] border-[rgba(0,100,180,0.12)] text-[#0D1B2A] hover:border-[rgba(0,153,204,0.4)]"
+                        }`}
+                      >
+                        <span className="font-medium">상태: {statusFilter}</span>
+                        <LucideIcon
+                          name="chevronDown"
+                          size={14}
+                          className={`text-[#5A6F8A] transition-transform ${isStatusSortOpen ? "rotate-180" : ""}`}
+                        />
+                      </button>
+
+                      {isStatusSortOpen && (
+                        <div className="absolute left-0 right-0 z-20 mt-2 overflow-hidden rounded-xl border border-[rgba(0,100,180,0.14)] bg-white shadow-[0_10px_28px_rgba(0,100,180,0.16)]">
+                          {STATUS_TABS.map((option) => {
+                            const count = option === "전체"
+                              ? actionItems.length
+                              : actionItems.filter((i) => i.status === option).length;
+                            return (
+                              <button
+                                key={option}
+                                type="button"
+                                onClick={() => {
+                                  setStatusFilter(option);
+                                  setIsStatusSortOpen(false);
+                                }}
+                                className={`w-full px-3.5 py-2.5 text-sm text-left flex items-center justify-between transition-colors cursor-pointer ${
+                                  statusFilter === option
+                                    ? "bg-[#EEF3FF] text-[#0099CC] font-semibold"
+                                    : "text-[#0D1B2A] hover:bg-[#F8FAFF]"
+                                }`}
+                              >
+                                <span className="flex items-center gap-2">
+                                  {option !== "전체" && (
+                                    <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: STATUS_DOT[option] }}></span>
+                                  )}
+                                  {option}
+                                </span>
+                                <span className="text-xs text-[#9AA7B8]">{count}</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 </div>
 
-                <div className="lg:col-span-5">
-                  <div className="relative" ref={statusDropdownRef}>
+                {/* 프로젝트 필터 드롭다운 */}
+                <div className="mt-4">
+                  <div className="relative inline-block" ref={projectDropdownRef}>
                     <button
                       type="button"
-                      onClick={() => setIsStatusSortOpen((prev) => !prev)}
-                      className={`w-full px-3.5 py-2.5 text-sm rounded-xl border transition flex items-center justify-between ${
-                        isStatusSortOpen
-                          ? "bg-[#EEF3FF] border-[#0099CC]/40 shadow-[0_0_0_3px_rgba(0,153,204,0.12)] text-[#0D1B2A]"
+                      onClick={() => setIsProjectFilterOpen((prev) => !prev)}
+                      className={`px-3.5 py-2 text-sm rounded-xl border transition flex items-center gap-2 font-semibold cursor-pointer ${
+                        isProjectFilterOpen
+                          ? "bg-[#EEF3FF] border-[#0099CC]/40 shadow-[0_0_0_3px_rgba(0,153,204,0.12)] text-[#0099CC]"
                           : "bg-[#F8FAFF] border-[rgba(0,100,180,0.12)] text-[#0D1B2A] hover:border-[rgba(0,153,204,0.4)]"
                       }`}
                     >
-                      <span className="font-medium">상태: {statusFilter}</span>
+                      {projectFilter !== "전체" && (
+                        <span
+                          className="w-1.5 h-1.5 rounded-full shrink-0"
+                          style={{ backgroundColor: PROJECTS[projectFilter].color }}
+                        ></span>
+                      )}
+                      <span>{projectFilter === "전체" ? "프로젝트: 전체" : PROJECTS[projectFilter].name}</span>
                       <LucideIcon
                         name="chevronDown"
                         size={14}
-                        className={`text-[#5A6F8A] transition-transform ${isStatusSortOpen ? "rotate-180" : ""}`}
+                        className={`text-[#5A6F8A] transition-transform ${isProjectFilterOpen ? "rotate-180" : ""}`}
                       />
                     </button>
 
-                    {isStatusSortOpen && (
-                      <div className="absolute left-0 right-0 z-20 mt-2 overflow-hidden rounded-xl border border-[rgba(0,100,180,0.14)] bg-white shadow-[0_10px_28px_rgba(0,100,180,0.16)]">
-                        {STATUS_TABS.map((option) => {
-                          const count = option === "전체"
-                            ? actionItems.length
-                            : actionItems.filter((i) => i.status === option).length;
+                    {isProjectFilterOpen && (
+                      <div className="absolute left-0 z-20 mt-2 w-56 overflow-hidden rounded-xl border border-[rgba(0,100,180,0.14)] bg-white shadow-[0_10px_28px_rgba(0,100,180,0.16)]">
+                        {projectFilterOptions.map((key) => {
+                          const isActive = projectFilter === key;
+                          const palette = key === "전체"
+                            ? { color: "#0099CC" }
+                            : PROJECTS[key];
+                          const label = key === "전체" ? "전체" : PROJECTS[key].name;
+                          const count = key === "전체"
+                            ? actionItems.filter((i) => isAssignedToMe(i)).length
+                            : actionItems.filter((i) => isAssignedToMe(i) && i.projectKey === key).length;
                           return (
                             <button
-                              key={option}
+                              key={key}
                               type="button"
                               onClick={() => {
-                                setStatusFilter(option);
-                                setIsStatusSortOpen(false);
+                                setProjectFilter(key);
+                                setIsProjectFilterOpen(false);
                               }}
-                              className={`w-full px-3.5 py-2.5 text-sm text-left flex items-center justify-between transition-colors ${
-                                statusFilter === option
+                              className={`w-full px-3.5 py-2.5 text-sm text-left flex items-center justify-between transition-colors cursor-pointer ${
+                                isActive
                                   ? "bg-[#EEF3FF] text-[#0099CC] font-semibold"
                                   : "text-[#0D1B2A] hover:bg-[#F8FAFF]"
                               }`}
                             >
                               <span className="flex items-center gap-2">
-                                {option !== "전체" && (
-                                  <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: STATUS_DOT[option] }}></span>
+                                {key !== "전체" && (
+                                  <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: palette.color }}></span>
                                 )}
-                                {option}
+                                {label}
                               </span>
                               <span className="text-xs text-[#9AA7B8]">{count}</span>
                             </button>
@@ -936,175 +1297,150 @@ export default function App() {
                 </div>
               </div>
 
-              {/* 프로젝트 배지 필터 — ProjectList의 카테고리 배지 필터와 동일한 톤 */}
-              <div className="mt-4 flex flex-wrap gap-2">
-                {projectFilterOptions.map((key) => {
-                  const isActive = projectFilter === key;
-                  const palette = key === "전체"
-                    ? { bg: "#EEF3FF", text: "#0099CC", border: "rgba(0,153,204,0.32)" }
-                    : PROJECTS[key];
-                  const label = key === "전체" ? "전체" : PROJECTS[key].name;
-                  return (
-                    <button
-                      key={key}
-                      type="button"
-                      onClick={() => setProjectFilter(key)}
-                      className={`px-3 py-1.5 text-xs rounded-full border transition font-semibold ${isActive ? "" : "opacity-80 hover:opacity-100"}`}
-                      style={{
-                        backgroundColor: palette.bg,
-                        color: palette.text,
-                        borderColor: palette.border,
-                        boxShadow: isActive ? `0 0 0 2px ${palette.border}` : "none"
-                      }}
-                    >
-                      {label}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* 프로젝트별 그룹 섹션 — ProjectList의 카테고리 그룹 구조를 동일하게 적용 */}
-            {groupedByProject.length === 0 && (
-              <div className="rounded-2xl border border-dashed border-[rgba(0,100,180,0.18)] bg-white p-10 text-center">
-                <div className="w-12 h-12 rounded-full bg-[#EEF3FF] flex items-center justify-center mb-4 mx-auto">
-                  <LucideIcon name="checkCircle" size={22} className="text-[#0099CC]" />
-                </div>
-                <p className="text-[#0D1B2A] font-semibold">
-                  {searchQuery ? "검색 결과가 없습니다" : "조건에 맞는 액션 아이템이 없어요"}
-                </p>
-                <p className="text-sm text-[#5A6F8A] mt-1">
-                  {searchQuery ? `'${searchQuery}'에 해당하는 항목을 찾을 수 없어요. 다른 검색어를 입력해 보세요.` : "필터를 변경하거나 새 회의록을 업로드해 보세요."}
-                </p>
-              </div>
-            )}
-
-            {groupedByProject.map(({ projectKey, items }) => {
-              const project = PROJECTS[projectKey];
-              return (
-                <section key={projectKey}>
-                  {/* 그룹 헤딩 — ProjectList의 "● 카테고리명 N개" 패턴 그대로 차용 */}
-                  <div className="mb-3 flex items-center gap-2">
-                    <span className="w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: project.color }}></span>
-                    <span className="text-sm font-bold text-[#0D1B2A]">{project.name}</span>
-                    <span
-                      className="text-xs px-2 py-0.5 rounded-full font-semibold"
-                      style={{ backgroundColor: project.bg, color: project.color }}
-                    >
-                      {items.length}개
-                    </span>
+              {/* 빈 상태 — 정적 화면 (로딩 스피너 없음), 필터 활성 여부에 따라 보조 문구 분기 */}
+              {groupedByProject.length === 0 && (
+                <div className="rounded-2xl border border-dashed border-[rgba(0,100,180,0.18)] bg-white p-10 text-center">
+                  <div className="w-12 h-12 rounded-full bg-[#EEF3FF] flex items-center justify-center mb-4 mx-auto">
+                    <LucideIcon name="inbox" size={22} className="text-[#0099CC]" />
                   </div>
+                  <p className="text-[#0D1B2A] font-semibold">처리할 액션 아이템이 없어요</p>
+                  <p className="text-sm text-[#5A6F8A] mt-1">
+                    {isAnyFilterActive
+                      ? "다른 필터를 선택해보세요."
+                      : "새 회의록을 업로드하면 AI가 액션 아이템을 추출해 드려요."}
+                  </p>
+                </div>
+              )}
 
-                  <div className="rounded-2xl border border-[rgba(0,100,180,0.12)] bg-white overflow-hidden">
-                    {items.map((item, idx) => {
-                      const dday = getDDayInfo(item.dueDate);
-                      const isIntegrating = integratingId === item.id;
-                      const isJustCompleted = justCompletedId === item.id;
-                      const mine = isAssignedToMe(item);
+              {groupedByProject.map(({ projectKey, items }) => {
+                const project = PROJECTS[projectKey];
+                return (
+                  <section key={projectKey}>
+                    {/* 그룹 헤딩 — ProjectList의 "● 카테고리명 N개" 패턴 그대로 차용 */}
+                    <div className="mb-3 flex items-center gap-2">
+                      <span className="w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: project.color }}></span>
+                      <span className="text-sm font-bold text-[#0D1B2A]">{project.name}</span>
+                      <span
+                        className="text-xs px-2 py-0.5 rounded-full font-semibold"
+                        style={{ backgroundColor: project.bg, color: project.color }}
+                      >
+                        {items.length}개
+                      </span>
+                    </div>
 
-                      return (
-                        <div
-                          key={item.id}
-                          onClick={() => !isIntegrating && openEditModal(item)}
-                          className={`row-settle group px-4 sm:px-5 py-4 flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4 cursor-pointer hover:bg-[#F8FAFF] transition-colors duration-150 ${
-                            idx !== items.length - 1 ? "border-b border-[rgba(0,100,180,0.08)]" : ""
-                          } ${isIntegrating ? "opacity-50" : ""} ${isJustCompleted ? "complete-flash" : ""}`}
-                        >
-                          {/* 제목 + 메타 */}
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-center gap-2 mb-1">
-                              <span
-                                className="w-1.5 h-1.5 rounded-full shrink-0"
-                                style={{ backgroundColor: STATUS_DOT[item.status] || "#94A3B8" }}
-                              ></span>
-                              <span className="text-[11px] font-semibold text-[#5A6F8A]">{item.status}</span>
-                              {mine && (
-                                <span className="text-[10px] font-bold px-1.5 py-[1px] rounded-full bg-[#EEF3FF] text-[#0099CC]">
-                                  내 업무
+                    <div className="rounded-2xl border border-[rgba(0,100,180,0.12)] bg-white overflow-hidden">
+                      {items.map((item, idx) => {
+                        const dday = getDDayInfo(item.dueDate);
+                        const isIntegrating = integratingId === item.id;
+                        const isJustCompleted = justCompletedId === item.id;
+                        const assigneeList = item.assignees && item.assignees.length > 0 ? item.assignees : [item.assignee];
+
+                        return (
+                          <div
+                            key={item.id}
+                            onClick={() => !isIntegrating && openEditModal(item)}
+                            className={`row-settle group px-4 sm:px-5 py-[18px] flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4 cursor-pointer hover:bg-[#F8FAFF] transition-colors duration-150 ${
+                              idx !== items.length - 1 ? "border-b border-[rgba(0,100,180,0.08)]" : ""
+                            } ${isIntegrating ? "opacity-50" : ""} ${isJustCompleted ? "complete-flash" : ""}`}
+                          >
+                            {/* 제목 + 메타 */}
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-2 mb-1">
+                                <span
+                                  className="w-1.5 h-1.5 rounded-full shrink-0"
+                                  style={{ backgroundColor: STATUS_DOT[item.status] || "#94A3B8" }}
+                                ></span>
+                                <span className="text-[11px] font-semibold text-[#5A6F8A]">{item.status}</span>
+                              </div>
+                              <h4 className="text-sm sm:text-[15px] font-semibold text-[#0D1B2A] leading-snug group-hover:text-[#0099CC] transition-colors">
+                                {item.title}
+                              </h4>
+                              <div className="mt-1.5 flex items-center gap-1.5 flex-wrap text-[11px] text-[#8A9AB0]">
+                                <span>{item.meetingDate} 회의</span>
+                                <span className="text-[#D7DEE8]">·</span>
+                                <span className="font-mono">{item.contextTime} 발화</span>
+                                <span className="text-[#D7DEE8]">·</span>
+                                <span className="inline-flex items-center gap-1">
+                                  <LucideIcon name={assigneeList.length > 1 ? "users" : "user"} size={11} className="text-[#9AA7B8]" />
+                                  {formatAssignees(item.assignees, item.assignee)}
                                 </span>
-                              )}
+                              </div>
                             </div>
-                            <h4 className="text-sm sm:text-[15px] font-semibold text-[#0D1B2A] leading-snug group-hover:text-[#0099CC] transition-colors">
-                              {item.title}
-                            </h4>
-                            <div className="mt-1.5 flex items-center gap-1.5 flex-wrap text-[11px] text-[#8A9AB0]">
-                              <span>{item.meetingDate} 회의</span>
-                              <span className="text-[#D7DEE8]">·</span>
-                              <span className="font-mono">{item.contextTime} 발화</span>
-                              <span className="text-[#D7DEE8]">·</span>
-                              <span className="inline-flex items-center gap-1">
-                                <LucideIcon name="users" size={11} className="text-[#9AA7B8]" />
-                                {formatAssignees(item.assignees, item.assignee)}
-                              </span>
-                            </div>
-                          </div>
 
-                          {/* 마감일 */}
-                          <div className="flex items-center gap-1.5 shrink-0 sm:w-[110px]">
-                            <span
-                              className={`text-[13px] font-semibold ${
-                                dday.overdue ? "text-[#EF4444]" : dday.urgent ? "text-[#F59E0B]" : "text-[#5A6F8A]"
-                              }`}
-                            >
-                              {item.dueDate.slice(5)}
-                            </span>
-                            {dday.urgent && (
+                            {/* 마감 정보 — 세로 통합: 상단 D-day(강조), 하단 마감일(보조). 같은 축에 우측 정렬 */}
+                            <div className="flex flex-col items-end justify-center shrink-0 sm:w-[88px] py-1">
                               <span
-                                className={`text-[10px] font-bold px-1.5 py-[1px] rounded-full border ${
-                                  dday.overdue
-                                    ? "border-[#EF4444]/40 text-[#EF4444]"
-                                    : "border-[#F59E0B]/40 text-[#B97309]"
+                                className={`text-[14px] font-bold leading-[0.8] ${
+                                  dday.overdue ? "text-[#EF4444]" : dday.urgent ? "text-[#F59E0B]" : "text-[#5A6F8A]"
                                 }`}
                               >
                                 {dday.label}
                               </span>
-                            )}
-                          </div>
-
-                          {/* 상태 배지 + Jira 연동 액션 */}
-                          <div className="flex items-center justify-between sm:justify-end gap-3 shrink-0 sm:w-[180px]">
-                            <span
-                              className={`hidden sm:inline-flex items-center gap-1.5 text-[11px] font-semibold px-2 py-1 rounded-full border ${STATUS_BADGE_CLASS[item.status] || "border-gray-300 text-gray-500"}`}
-                            >
-                              {item.status}
-                            </span>
-
-                            {isIntegrating ? (
-                              <span className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-[#0099CC]">
-                                <LucideIcon name="loader" size={13} className="spin-slow" />
-                                연동 중
+                              <span className="mt-1 text-[11px] font-light leading-[0.8] text-[#9AA7B8]">
+                                {item.dueDate.slice(5)}
                               </span>
-                            ) : item.status === "연동 완료" ? (
-                              <span
-                                className="inline-flex items-center gap-1 text-[12px] font-semibold text-[#0E8F69]"
-                                title="Jira 연동 완료"
-                              >
-                                <LucideIcon name="checkCircle" size={15} className="text-[#10B981]" />
-                                <LucideIcon name="jira" size={13} className="text-[#0099CC]" />
-                              </span>
-                            ) : (
-                              <button
-                                type="button"
-                                onClick={(e) => handleQuickApprove(e, item.id)}
-                                className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-[#0099CC] border border-[#0099CC]/40 hover:bg-[#0099CC] hover:text-white hover:border-[#0099CC] hover:shadow-[0_4px_12px_rgba(0,153,204,0.25)] px-2.5 py-1.5 rounded-lg transition-all duration-150"
-                              >
-                                <LucideIcon name="jira" size={12} />
-                                연동하기
-                              </button>
-                            )}
+                            </div>
+
+                            {/* 상태 배지 + 검증/연동 액션 (연동 완료는 액션 버튼 없이 Jira 확인 링크만, 검증 전은 버튼만 노출) */}
+                            <div className="flex items-center justify-between sm:justify-end gap-3 shrink-0 sm:w-[180px]">
+                              {item.status !== "검증 전" && (
+                                <span
+                                  className={`hidden sm:inline-flex items-center gap-1.5 text-[11px] font-semibold px-2 py-1 rounded-full border ${STATUS_BADGE_CLASS[item.status] || "border-gray-300 text-gray-500"}`}
+                                >
+                                  {item.status}
+                                </span>
+                              )}
+
+                              {isIntegrating ? (
+                                <span className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-[#0099CC]">
+                                  <LucideIcon name="loader" size={13} className="spin-slow" />
+                                  연동 중
+                                </span>
+                              ) : item.status === "연동 완료" ? (
+                                <a
+                                  href={item.jiraLink || "#"}
+                                  onClick={(e) => e.stopPropagation()}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="inline-flex items-center gap-1 text-[12px] font-semibold text-[#0099CC] hover:underline"
+                                  title="Jira 연동 완료"
+                                >
+                                  <LucideIcon name="jira" size={13} className="text-[#0099CC]" />
+                                  Jira 확인
+                                </a>
+                              ) : item.status === "검증 전" ? (
+                                <button
+                                  type="button"
+                                  onClick={(e) => { e.stopPropagation(); openEditModal(item); }}
+                                  className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-[#0099CC] border border-[#0099CC]/40 hover:bg-[#0099CC] hover:text-white hover:border-[#0099CC] hover:shadow-[0_4px_12px_rgba(0,153,204,0.25)] px-2.5 py-1.5 rounded-lg transition-all duration-150"
+                                >
+                                  <LucideIcon name="checkCircle" size={12} />
+                                  검증하기
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={(e) => handleQuickApprove(e, item.id)}
+                                  className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-[#0099CC] border border-[#0099CC]/40 hover:bg-[#0099CC] hover:text-white hover:border-[#0099CC] hover:shadow-[0_4px_12px_rgba(0,153,204,0.25)] px-2.5 py-1.5 rounded-lg transition-all duration-150"
+                                >
+                                  <LucideIcon name="jira" size={12} />
+                                  연동하기
+                                </button>
+                              )}
+                            </div>
                           </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </section>
-              );
-            })}
+                        );
+                      })}
+                    </div>
+                  </section>
+                );
+              })}
+            </section>
           </div>
         </div>
       )}
 
-      {/* 3단계: 상세 편집 모달 (수정 / 승인 / 삭제 통합 제어) */}
+      {/* 3단계: 상세 편집 모달 (수정 / 검증 / 승인 / 삭제 통합 제어) */}
       {selectedItem && (
         <div className="fixed inset-0 z-50 bg-[#0D1B2A]/40 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl max-w-lg w-full max-h-[88vh] border border-[rgba(0,100,180,0.12)] shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200 flex flex-col">
@@ -1123,7 +1459,7 @@ export default function App() {
               </div>
               <button
                 onClick={() => setSelectedItem(null)}
-                className="text-[#5A6F8A] hover:text-[#0D1B2A] transition-colors shrink-0"
+                className="text-[#5A6F8A] hover:text-[#0D1B2A] transition-colors shrink-0 cursor-pointer"
               >
                 <LucideIcon name="x" size={18} />
               </button>
@@ -1159,7 +1495,7 @@ export default function App() {
                     value={editForm.dueDate}
                     onChange={(e) => setEditForm({ ...editForm, dueDate: e.target.value })}
                     onClick={openDueDatePicker}
-                    className="date-input-neutral w-full px-3 py-2 border border-[rgba(0,100,180,0.12)] rounded-lg text-sm focus:border-[#0099CC] focus:ring-1 focus:ring-[#0099CC] outline-none bg-white"
+                    className="date-input-neutral w-full px-3 py-2 border border-[rgba(0,100,180,0.12)] rounded-lg text-sm focus:border-[#0099CC] focus:ring-1 focus:ring-[#0099CC] outline-none bg-white cursor-pointer"
                   />
                 </div>
                 <div className="relative" ref={assigneeDropdownRef}>
@@ -1167,7 +1503,7 @@ export default function App() {
                   <button
                     type="button"
                     onClick={() => setIsAssigneeOpen((prev) => !prev)}
-                    className={`w-full px-3 py-2 text-sm rounded-lg border transition flex items-center justify-between ${
+                    className={`w-full px-3 py-2 text-sm rounded-lg border transition flex items-center justify-between cursor-pointer ${
                       isAssigneeOpen
                         ? "bg-[#EEF3FF] border-[#0099CC]/40 shadow-[0_0_0_3px_rgba(0,153,204,0.12)] text-[#0D1B2A]"
                         : "bg-white border-[rgba(0,100,180,0.12)] text-[#0D1B2A] hover:border-[rgba(0,153,204,0.4)]"
@@ -1189,7 +1525,7 @@ export default function App() {
                               setEditForm({ ...editForm, assignee: m.name });
                               setIsAssigneeOpen(false);
                             }}
-                            className={`w-full px-3 py-2 text-sm text-left flex items-center justify-between transition-colors ${
+                            className={`w-full px-3 py-2 text-sm text-left flex items-center justify-between transition-colors cursor-pointer ${
                               isSelected
                                 ? "bg-[#EEF3FF] text-[#0099CC] font-semibold"
                                 : "text-[#0D1B2A] hover:bg-[#F8FAFF]"
@@ -1210,7 +1546,7 @@ export default function App() {
               <div className="flex items-center gap-3">
                 <button
                   onClick={() => openDeleteConfirm(selectedItem.id)}
-                  className="text-xs font-bold text-[#EF4444] hover:bg-red-50 px-2.5 py-1.5 rounded-lg transition-colors flex items-center gap-1.5"
+                  className="text-xs font-bold text-[#EF4444] hover:bg-red-50 px-2.5 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer"
                 >
                   <LucideIcon name="trash" size={12} />
                   삭제
@@ -1218,19 +1554,39 @@ export default function App() {
               </div>
 
               <div className="flex items-center justify-end gap-3">
-                <button
-                  onClick={handleSaveEdit}
-                  className="px-3.5 py-2 text-xs font-semibold text-[#5A6F8A] hover:text-[#0D1B2A] hover:bg-gray-100 rounded-lg transition-colors"
-                >
-                  저장
-                </button>
-                <button
-                  onClick={() => handleApprove(selectedItem.id)}
-                  className="px-5 py-2.5 text-sm font-bold text-white bg-[linear-gradient(135deg,#10B981,#0D9488)] hover:brightness-105 rounded-xl shadow-md shadow-emerald-500/25 transition-all flex items-center gap-1.5"
-                >
-                  <LucideIcon name="zap" size={14} className="text-white" />
-                  승인 및 Jira 연동
-                </button>
+                {selectedItem.status === "검증 전" ? (
+                  <>
+                    <button
+                      onClick={handleSaveEdit}
+                      className="px-3.5 py-2 text-xs font-semibold text-[#5A6F8A] hover:text-[#0D1B2A] hover:bg-gray-100 rounded-lg transition-colors cursor-pointer"
+                    >
+                      저장
+                    </button>
+                    <button
+                      onClick={() => handleVerify(selectedItem.id) || setSelectedItem(null)}
+                      className="px-5 py-2.5 text-sm font-bold text-white bg-[#0099CC] hover:bg-[#0086b3] rounded-xl shadow-md shadow-cyan-500/20 transition-all flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <LucideIcon name="checkCircle" size={14} className="text-white" />
+                      검증하기
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      onClick={handleSaveEdit}
+                      className="px-3.5 py-2 text-xs font-semibold text-[#5A6F8A] hover:text-[#0D1B2A] hover:bg-gray-100 rounded-lg transition-colors cursor-pointer"
+                    >
+                      저장
+                    </button>
+                    <button
+                      onClick={() => handleApprove(selectedItem.id)}
+                      className="px-5 py-2.5 text-sm font-bold text-white bg-[linear-gradient(135deg,#10B981,#0D9488)] hover:brightness-105 rounded-xl shadow-md shadow-emerald-500/25 transition-all flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <LucideIcon name="zap" size={14} className="text-white" />
+                      승인 및 Jira 연동
+                    </button>
+                  </>
+                )}
               </div>
             </div>
           </div>
@@ -1246,14 +1602,14 @@ export default function App() {
               <button
                 type="button"
                 onClick={closeDeleteConfirm}
-                className="px-3 py-2 text-sm font-semibold text-[#5A6F8A] hover:text-[#0D1B2A] hover:bg-gray-100 rounded-lg transition-colors"
+                className="px-3 py-2 text-sm font-semibold text-[#5A6F8A] hover:text-[#0D1B2A] hover:bg-gray-100 rounded-lg transition-colors cursor-pointer"
               >
                 취소
               </button>
               <button
                 type="button"
                 onClick={handleDelete}
-                className="px-3.5 py-2 text-sm font-bold text-white bg-[#EF4444] hover:bg-[#DC2626] rounded-lg transition-colors"
+                className="px-3.5 py-2 text-sm font-bold text-white bg-[#EF4444] hover:bg-[#DC2626] rounded-lg transition-colors cursor-pointer"
               >
                 삭제
               </button>
@@ -1302,13 +1658,13 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => setShowLoginModal(false)}
-                className="flex-1 py-2 text-sm font-bold text-[#5A6F8A] hover:bg-gray-100 rounded-lg transition-colors"
+                className="flex-1 py-2 text-sm font-bold text-[#5A6F8A] hover:bg-gray-100 rounded-lg transition-colors cursor-pointer"
               >
                 닫기
               </button>
               <button
                 type="submit"
-                className="flex-1 py-2 text-sm font-bold text-white bg-[#0099CC] hover:bg-[#0086b3] rounded-lg transition-colors shadow-md shadow-cyan-500/10 inline-flex items-center justify-center gap-1.5"
+                className="flex-1 py-2 text-sm font-bold text-white bg-[#0099CC] hover:bg-[#0086b3] rounded-lg transition-colors shadow-md shadow-cyan-500/10 inline-flex items-center justify-center gap-1.5 cursor-pointer"
               >
                 <LucideIcon name="zap" size={14} className="text-white" />
                 입장 및 시연

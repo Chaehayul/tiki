@@ -188,6 +188,35 @@ const PARTICIPANT_COLOR_MAP = {
 	'외부리서처A': '#5A6F8A',
 };
 
+const PROJECT_OVERRIDE_STORAGE_KEY = 'tiki_project_overrides';
+
+const TOAST_COLORS = {
+	info: '#0099CC',
+	ai: '#7C3AED',
+	success: '#10B981',
+	warning: '#F59E0B',
+	error: '#EF4444',
+};
+
+const TOAST_VARIANTS = {
+	info: { background: '#0D1B2A', text: '#FFFFFF', icon: TOAST_COLORS.info, border: 'rgba(255,255,255,0.12)' },
+	ai: { background: '#0D1B2A', text: '#FFFFFF', icon: TOAST_COLORS.ai, border: 'rgba(255,255,255,0.12)' },
+	success: { background: '#0D1B2A', text: '#FFFFFF', icon: TOAST_COLORS.success, border: 'rgba(255,255,255,0.12)' },
+	warning: { background: '#0D1B2A', text: '#FFFFFF', icon: TOAST_COLORS.warning, border: 'rgba(255,255,255,0.12)' },
+	error: { background: '#0D1B2A', text: '#FFFFFF', icon: TOAST_COLORS.error, border: 'rgba(255,255,255,0.12)' },
+};
+
+const readProjectOverrides = () => {
+	try {
+		const raw = localStorage.getItem(PROJECT_OVERRIDE_STORAGE_KEY);
+		if (!raw) return {};
+		const parsed = JSON.parse(raw);
+		return parsed && typeof parsed === 'object' ? parsed : {};
+	} catch {
+		return {};
+	}
+};
+
 function normalizeProject(project) {
 	if (!project) return null;
 	const participants = Array.isArray(project.participants) ? project.participants : [];
@@ -208,7 +237,7 @@ function normalizeProject(project) {
 	return {
 		id: project.id,
 		name: project.name || '프로젝트',
-		category: project.category || '기타(직접입력)',
+		category: project.category || '기타',
 		createdAt: project.createdAt || '',
 		status: project.status || '진행 중',
 		teamLead: project.teamLead || participants[0] || '담당자',
@@ -225,9 +254,15 @@ export default function ProjectMeetings() {
 	const createDropdownRef = useRef(null);
 	const sortDropdownRef = useRef(null);
 	const typeDropdownRef = useRef(null);
+	const toastTimerRef = useRef(null);
 	const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
 	const [activeTab, setActiveTab] = useState('home');
-	const [isParticipantsOpen, setIsParticipantsOpen] = useState(false);
+	const [isParticipantsModalOpen, setIsParticipantsModalOpen] = useState(false);
+	const [participantsModalMembers, setParticipantsModalMembers] = useState([]);
+	const [participantsModalTitle, setParticipantsModalTitle] = useState('회의 참여자');
+	const [deletedMeetingIds, setDeletedMeetingIds] = useState([]);
+	const [pendingDeleteMeeting, setPendingDeleteMeeting] = useState(null);
+	const [toast, setToast] = useState({ message: '', type: 'info' });
 	const [projectSearch, setProjectSearch] = useState('');
 	const [meetingSearch, setMeetingSearch] = useState('');
 	const [sortOrder, setSortOrder] = useState('최신순');
@@ -252,6 +287,10 @@ export default function ProjectMeetings() {
 		return () => document.removeEventListener('mousedown', handleOutsideClick);
 	}, []);
 
+	useEffect(() => () => {
+		if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+	}, []);
+
 	const stateLabels = {
 		IDLE: '대기 중',
 		UPLOADING: '업로드 중',
@@ -260,20 +299,49 @@ export default function ProjectMeetings() {
 		FAILED: '오류 발생',
 	};
 
+	const projectOverrides = useMemo(() => readProjectOverrides(), [location.key]);
+
 	const project = useMemo(() => {
 		const id = Number(projectId);
+		const override = projectOverrides[String(id)] || null;
 		const byId = PROJECTS.find((p) => p.id === id);
-		if (byId) return byId;
+		if (byId) {
+			return normalizeProject({
+				...byId,
+				...(override || {}),
+				participants: Array.isArray(override?.participants) ? override.participants : byId.participants,
+				admins: Array.isArray(override?.admins) ? override.admins : byId.admins,
+			});
+		}
 		const stateProject = location.state?.project;
-		if (stateProject && Number(stateProject.id) === id) return normalizeProject(stateProject);
+		if (stateProject && Number(stateProject.id) === id) {
+			return normalizeProject({
+				...stateProject,
+				...(override || {}),
+				participants: Array.isArray(override?.participants) ? override.participants : stateProject.participants,
+				admins: Array.isArray(override?.admins) ? override.admins : stateProject.admins,
+			});
+		}
+		if (override && Number(override.id) === id) return normalizeProject(override);
 		return null;
-	}, [projectId, location.state]);
+	}, [projectId, location.state, projectOverrides]);
 
 	const projectCandidates = useMemo(() => {
-		if (!project) return PROJECTS;
-		const exists = PROJECTS.some((p) => p.id === project.id);
-		return exists ? PROJECTS : [project, ...PROJECTS];
-	}, [project]);
+		const merged = PROJECTS.map((item) => {
+			const override = projectOverrides[String(item.id)];
+			if (!override) return item;
+			return normalizeProject({
+				...item,
+				...override,
+				participants: Array.isArray(override.participants) ? override.participants : item.participants,
+				admins: Array.isArray(override.admins) ? override.admins : item.admins,
+			});
+		});
+
+		if (!project) return merged;
+		const exists = merged.some((p) => p.id === project.id);
+		return exists ? merged : [project, ...merged];
+	}, [project, projectOverrides]);
 
 	const filteredProjects = useMemo(() => {
 		const q = projectSearch.trim().toLowerCase();
@@ -285,13 +353,14 @@ export default function ProjectMeetings() {
 		if (!project) return [];
 		const q = meetingSearch.trim().toLowerCase();
 		let result = project.meetings.filter((m) => {
+			if (deletedMeetingIds.includes(m.id)) return false;
 			const typeOk = meetingType === '전체' || m.type === meetingType;
 			const searchOk = !q || m.title.toLowerCase().includes(q) || m.summary.toLowerCase().includes(q) || m.tags.join(' ').toLowerCase().includes(q);
 			return typeOk && searchOk;
 		});
 		result = result.sort((a, b) => (sortOrder === '과거순' ? a.date.localeCompare(b.date) : b.date.localeCompare(a.date)));
 		return result;
-	}, [project, meetingSearch, meetingType, sortOrder]);
+	}, [project, meetingSearch, meetingType, sortOrder, deletedMeetingIds]);
 
 	const stats = useMemo(() => {
 		if (!project) return { totalMeetings: 0, totalActionItems: 0, totalJiraLinked: 0 };
@@ -322,6 +391,60 @@ export default function ProjectMeetings() {
 
 	const visibleParticipants = project.participants.slice(0, 4);
 	const hiddenParticipantsCount = Math.max(project.participants.length - visibleParticipants.length, 0);
+	const adminNames = useMemo(() => {
+		const participants = Array.isArray(project.participants) ? project.participants : [];
+		const fromProject = Array.isArray(project.admins)
+			? project.admins.filter((name) => participants.includes(name))
+			: [];
+
+		if (fromProject.length > 0) {
+			return [...new Set(fromProject)];
+		}
+
+		if (project.teamLead && participants.includes(project.teamLead)) {
+			return [project.teamLead];
+		}
+
+		return [];
+	}, [project]);
+	const showToast = (msg, type = 'info') => {
+		setToast({ message: msg, type });
+		if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+		toastTimerRef.current = setTimeout(() => setToast({ message: '', type: 'info' }), 2200);
+	};
+	const openParticipantsModal = (members = project.participants, title = '회의 참여자') => {
+		const normalized = Array.isArray(members) && members.length > 0 ? members : project.participants;
+		setParticipantsModalMembers(normalized);
+		setParticipantsModalTitle(title);
+		setIsParticipantsModalOpen(true);
+	};
+	const closeParticipantsModal = () => setIsParticipantsModalOpen(false);
+	const handleEditMeeting = () => {
+		showToast('수정 기능은 다음 단계에서 연결 예정입니다.', 'ai');
+	};
+	const handleDeleteMeeting = (meetingId) => {
+		setPendingDeleteMeeting(meetingId);
+	};
+	const confirmDeleteMeeting = () => {
+		if (!pendingDeleteMeeting) return;
+		setDeletedMeetingIds((prev) => [...prev, pendingDeleteMeeting]);
+		showToast('회의가 목록에서 삭제되었습니다.', 'success');
+		setPendingDeleteMeeting(null);
+	};
+	const currentToastVariant = TOAST_VARIANTS[toast.type] || TOAST_VARIANTS.info;
+
+	useEffect(() => {
+		if (!isParticipantsModalOpen) return undefined;
+
+		const handleEscClose = (e) => {
+			if (e.key === 'Escape') {
+				closeParticipantsModal();
+			}
+		};
+
+		document.addEventListener('keydown', handleEscClose);
+		return () => document.removeEventListener('keydown', handleEscClose);
+	}, [isParticipantsModalOpen]);
 
 	return (
 		<div className="min-h-screen bg-[#F8FAFF] overflow-x-hidden pt-20 pb-20 md:pb-0 flex flex-col">
@@ -332,7 +455,7 @@ export default function ProjectMeetings() {
 						<button type="button" onClick={() => navigate('/project-list')} className="text-sm text-[#5A6F8A] hover:text-[#0D1B2A]">← 프로젝트 목록</button>
 					</div>
 					<div className="grid grid-cols-1 xl:grid-cols-12 gap-6">
-						<aside className="xl:col-span-3">
+						<aside className="hidden md:block xl:col-span-3">
 							<section className="rounded-2xl border border-[rgba(0,100,180,0.12)] bg-white p-4">
 								<h3 className="text-sm font-bold text-[#0D1B2A] mb-3">프로젝트</h3>
 								<input value={projectSearch} onChange={(e) => setProjectSearch(e.target.value)} placeholder="프로젝트 검색" className="w-full px-3 py-2 text-sm rounded-xl border border-[rgba(0,100,180,0.12)] bg-[#F8FAFF] focus:outline-none focus:border-[#0099CC]" />
@@ -356,7 +479,7 @@ export default function ProjectMeetings() {
 										</div>
 										<p className="text-sm text-[#5A6F8A] mt-1">생성일 {project.createdAt}</p>
 										<div className="mt-3 flex items-center gap-2.5">
-											<div className="flex -space-x-2 cursor-pointer" onClick={() => setIsParticipantsOpen((prev) => !prev)}>
+											<div className="flex -space-x-2 cursor-pointer" onClick={() => openParticipantsModal(project.participants, '프로젝트 참여자')}>
 												{visibleParticipants.map((name) => (
 													<span key={name} className="w-7 h-7 rounded-full text-[11px] font-bold flex items-center justify-center border-2 border-white text-white" style={{ backgroundColor: PARTICIPANT_COLOR_MAP[name] || '#0099CC' }} title={name}>
 														{name.slice(0, 1)}
@@ -364,32 +487,10 @@ export default function ProjectMeetings() {
 												))}
 												{hiddenParticipantsCount > 0 && <span className="w-7 h-7 rounded-full bg-slate-400 text-white text-[11px] font-bold flex items-center justify-center border-2 border-white">+{hiddenParticipantsCount}</span>}
 											</div>
-											<button type="button" onClick={() => setIsParticipantsOpen((prev) => !prev)} className="text-xs text-slate-400 hover:text-slate-600">
+											<button type="button" onClick={() => openParticipantsModal(project.participants, '프로젝트 참여자')} className="text-xs text-slate-400 hover:text-slate-600">
 												{project.teamLead}님 외 {Math.max(project.participants.length - 1, 0)}명 참여
 											</button>
 										</div>
-										{isParticipantsOpen && (
-											<div className="mt-3 rounded-xl border border-[rgba(0,100,180,0.12)] bg-[#F8FAFF] p-3">
-												<div className="flex items-center justify-between gap-2">
-													<p className="text-xs font-semibold text-[#0D1B2A]">회의 참여자</p>
-													<span className="text-xs text-[#5A6F8A]">총 {project.participants.length}명 참여</span>
-												</div>
-												<div className="mt-2 space-y-2">
-													{project.participants.map((member) => (
-														<div key={member} className="flex items-center justify-between rounded-lg bg-white border border-[rgba(0,100,180,0.12)] px-2.5 py-2">
-															<div className="flex items-center gap-2.5 min-w-0">
-																<span className="w-7 h-7 rounded-full text-white text-[11px] font-bold flex items-center justify-center shrink-0" style={{ backgroundColor: PARTICIPANT_COLOR_MAP[member] || '#0099CC' }}>{member.slice(0, 1)}</span>
-																<div className="min-w-0">
-																	<p className="text-sm text-[#0D1B2A] truncate">{member}</p>
-																	<p className="text-xs text-[#5A6F8A]">{ROLE_MAP[member] || 'Team Member'}</p>
-																</div>
-															</div>
-															<span className="text-xs font-bold px-2 py-0.5 rounded bg-emerald-100 text-emerald-600">참여 중</span>
-														</div>
-													))}
-												</div>
-											</div>
-										)}
 									</div>
 									<button type="button" onClick={() => navigate('/configuration', { state: { project } })} className="shrink-0 w-10 h-10 rounded-xl border border-[rgba(0,100,180,0.12)] text-[#5A6F8A] hover:text-[#0099CC] hover:border-[#0099CC]/35 flex items-center justify-center" aria-label="프로젝트 설정 이동">
 										<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.82-.33 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.5 1Z" /></svg>
@@ -433,8 +534,8 @@ export default function ProjectMeetings() {
 								) : (
 									<>
 										<div className="hidden md:grid grid-cols-12 px-4 py-3 text-xs font-bold text-[#5A6F8A] bg-[#F8FAFF] border-b border-[rgba(0,100,180,0.1)]"><div className="col-span-2">회의 날짜</div><div className="col-span-3">회의 제목</div><div className="col-span-2">상태</div><div className="col-span-3">주요 태그</div><div className="col-span-2 text-right">관리</div></div>
-										<div className="hidden md:block">{visibleMeetings.map((meeting) => (<div key={meeting.id} className="grid grid-cols-12 px-4 py-3 items-center border-b border-[rgba(0,100,180,0.08)] last:border-b-0"><div className="col-span-2 text-sm text-[#5A6F8A]">{meeting.date}</div><button type="button" onClick={() => navigate('/meeting-detail')} className="col-span-3 text-left text-sm font-semibold text-[#0D1B2A] hover:text-[#0099CC]">{meeting.title}</button><div className="col-span-2"><span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${statusBadgeClass(meeting.status)}`}>{meeting.status}</span></div><div className="col-span-3 flex flex-wrap gap-1">{meeting.tags.map((tag) => (<span key={tag} className="px-2 py-0.5 rounded-full text-xs bg-[#EEF3FF] text-[#0099CC]">{tag}</span>))}</div><div className="col-span-2 flex justify-end gap-2"><button className="text-xs text-[#5A6F8A] hover:text-[#0099CC]">수정</button><button className="text-xs text-[#5A6F8A] hover:text-[#EF4444]">삭제</button></div></div>))}</div>
-										<div className="md:hidden divide-y divide-[rgba(0,100,180,0.08)]">{visibleMeetings.map((meeting) => (<article key={meeting.id} className="p-4 space-y-2.5"><div className="flex items-start justify-between gap-2"><span className="text-xs text-[#5A6F8A]">{meeting.date}</span><span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${statusBadgeClass(meeting.status)}`}>{meeting.status}</span></div><button type="button" onClick={() => navigate('/meeting-detail')} className="text-left text-sm font-semibold text-[#0D1B2A] leading-snug">{meeting.title}</button><div className="flex flex-wrap gap-1">{meeting.tags.map((tag) => (<span key={tag} className="px-2 py-0.5 rounded-full text-xs bg-[#EEF3FF] text-[#0099CC]">{tag}</span>))}</div><div className="flex justify-end gap-3 pt-1"><button className="text-xs text-[#5A6F8A] hover:text-[#0099CC]">수정</button><button className="text-xs text-[#5A6F8A] hover:text-[#EF4444]">삭제</button></div></article>))}</div>
+										<div className="hidden md:block">{visibleMeetings.map((meeting) => (<div key={meeting.id} className="grid grid-cols-12 px-4 py-3 items-center border-b border-[rgba(0,100,180,0.08)] last:border-b-0"><div className="col-span-2 text-sm text-[#5A6F8A]">{meeting.date}</div><button type="button" onClick={() => navigate('/meeting-detail')} className="col-span-3 text-left text-sm font-semibold text-[#0D1B2A] hover:text-[#0099CC]">{meeting.title}</button><div className="col-span-2"><span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${statusBadgeClass(meeting.status)}`}>{meeting.status}</span></div><div className="col-span-3 flex flex-wrap gap-1">{meeting.tags.map((tag) => (<span key={tag} className="px-2 py-0.5 rounded-full text-xs bg-[#EEF3FF] text-[#0099CC]">{tag}</span>))}</div><div className="col-span-2 flex justify-end gap-2"><button type="button" onClick={handleEditMeeting} className="text-xs text-[#5A6F8A] hover:text-[#0099CC]">수정</button><button type="button" onClick={() => handleDeleteMeeting(meeting.id)} className="text-xs text-[#5A6F8A] hover:text-[#EF4444]">삭제</button></div></div>))}</div>
+										<div className="md:hidden divide-y divide-[rgba(0,100,180,0.08)]">{visibleMeetings.map((meeting) => (<article key={meeting.id} className="p-4 space-y-2.5"><div className="flex items-start justify-between gap-2"><span className="text-xs text-[#5A6F8A]">{meeting.date}</span><span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${statusBadgeClass(meeting.status)}`}>{meeting.status}</span></div><button type="button" onClick={() => navigate('/meeting-detail')} className="text-left text-sm font-semibold text-[#0D1B2A] leading-snug">{meeting.title}</button><div className="flex flex-wrap gap-1">{meeting.tags.map((tag) => (<span key={tag} className="px-2 py-0.5 rounded-full text-xs bg-[#EEF3FF] text-[#0099CC]">{tag}</span>))}</div><div className="flex justify-end gap-3 pt-1"><button type="button" onClick={handleEditMeeting} className="text-xs text-[#5A6F8A] hover:text-[#0099CC]">수정</button><button type="button" onClick={() => handleDeleteMeeting(meeting.id)} className="text-xs text-[#5A6F8A] hover:text-[#EF4444]">삭제</button></div></article>))}</div>
 									</>
 								)}
 							</section>
@@ -442,6 +543,84 @@ export default function ProjectMeetings() {
 					</div>
 				</div>
 			</main>
+			{isParticipantsModalOpen && (
+				<div className="fixed inset-0 z-50 flex items-center justify-center p-4" aria-modal="true" role="dialog">
+					<div className="absolute inset-0 bg-[#0D1B2A]/40 backdrop-blur-[2px]" onClick={closeParticipantsModal} />
+					<div className="relative w-full max-w-md rounded-3xl border border-[rgba(0,100,180,0.12)] bg-white shadow-2xl overflow-hidden" style={{ maxHeight: isMobile ? '72vh' : '80vh' }}>
+						<div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+							<p className="text-sm font-bold text-slate-900">{participantsModalTitle}</p>
+							<button type="button" onClick={closeParticipantsModal} className="text-slate-400 hover:text-slate-700" aria-label="참여자 팝업 닫기">✕</button>
+						</div>
+						<div className="px-5 py-4 overflow-y-auto">
+							<p className="text-xs text-slate-400 mb-2">총 {participantsModalMembers.length}명 참여</p>
+							<div className="space-y-2 pr-1">
+								{participantsModalMembers.map((member) => (
+									<div key={member} className="flex items-center gap-3 p-3 rounded-xl border border-slate-200">
+										<div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-white shrink-0" style={{ backgroundColor: PARTICIPANT_COLOR_MAP[member] || '#0099CC' }}>
+											{member.slice(0, 1)}
+										</div>
+										<div className="flex-1 min-w-0">
+											<div className="flex items-center gap-1.5 min-w-0">
+												<p className="text-sm font-semibold text-slate-900 truncate">{member}</p>
+												{adminNames.includes(member) && (
+													<span title="관리자 권한" className="inline-flex items-center text-sky-600 shrink-0">
+														<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /></svg>
+													</span>
+												)}
+											</div>
+											<p className="text-xs text-slate-400">{ROLE_MAP[member] || 'Team Member'}</p>
+										</div>
+										<span className="text-xs font-bold px-2 py-0.5 rounded bg-emerald-100 text-emerald-600">참여 중</span>
+									</div>
+								))}
+							</div>
+						</div>
+					</div>
+				</div>
+			)}
+			{pendingDeleteMeeting && (
+				<div className="fixed inset-0 z-[65] flex items-center justify-center p-4" aria-modal="true" role="dialog">
+					<div className="absolute inset-0 bg-[#0D1B2A]/45" onClick={() => setPendingDeleteMeeting(null)} />
+					<div className="relative w-full max-w-sm rounded-3xl border border-[rgba(0,100,180,0.12)] bg-white p-6 shadow-2xl">
+						<p className="text-base font-bold text-slate-900">회의를 삭제할까요?</p>
+						<p className="mt-2 text-sm text-slate-500">삭제하면 목록에서 사라집니다. 이 작업을 진행하시겠습니까?</p>
+						<div className="mt-5 flex justify-end gap-2">
+							<button type="button" onClick={() => setPendingDeleteMeeting(null)} className="px-3.5 py-2 rounded-lg border border-slate-200 text-sm text-slate-600 hover:bg-slate-50">취소</button>
+							<button type="button" onClick={confirmDeleteMeeting} className="px-3.5 py-2 rounded-lg bg-[#EF4444] text-white text-sm font-semibold hover:bg-[#DC2626]">삭제</button>
+						</div>
+					</div>
+				</div>
+			)}
+			{toast.message && (
+				<div
+					className="pointer-events-none fixed left-1/2 -translate-x-1/2 z-[70] px-4 w-full sm:w-auto"
+					style={{
+						bottom: isMobile ? 'calc(env(safe-area-inset-bottom) + 5.75rem)' : '1.5rem',
+					}}
+				>
+					<div
+						className="relative text-xs sm:text-sm font-semibold py-3.5 px-5 rounded-2xl shadow-xl border flex items-center gap-2 w-full sm:w-auto sm:min-w-[260px]"
+						style={{
+							backgroundColor: currentToastVariant.background,
+							color: currentToastVariant.text,
+							borderColor: currentToastVariant.border,
+						}}
+					>
+						<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={currentToastVariant.icon} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+							{toast.type === 'error' && <><path d="M18 6 6 18" /><path d="m6 6 12 12" /></>}
+							{toast.type === 'warning' && <><path d="M10.29 3.86 1.82 18A2 2 0 0 0 3.53 21h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z" /><path d="M12 9v4" /><path d="M12 17h.01" /></>}
+							{toast.type === 'success' && (
+								<>
+									<circle cx="12" cy="12" r="10" fill={TOAST_COLORS.success} stroke="none" />
+									<path d="M16.7 9.2 10.6 15.3 7.2 11.9" stroke="#FFFFFF" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round" />
+								</>
+							)}
+							{(toast.type === 'info' || toast.type === 'ai') && <><circle cx="12" cy="12" r="10" /><path d="M12 10v6" /><path d="M12 7h.01" /></>}
+						</svg>
+						{toast.message}
+					</div>
+				</div>
+			)}
 			{!isMobile && <Footer />}
 			{isMobile && <MobileTab active={activeTab} onChange={setActiveTab} />}
 		</div>

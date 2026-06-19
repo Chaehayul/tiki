@@ -24,7 +24,9 @@ const iconPaths = {
   chevronRight: ['M9 18l6-6-6-6'],
   chevronDown: ['M6 9l6 6 6-6'],
   check: ['M20 6L9 17l-5-5'],
-  moreVertical: ['M12 5h.01', 'M12 12h.01', 'M12 19h.01']
+  moreVertical: ['M12 5h.01', 'M12 12h.01', 'M12 19h.01'],
+  grid: ['M3 3h7v7H3z', 'M14 3h7v7h-7z', 'M3 14h7v7H3z', 'M14 14h7v7h-7z'],
+  list: ['M8 6h13', 'M8 12h13', 'M8 18h13', 'M3 6h.01', 'M3 12h.01', 'M3 18h.01']
 };
 
 function PIcon({ name, size = 18, className = '' }) {
@@ -52,8 +54,8 @@ function PIcon({ name, size = 18, className = '' }) {
 const ProjectList = () => {
   const navigate = useNavigate();
   const sortDropdownRef = useRef(null);
-  const categoryRailRefs = useRef({});
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+  const [windowWidth, setWindowWidth] = useState(window.innerWidth);
   const [activeTab, setActiveTab] = useState('home');
   const [viewMode, setViewMode] = useState('card');
   const [searchQuery, setSearchQuery] = useState('');
@@ -61,9 +63,13 @@ const ProjectList = () => {
   const [sortFilter, setSortFilter] = useState('최신순');
   const [isSortOpen, setIsSortOpen] = useState(false);
   const [openMenuProjectId, setOpenMenuProjectId] = useState(null);
+  const [groupPage, setGroupPage] = useState({});
 
   useEffect(() => {
-    const handleResize = () => setIsMobile(window.innerWidth < 768);
+    const handleResize = () => {
+      setIsMobile(window.innerWidth < 768);
+      setWindowWidth(window.innerWidth);
+    };
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
@@ -120,7 +126,7 @@ const ProjectList = () => {
     {
       id: 3,
       name: '사용자 인터뷰 분석',
-      category: '기타(직접입력)',
+      category: '기타',
       color: 'bg-[#10B981]',
       members: 7,
       createdAt: '2026-05-19',
@@ -194,7 +200,7 @@ const ProjectList = () => {
     {
       id: 8,
       name: '문서 표준화 태스크',
-      category: '기타(직접입력)',
+      category: '기타',
       color: 'bg-[#5A6F8A]',
       members: 3,
       createdAt: '2026-04-30',
@@ -251,7 +257,7 @@ const ProjectList = () => {
     }
   ];
 
-  const categories = ['전체', '개발', '디자인', '기획', '마케팅', '기타(직접입력)'];
+  const categories = ['전체', '개발', '디자인', '기획', '마케팅', '기타'];
   const sortOptions = ['최신순', '이름순', '인원 많은순'];
   const categoryPalette = {
     '전체': { bg: '#EEF3FF', text: '#0099CC', border: 'rgba(0,153,204,0.32)', accent: '#0099CC' },
@@ -259,11 +265,11 @@ const ProjectList = () => {
     '디자인': { bg: '#F3E8FF', text: '#7C3AED', border: 'rgba(124,58,237,0.3)', accent: '#7C3AED' },
     '기획': { bg: '#E6F4EA', text: '#10B981', border: 'rgba(16,185,129,0.3)', accent: '#10B981' },
     '마케팅': { bg: '#FCE8E6', text: '#EF4444', border: 'rgba(239,68,68,0.3)', accent: '#EF4444' },
-    '기타': { bg: '#EEF2F7', text: '#5A6F8A', border: 'rgba(90,111,138,0.28)', accent: '#5A6F8A' },
+    '기타': { bg: '#FEF7E0', text: '#F59E0B', border: 'rgba(245,158,11,0.32)', accent: '#F59E0B' },
     '기타(직접입력)': { bg: '#FEF7E0', text: '#F59E0B', border: 'rgba(245,158,11,0.32)', accent: '#F59E0B' }
   };
 
-  const getCategoryPalette = (category) => categoryPalette[category] || categoryPalette['기타(직접입력)'];
+  const getCategoryPalette = (category) => categoryPalette[category] || categoryPalette['기타'];
 
   const getTimeRank = (value) => {
     const order = {
@@ -275,6 +281,19 @@ const ProjectList = () => {
       '이번 주': 1,
     };
     return order[value] || 0;
+  };
+
+  // PC 해상도에서 카드 그리드에 한 번에 보여줄 컬럼 수 (3~4개 반응형)
+  const getGridColumns = (width) => (width >= 1280 ? 4 : 3);
+
+  const changeGroupPage = (categoryName, direction, totalPages) => {
+    setGroupPage((prev) => {
+      const current = prev[categoryName] || 0;
+      const next = direction === 'next'
+        ? Math.min(current + 1, totalPages - 1)
+        : Math.max(current - 1, 0);
+      return { ...prev, [categoryName]: next };
+    });
   };
 
   const filteredProjects = projects
@@ -305,19 +324,93 @@ const ProjectList = () => {
 
   const groupedEntries = Object.entries(groupedProjects);
 
-  const scrollCategoryRail = (categoryName, direction) => {
-    const rail = categoryRailRefs.current[categoryName];
-    if (!rail) return;
-
-    const amount = Math.max(220, Math.floor(rail.clientWidth * 0.75));
-    rail.scrollBy({
-      left: direction === 'right' ? amount : -amount,
-      behavior: 'smooth',
-    });
-  };
-
   const openProjectMeetings = (project) => {
     navigate(`/project/${project.id}/meetings`, { state: { project } });
+  };
+
+  // 카드형 보기에서 사용하는 프로젝트 카드. railItem이 true면 모바일 가로 스크롤용 고정폭,
+  // 아니면 PC 그리드에서 컬럼 폭에 맞춰 늘어나는 형태로 렌더링합니다.
+  const renderProjectCard = (project, { railItem = false } = {}) => {
+    const palette = getCategoryPalette(project.category);
+    return (
+      <div
+        key={project.id}
+        onClick={() => openProjectMeetings(project)}
+        className={`${railItem ? 'snap-start shrink-0 w-[270px]' : 'w-full'} relative rounded-2xl border shadow-sm hover:shadow-md transition-all duration-300 group cursor-pointer overflow-hidden flex flex-col`}
+        style={{ backgroundColor: '#F8FAFF', borderColor: 'rgba(0,100,180,0.08)' }}
+      >
+        <span
+          className="absolute top-0 left-0 right-0 h-2.5"
+          style={{ backgroundColor: palette.bg }}
+          aria-hidden="true"
+        />
+
+        <div className="p-5 flex-1">
+          <div className="relative flex items-start justify-between mb-3" data-project-menu-root="true">
+            <span
+              className="inline-flex text-xs font-bold px-3 py-1.5 rounded-full border border-white/40 shadow-sm"
+              style={{ backgroundColor: palette.bg, color: palette.text }}
+            >
+              {project.category}
+            </span>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setOpenMenuProjectId((prev) => (prev === project.id ? null : project.id));
+              }}
+              className="w-7 h-7 -mt-1 -mr-1 rounded-full flex items-center justify-center text-[#0D1B2A]/45 opacity-100 md:opacity-0 md:group-hover:opacity-100 hover:bg-white/70 hover:text-[#0D1B2A] transition-all"
+            >
+              <PIcon name="moreVertical" size={17} />
+            </button>
+
+            {openMenuProjectId === project.id && (
+              <div className="absolute right-0 top-full mt-1 w-32 rounded-xl border border-[rgba(0,100,180,0.14)] bg-white shadow-[0_10px_24px_rgba(0,100,180,0.14)] overflow-hidden z-30">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setOpenMenuProjectId(null);
+                    navigate('/configuration', { state: { project } });
+                  }}
+                  className="w-full px-3 py-2.5 text-left text-sm text-[#0D1B2A] hover:bg-[#EEF3FF]"
+                >
+                  설정 페이지
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setOpenMenuProjectId(null);
+                    openProjectMeetings(project);
+                  }}
+                  className="w-full px-3 py-2.5 text-left text-sm text-[#0D1B2A] hover:bg-[#EEF3FF]"
+                >
+                  회의 목록
+                </button>
+              </div>
+            )}
+          </div>
+
+          <h3 className="text-base sm:text-lg font-bold text-[#0D1B2A] mb-1.5 leading-snug">
+            {project.name}
+          </h3>
+          <p className="text-xs text-[#5A6F8A]">생성일 {project.createdAt}</p>
+        </div>
+
+        <div className="border-t" style={{ borderColor: 'rgba(0,100,180,0.05)' }} />
+
+        <div className="px-5 py-3.5 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-1.5 text-[#0D1B2A]/70 min-w-0">
+            <PIcon name="users" size={15} className="shrink-0" />
+            <span className="text-xs sm:text-sm truncate">
+              {project.teamLead}님 외 {Math.max(project.members - 1, 0)}명
+            </span>
+          </div>
+          <span className="text-xs text-[#0D1B2A]/55 shrink-0">{project.updatedAt}</span>
+        </div>
+      </div>
+    );
   };
 
   return (
@@ -334,14 +427,14 @@ const ProjectList = () => {
             </div>
             <button
               onClick={() => navigate('/create-project')}
-              className="flex items-center gap-2 bg-[#0099CC] hover:bg-[#007EA7] text-white px-5 py-2.5 rounded-xl transition-all shadow-sm"
+              className="flex items-center justify-center gap-2 bg-[#0099CC] hover:bg-[#007EA7] text-white px-5 py-2.5 rounded-xl transition-all shadow-sm"
             >
               <PIcon name="plus" size={20} />
               <span>새 프로젝트 생성</span>
             </button>
           </div>
 
-          {/* 검색/필터/보기 전환 */}
+          {/* 검색/카테고리/정렬 툴바 */}
           <div className="mb-6 rounded-2xl border border-[rgba(0,100,180,0.12)] bg-white p-4 sm:p-5 shadow-sm">
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-3">
               <div className="lg:col-span-5">
@@ -354,22 +447,22 @@ const ProjectList = () => {
                 />
               </div>
 
-              <div className="lg:col-span-3">
-                <div className="relative" ref={sortDropdownRef}>
+              <div className="lg:col-span-7 flex items-center gap-2 sm:justify-end">
+                <div className="relative flex-1 sm:flex-none sm:w-[190px]" ref={sortDropdownRef}>
                   <button
                     type="button"
                     onClick={() => setIsSortOpen((prev) => !prev)}
-                    className={`w-full px-3.5 py-2.5 text-sm rounded-xl border transition flex items-center justify-between ${
+                    className={`w-full px-3 py-2.5 text-sm rounded-xl border transition flex items-center justify-between ${
                       isSortOpen
                         ? 'bg-[#EEF3FF] border-[#0099CC]/40 shadow-[0_0_0_3px_rgba(0,153,204,0.12)] text-[#0D1B2A]'
                         : 'bg-[#F8FAFF] border-[rgba(0,100,180,0.12)] text-[#0D1B2A] hover:border-[rgba(0,153,204,0.4)]'
                     }`}
                   >
-                    <span className="font-medium">정렬: {sortFilter}</span>
+                    <span className="font-medium truncate">정렬: {sortFilter}</span>
                     <PIcon
                       name="chevronDown"
                       size={14}
-                      className={`text-[#5A6F8A] transition-transform ${isSortOpen ? 'rotate-180' : ''}`}
+                      className={`text-[#5A6F8A] transition-transform shrink-0 ${isSortOpen ? 'rotate-180' : ''}`}
                     />
                   </button>
 
@@ -396,221 +489,172 @@ const ProjectList = () => {
                     </div>
                   )}
                 </div>
-              </div>
 
-              <div className="lg:col-span-4 flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => setViewMode('card')}
-                  className={`flex-1 py-2.5 text-sm rounded-xl border transition ${
-                    viewMode === 'card'
-                      ? 'bg-[#EEF3FF] text-[#0099CC] border-[#0099CC]/30 font-semibold'
-                      : 'bg-white text-[#5A6F8A] border-[rgba(0,100,180,0.12)]'
-                  }`}
-                >
-                  카드형
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setViewMode('list')}
-                  className={`flex-1 py-2.5 text-sm rounded-xl border transition ${
-                    viewMode === 'list'
-                      ? 'bg-[#EEF3FF] text-[#0099CC] border-[#0099CC]/30 font-semibold'
-                      : 'bg-white text-[#5A6F8A] border-[rgba(0,100,180,0.12)]'
-                  }`}
-                >
-                  리스트형
-                </button>
+                <div className="inline-flex items-center gap-1 p-1 rounded-xl border border-[rgba(0,100,180,0.12)] bg-[#F8FAFF] shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setViewMode('card')}
+                    aria-label="카드형 보기"
+                    title="카드형 보기"
+                    className={`w-9 h-9 rounded-lg flex items-center justify-center transition ${
+                      viewMode === 'card' ? 'bg-white text-[#0099CC] shadow-sm' : 'text-[#8A9AB0] hover:text-[#5A6F8A]'
+                    }`}
+                  >
+                    <PIcon name="grid" size={17} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setViewMode('list')}
+                    aria-label="리스트형 보기"
+                    title="리스트형 보기"
+                    className={`w-9 h-9 rounded-lg flex items-center justify-center transition ${
+                      viewMode === 'list' ? 'bg-white text-[#0099CC] shadow-sm' : 'text-[#8A9AB0] hover:text-[#5A6F8A]'
+                    }`}
+                  >
+                    <PIcon name="list" size={17} />
+                  </button>
+                </div>
               </div>
             </div>
 
             <div className="mt-4 flex flex-wrap gap-2">
-              {categories.map((category) => (
-                (() => {
-                  const palette = getCategoryPalette(category);
-                  const isActive = categoryFilter === category;
-                  return (
-                <button
-                  key={category}
-                  type="button"
-                  onClick={() => setCategoryFilter(category)}
-                  className={`px-3 py-1.5 text-xs rounded-full border transition font-semibold ${isActive ? '' : 'opacity-80 hover:opacity-100'}`}
-                  style={{
-                    backgroundColor: palette.bg,
-                    color: palette.text,
-                    borderColor: palette.border,
-                    boxShadow: isActive ? `0 0 0 2px ${palette.border}` : 'none'
-                  }}
-                >
-                  {category}
-                </button>
-                  );
-                })()
-              ))}
+              {categories.map((category) => {
+                const palette = getCategoryPalette(category);
+                const isActive = categoryFilter === category;
+                return (
+                  <button
+                    key={category}
+                    type="button"
+                    onClick={() => setCategoryFilter(category)}
+                    className={`px-3 py-1.5 text-xs rounded-full border transition font-semibold ${isActive ? '' : 'opacity-80 hover:opacity-100'}`}
+                    style={{
+                      backgroundColor: palette.bg,
+                      color: palette.text,
+                      borderColor: palette.border,
+                      boxShadow: isActive ? `0 0 0 2px ${palette.border}` : 'none'
+                    }}
+                  >
+                    {category}
+                  </button>
+                );
+              })}
             </div>
           </div>
 
           {groupedEntries.length === 0 && (
             <div className="rounded-2xl border border-dashed border-[rgba(0,100,180,0.18)] bg-white p-10 text-center">
-              <p className="text-[#0D1B2A] font-semibold">검색 결과가 없습니다.</p>
-              <p className="text-sm text-[#5A6F8A] mt-1">검색어나 필터를 변경해 보세요.</p>
+              {categoryFilter !== '전체' ? (
+                <>
+                  <p className="text-[#0D1B2A] font-semibold">진행 중인 {categoryFilter} 프로젝트가 없습니다</p>
+                  <p className="text-sm text-[#5A6F8A] mt-1">다른 카테고리를 선택하거나 새 프로젝트를 만들어 보세요.</p>
+                </>
+              ) : (
+                <>
+                  <p className="text-[#0D1B2A] font-semibold">검색 결과가 없습니다.</p>
+                  <p className="text-sm text-[#5A6F8A] mt-1">검색어나 필터를 변경해 보세요.</p>
+                </>
+              )}
             </div>
           )}
 
-          {groupedEntries.length > 0 && groupedEntries.map(([categoryName, items]) => (
-            <section key={categoryName} className="mb-8 last:mb-0">
-              {(() => {
-                const groupPalette = getCategoryPalette(categoryName);
-                return (
-              <div className="mb-3 flex items-center gap-2">
-                <span className="w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: groupPalette.accent }}></span>
-                <span className="text-sm font-bold text-[#0D1B2A]">{categoryName}</span>
-                <span className="text-xs px-2 py-0.5 rounded-full font-semibold" style={{ backgroundColor: groupPalette.bg, color: groupPalette.text }}>
-                  {items.length}개
-                </span>
-              </div>
-                );
-              })()}
+          {groupedEntries.length > 0 && groupedEntries.map(([categoryName, items]) => {
+            const groupPalette = getCategoryPalette(categoryName);
+            const columns = getGridColumns(windowWidth);
+            const totalPages = Math.max(1, Math.ceil(items.length / columns));
+            const currentPage = Math.min(groupPage[categoryName] || 0, totalPages - 1);
+            const needsPagination = !isMobile && viewMode === 'card' && items.length > columns;
+            const pageItems = isMobile ? items : items.slice(currentPage * columns, currentPage * columns + columns);
 
-              {viewMode === 'card' ? (
-                <div className="space-y-2">
-                  <div className="hidden md:flex justify-end gap-2">
-                    <button
-                      type="button"
-                      onClick={() => scrollCategoryRail(categoryName, 'left')}
-                      className="w-8 h-8 rounded-full border border-[rgba(0,100,180,0.14)] bg-white text-[#5A6F8A] hover:text-[#0099CC] hover:border-[#0099CC]/35 flex items-center justify-center"
-                      aria-label={`${categoryName} 왼쪽으로 이동`}
-                    >
-                      <PIcon name="chevronRight" size={14} className="rotate-180" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => scrollCategoryRail(categoryName, 'right')}
-                      className="w-8 h-8 rounded-full border border-[rgba(0,100,180,0.14)] bg-white text-[#5A6F8A] hover:text-[#0099CC] hover:border-[#0099CC]/35 flex items-center justify-center"
-                      aria-label={`${categoryName} 오른쪽으로 이동`}
-                    >
-                      <PIcon name="chevronRight" size={14} />
-                    </button>
+            return (
+              <section key={categoryName} className="mb-8 last:mb-0">
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <span className="w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: groupPalette.accent }}></span>
+                    <span className="text-sm font-bold text-[#0D1B2A]">{categoryName}</span>
+                    <span className="text-xs px-2 py-0.5 rounded-full font-semibold" style={{ backgroundColor: groupPalette.bg, color: groupPalette.text }}>
+                      {items.length}개
+                    </span>
                   </div>
 
-                  <div
-                    ref={(el) => { categoryRailRefs.current[categoryName] = el; }}
-                    className="flex gap-4 overflow-x-auto md:overflow-x-hidden pb-2 px-1 snap-x snap-mandatory [&::-webkit-scrollbar]:hidden"
-                    style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
-                  >
-                    {items.map((project) => (
-                      (() => {
-                        const palette = getCategoryPalette(project.category);
-                        return (
-                    <div
-                      key={project.id}
-                      onClick={() => openProjectMeetings(project)}
-                      className="snap-start shrink-0 w-[250px] sm:w-[264px] bg-[#FFFFFF] p-4 rounded-xl border border-[rgba(0,100,180,0.12)] shadow-sm hover:shadow-md hover:border-[#0099CC] transition-all duration-300 group cursor-pointer"
-                    >
-                      <div className="relative flex items-start justify-between mb-2" data-project-menu-root="true">
-                        <p className="text-[11px] text-[#8A9AB0]">생성일 {project.createdAt}</p>
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setOpenMenuProjectId((prev) => (prev === project.id ? null : project.id));
-                          }}
-                          className="text-[#5A6F8A] opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity hover:text-[#0099CC]"
-                        >
-                          <PIcon name="moreVertical" size={18} />
-                        </button>
-
-                        {openMenuProjectId === project.id && (
-                          <div className="absolute right-0 top-full mt-1 w-32 rounded-xl border border-[rgba(0,100,180,0.14)] bg-white shadow-[0_10px_24px_rgba(0,100,180,0.14)] overflow-hidden z-30">
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setOpenMenuProjectId(null);
-                                navigate('/configuration', { state: { project } });
-                              }}
-                              className="w-full px-3 py-2.5 text-left text-sm text-[#0D1B2A] hover:bg-[#EEF3FF]"
-                            >
-                              설정 페이지
-                            </button>
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setOpenMenuProjectId(null);
-                                openProjectMeetings(project);
-                              }}
-                              className="w-full px-3 py-2.5 text-left text-sm text-[#0D1B2A] hover:bg-[#EEF3FF]"
-                            >
-                              회의 목록
-                            </button>
-                          </div>
-                        )}
-                      </div>
-
-                      <h3 className="text-base font-semibold mb-2 text-[#0D1B2A] leading-snug">
-                        {project.name}
-                      </h3>
-
-                      <span className="text-xs font-medium px-2.5 py-1 rounded-full" style={{ backgroundColor: palette.bg, color: palette.text }}>
-                        {project.category}
-                      </span>
-
-                      <div className="mt-4 pt-3 border-t border-[rgba(0,100,180,0.12)] flex items-center justify-between gap-2">
-                        <div className="flex items-center gap-1.5 text-sm text-[#5A6F8A]">
-                          <PIcon name="users" size={16} />
-                          <span className="text-xs sm:text-sm">{project.teamLead}님 외 {Math.max(project.members - 1, 0)}명</span>
-                        </div>
-                        <div className="text-xs text-[#5A6F8A]">{project.updatedAt}</div>
-                      </div>
+                  {needsPagination && (
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs text-[#8A9AB0] mr-1">{currentPage + 1} / {totalPages}</span>
+                      <button
+                        type="button"
+                        onClick={() => changeGroupPage(categoryName, 'prev', totalPages)}
+                        disabled={currentPage === 0}
+                        aria-label={`${categoryName} 이전 페이지`}
+                        className="w-8 h-8 rounded-full border border-[rgba(0,100,180,0.14)] bg-white text-[#5A6F8A] hover:text-[#0099CC] hover:border-[#0099CC]/35 disabled:opacity-30 disabled:hover:text-[#5A6F8A] disabled:hover:border-[rgba(0,100,180,0.14)] disabled:cursor-not-allowed flex items-center justify-center transition"
+                      >
+                        <PIcon name="chevronRight" size={14} className="rotate-180" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => changeGroupPage(categoryName, 'next', totalPages)}
+                        disabled={currentPage === totalPages - 1}
+                        aria-label={`${categoryName} 다음 페이지`}
+                        className="w-8 h-8 rounded-full border border-[rgba(0,100,180,0.14)] bg-white text-[#5A6F8A] hover:text-[#0099CC] hover:border-[#0099CC]/35 disabled:opacity-30 disabled:hover:text-[#5A6F8A] disabled:hover:border-[rgba(0,100,180,0.14)] disabled:cursor-not-allowed flex items-center justify-center transition"
+                      >
+                        <PIcon name="chevronRight" size={14} />
+                      </button>
                     </div>
-                        );
-                      })()
-                    ))}
-                  </div>
+                  )}
                 </div>
-              ) : (
-                <div className="rounded-2xl border border-[rgba(0,100,180,0.12)] bg-white overflow-hidden">
-                  {items.map((project, idx) => (
-                    (() => {
+
+                {viewMode === 'card' ? (
+                  isMobile ? (
+                    <div
+                      className="flex gap-4 overflow-x-auto pb-2 px-1 snap-x snap-mandatory [&::-webkit-scrollbar]:hidden"
+                      style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
+                    >
+                      {items.map((project) => renderProjectCard(project, { railItem: true }))}
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-3 xl:grid-cols-4 gap-5">
+                      {pageItems.map((project) => renderProjectCard(project))}
+                    </div>
+                  )
+                ) : (
+                  <div className="rounded-2xl border border-[rgba(0,100,180,0.12)] bg-white overflow-hidden">
+                    {items.map((project, idx) => {
                       const palette = getCategoryPalette(project.category);
                       return (
-                    <div
-                      key={project.id}
-                      onClick={() => openProjectMeetings(project)}
-                      className={`px-4 sm:px-5 py-3.5 flex items-start justify-between gap-4 cursor-pointer hover:bg-[#F8FAFF] ${idx !== items.length - 1 ? 'border-b border-[rgba(0,100,180,0.08)]' : ''}`}
-                    >
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2">
-                          <p className="text-[11px] text-[#8A9AB0]">생성일 {project.createdAt}</p>
-                          <span
-                            className="inline-flex text-[11px] font-medium px-2 py-0.5 rounded-full"
-                            style={{ backgroundColor: palette.bg, color: palette.text }}
-                          >
-                            {project.category}
-                          </span>
-                        </div>
-                        <h4 className="text-sm sm:text-base font-semibold text-[#0D1B2A] mt-1 truncate">{project.name}</h4>
+                        <div
+                          key={project.id}
+                          onClick={() => openProjectMeetings(project)}
+                          className={`px-4 sm:px-5 py-3.5 flex items-start justify-between gap-4 cursor-pointer hover:bg-[#F8FAFF] ${idx !== items.length - 1 ? 'border-b border-[rgba(0,100,180,0.08)]' : ''}`}
+                        >
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2">
+                              <p className="text-[11px] text-[#8A9AB0]">생성일 {project.createdAt}</p>
+                              <span
+                                className="inline-flex text-[11px] font-medium px-2 py-0.5 rounded-full"
+                                style={{ backgroundColor: palette.bg, color: palette.text }}
+                              >
+                                {project.category}
+                              </span>
+                            </div>
+                            <h4 className="text-sm sm:text-base font-semibold text-[#0D1B2A] mt-1 truncate">{project.name}</h4>
 
-                        <div className="mt-2 flex items-center gap-1.5 text-[#5A6F8A]">
-                          <PIcon name="users" size={15} />
-                          <span className="text-xs sm:text-sm">{project.teamLead}님 외 {Math.max(project.members - 1, 0)}명</span>
-                        </div>
-                      </div>
+                            <div className="mt-2 flex items-center gap-1.5 text-[#5A6F8A]">
+                              <PIcon name="users" size={15} />
+                              <span className="text-xs sm:text-sm">{project.teamLead}님 외 {Math.max(project.members - 1, 0)}명</span>
+                            </div>
+                          </div>
 
-                      <div className="shrink-0 flex items-center gap-1.5 text-[#5A6F8A] pt-0.5">
-                        <span className="text-xs">{project.updatedAt}</span>
-                        <span className="hidden sm:inline text-xs font-semibold text-[#0099CC]">열기</span>
-                        <PIcon name="chevronRight" size={14} />
-                      </div>
-                    </div>
+                          <div className="shrink-0 flex items-center gap-1.5 text-[#5A6F8A] pt-0.5">
+                            <span className="text-xs">{project.updatedAt}</span>
+                            <span className="hidden sm:inline text-xs font-semibold text-[#0099CC]">열기</span>
+                            <PIcon name="chevronRight" size={14} />
+                          </div>
+                        </div>
                       );
-                    })()
-                  ))}
-                </div>
-              )}
-            </section>
-          ))}
+                    })}
+                  </div>
+                )}
+              </section>
+            );
+          })}
         </div>
       </main>
 

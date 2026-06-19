@@ -1,7 +1,7 @@
 from pathlib import Path
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Form, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, UploadFile, status
 from sqlalchemy.orm import Session
 
 from app.core.config import BACKEND_DIR, settings
@@ -9,6 +9,7 @@ from app.core.exceptions import AppException
 from app.db.database import get_db
 from app.models.file import UploadedFile
 from app.schemas.upload import UploadBatchResponse, UploadedFileResponse
+from app.workers.tasks import process_uploaded_file
 from app.services.pipeline.file_processing import (
     AUDIO_EXTENSIONS,
     MAX_UPLOAD_BYTES,
@@ -25,6 +26,7 @@ router = APIRouter(prefix="/uploads", tags=["uploads"])
     status_code=status.HTTP_202_ACCEPTED,
 )
 async def upload_files(
+    background_tasks: BackgroundTasks,
     project_id: str = Form(...),
     project_key: str = Form(...),
     project_name: str = Form(...),
@@ -84,6 +86,9 @@ async def upload_files(
 
     for uploaded_file in saved_files:
         db.refresh(uploaded_file)
+
+    for uploaded_file in saved_files:
+        background_tasks.add_task(process_uploaded_file, uploaded_file.id)
 
     return UploadBatchResponse(
         files=[

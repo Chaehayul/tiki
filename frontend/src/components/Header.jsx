@@ -140,12 +140,17 @@ function ProfileDropdown({ user, onLogout }) {
                     <div className="py-1.5">
                         {[
                             { icon: 'user', label: '마이페이지', to: '/mypage' },
-                            { icon: 'helpCircle', label: '고객센터 / 문서', to: '/docs' },
-                        ].map(({ icon, label, to }) => (
+                            { icon: 'helpCircle', label: '고객센터 / 문서', to: '/docs', disabled: true },
+                        ].map(({ icon, label, to, disabled }) => (
                             <Link
                                 key={label}
                                 to={to}
-                                onClick={() => setOpen(false)}
+                                onClick={(e) => {
+                                    if (disabled) {
+                                        e.preventDefault();
+                                    }
+                                    setOpen(false);
+                                }}
                                 className="flex items-center gap-2.5 px-4 py-2.5 text-[13px] text-[#0D1B2A] no-underline transition-colors hover:bg-[#EEF3FF]"
                             >
                                 <Icon name={icon} size={15} color="#5A6F8A" />
@@ -192,7 +197,7 @@ function MobileSideMenu({ open, onClose, isLoggedIn, isSubscribed, onLogout }) {
     const authLinks = [
         { icon: 'layoutDashboard', label: '대시보드', to: '/dashboard' },
         { icon: 'layoutDashboard', label: '프로젝트', to: '/project-list' },
-        { icon: 'creditCard', label: isSubscribed ? '구독중' : '구독', to: '/mypage' },
+        { icon: 'creditCard', label: isSubscribed ? '구독중' : '구독', to: '/mypage', disabled: true },
     ];
 
     const links = isLoggedIn ? authLinks : publicLinks;
@@ -233,11 +238,19 @@ function MobileSideMenu({ open, onClose, isLoggedIn, isSubscribed, onLogout }) {
 
                 {/* Nav links */}
                 <nav className="flex-1 overflow-y-auto py-3">
-                    {links.map(({ icon, label, to }) => (
+                    {links.map(({ icon, label, to, disabled }) => (
                         <Link
                             key={label}
                             to={to}
-                            onClick={onClose}
+                            onClick={(e) => {
+                                if (disabled) {
+                                    e.preventDefault();
+                                    onClose();
+                                    return;
+                                }
+                                onClose();
+                            }}
+                            aria-disabled={disabled ? 'true' : undefined}
                             className="flex items-center gap-3 px-5 py-3 text-[14px] font-medium text-[#0D1B2A] no-underline transition-colors hover:bg-[#EEF3FF] hover:text-[#0099CC]"
                         >
                             <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[8px] bg-[#EEF3FF] text-[#0099CC]">
@@ -334,7 +347,7 @@ export default function Header({ isMobile, isLoggedIn, phase, stateLabels, user,
     const desktopLoggedInLinks = [
         { label: '대시보드', to: '/dashboard' },
         { label: '프로젝트', to: '/project-list' },
-        { label: subscribed ? '구독중' : '구독', to: '/mypage' },
+        { label: subscribed ? '구독중' : '구독', to: '/mypage', disabled: true },
     ];
 
     return (
@@ -362,10 +375,12 @@ export default function Header({ isMobile, isLoggedIn, phase, stateLabels, user,
                 <nav className="flex items-center gap-1">
                     {!isMobile && (
                         <>
-                            {(effectiveLoggedIn ? desktopLoggedInLinks : desktopLoggedOutLinks).map(({ label, to }) => (
+                            {(effectiveLoggedIn ? desktopLoggedInLinks : desktopLoggedOutLinks).map(({ label, to, disabled }) => (
                                 <Link
                                     key={label}
                                     to={to}
+                                    onClick={disabled ? (e) => e.preventDefault() : undefined}
+                                    aria-disabled={disabled ? 'true' : undefined}
                                     className="rounded-[6px] px-[14px] py-[6px] text-sm text-[#5A6F8A] no-underline transition-colors duration-200 hover:bg-[#EEF3FF] hover:text-[#0D1B2A]"
                                 >
                                     {label}
@@ -374,9 +389,6 @@ export default function Header({ isMobile, isLoggedIn, phase, stateLabels, user,
                         </>
                     )}
 
-                    {/* Status pill (non-mobile only to save space) */}
-                    {!isMobile && <StatusPill phase={phase} stateLabels={stateLabels} isMobile={false} />}
-
                     {/* Logged-in: profile avatar */}
                     {effectiveLoggedIn && !isMobile && (
                         <div className="ml-1">
@@ -384,10 +396,9 @@ export default function Header({ isMobile, isLoggedIn, phase, stateLabels, user,
                         </div>
                     )}
 
-                    {/* Mobile: status pill + hamburger */}
+                    {/* Mobile: hamburger */}
                     {isMobile && (
                         <>
-                            <StatusPill phase={phase} stateLabels={stateLabels} isMobile />
                             <button
                                 onClick={() => setMobileOpen(true)}
                                 className="ml-1 flex h-9 w-9 items-center justify-center rounded-[8px] text-[#0D1B2A] transition-colors hover:bg-[#EEF3FF]"

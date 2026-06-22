@@ -299,14 +299,7 @@ export default function SignUpPage() {
     return (
         <div
             className="relative flex min-h-screen flex-col items-center justify-center bg-[#F0F4FF] px-4 pb-10 pt-24"
-            style={{ fontFamily: "'Space Grotesk', -apple-system, sans-serif" }}
         >
-            <style>
-                {
-                    "@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap');"
-                }
-            </style>
-
             <AuthHeader />
 
             {/* 배경 */}

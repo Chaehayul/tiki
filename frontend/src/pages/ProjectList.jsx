@@ -29,7 +29,7 @@ const iconPaths = {
   list: ['M8 6h13', 'M8 12h13', 'M8 18h13', 'M3 6h.01', 'M3 12h.01', 'M3 18h.01']
 };
 
-function PIcon({ name, size = 18, className = '' }) {
+function PIcon({ name, size = 18, className = '', style }) {
   const paths = iconPaths[name];
   if (!paths) return null;
   return (
@@ -43,6 +43,7 @@ function PIcon({ name, size = 18, className = '' }) {
       strokeLinecap="round"
       strokeLinejoin="round"
       className={className}
+      style={style}
     >
       {paths.map((d, i) => (
         <path key={i} d={d} />
@@ -54,6 +55,7 @@ function PIcon({ name, size = 18, className = '' }) {
 const ProjectList = () => {
   const navigate = useNavigate();
   const sortDropdownRef = useRef(null);
+  const categoryDropdownRef = useRef(null);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
   const [windowWidth, setWindowWidth] = useState(window.innerWidth);
   const [activeTab, setActiveTab] = useState('home');
@@ -62,6 +64,7 @@ const ProjectList = () => {
   const [categoryFilter, setCategoryFilter] = useState('전체');
   const [sortFilter, setSortFilter] = useState('최신순');
   const [isSortOpen, setIsSortOpen] = useState(false);
+  const [isCategoryOpen, setIsCategoryOpen] = useState(false);
   const [openMenuProjectId, setOpenMenuProjectId] = useState(null);
   const [groupPage, setGroupPage] = useState({});
 
@@ -77,9 +80,9 @@ const ProjectList = () => {
   useEffect(() => {
     const handleOutsideClick = (e) => {
       if (sortDropdownRef.current && !sortDropdownRef.current.contains(e.target)) setIsSortOpen(false);
+      if (categoryDropdownRef.current && !categoryDropdownRef.current.contains(e.target)) setIsCategoryOpen(false);
       if (!e.target.closest('[data-project-menu-root="true"]')) setOpenMenuProjectId(null);
     };
-
     document.addEventListener('mousedown', handleOutsideClick);
     return () => document.removeEventListener('mousedown', handleOutsideClick);
   }, []);
@@ -92,198 +95,39 @@ const ProjectList = () => {
     FAILED: '오류 발생'
   };
 
-  // 테스트용 프로젝트 데이터
   const projects = [
-    {
-      id: 1,
-      name: 'AI 회의록 자동화',
-      category: '개발',
-      color: 'bg-[#0099CC]',
-      members: 5,
-      createdAt: '2026-06-01',
-      teamLead: '정아름',
-      updatedAt: '2시간 전',
-      participants: ['정아름', '김민수', '송지영', '김소현', '채하율'],
-      meetings: [
-        { id: 'm-101', title: '주간 스프린트 회의', date: '2026-06-10', round: '1회차' },
-        { id: 'm-102', title: '요구사항 정제 미팅', date: '2026-06-13', round: '2회차' }
-      ]
-    },
-    {
-      id: 2,
-      name: '디자인 시스템 구축',
-      category: '디자인',
-      color: 'bg-[#7C3AED]',
-      members: 3,
-      createdAt: '2026-05-27',
-      teamLead: '박디자이너',
-      updatedAt: '어제',
-      participants: ['박디자이너', '정아름', '송지영'],
-      meetings: [
-        { id: 'm-201', title: '컴포넌트 토큰 정리', date: '2026-06-09', round: '1회차' }
-      ]
-    },
-    {
-      id: 3,
-      name: '사용자 인터뷰 분석',
-      category: '기타',
-      color: 'bg-[#10B981]',
-      members: 7,
-      createdAt: '2026-05-19',
-      teamLead: '김소현',
-      updatedAt: '3일 전',
-      participants: ['김소현', '송지영', '채하율', '외부리서처A'],
-      meetings: [
-        { id: 'm-301', title: '인터뷰 질문지 정합성 점검', date: '2026-06-05', round: '1회차' },
-        { id: 'm-302', title: 'VOC 인사이트 공유', date: '2026-06-11', round: '2회차' },
-        { id: 'm-303', title: '후속 액션 플래닝', date: '2026-06-14', round: '3회차' }
-      ]
-    },
-    {
-      id: 4,
-      name: '분기별 기획안',
-      category: '기획',
-      color: 'bg-[#F59E0B]',
-      members: 4,
-      createdAt: '2026-06-08',
-      teamLead: '송지영',
-      updatedAt: '1시간 전',
-      participants: ['송지영', '김소현', '정아름', '김민수'],
-      meetings: [
-        { id: 'm-401', title: 'Q3 로드맵 정리', date: '2026-06-15', round: '1회차' }
-      ]
-    },
-    {
-      id: 5,
-      name: '운영 자동화 개선',
-      category: '개발',
-      color: 'bg-[#0099CC]',
-      members: 6,
-      createdAt: '2026-04-23',
-      teamLead: '김민수',
-      updatedAt: '5시간 전',
-      participants: ['김민수', '채하율', '정아름'],
-      meetings: [
-        { id: 'm-501', title: '배치 작업 장애 복기', date: '2026-06-08', round: '1회차' },
-        { id: 'm-502', title: '자동화 아키텍처 리뷰', date: '2026-06-12', round: '2회차' }
-      ]
-    },
-    {
-      id: 6,
-      name: '온보딩 가이드 리뉴얼',
-      category: '기획',
-      color: 'bg-[#F59E0B]',
-      members: 2,
-      createdAt: '2026-05-03',
-      teamLead: '김소현',
-      updatedAt: '이번 주',
-      participants: ['김소현', '박디자이너'],
-      meetings: [
-        { id: 'm-601', title: '신규 유입 시나리오 점검', date: '2026-06-07', round: '1회차' }
-      ]
-    },
-    {
-      id: 7,
-      name: '캠페인 퍼널 분석',
-      category: '마케팅',
-      color: 'bg-[#EF4444]',
-      members: 4,
-      createdAt: '2026-05-15',
-      teamLead: '마케터A',
-      updatedAt: '어제',
-      participants: ['마케터A', '김소현', '채하율'],
-      meetings: [
-        { id: 'm-701', title: '캠페인 성과 리뷰', date: '2026-06-10', round: '1회차' },
-        { id: 'm-702', title: '채널별 액션 아이템', date: '2026-06-13', round: '2회차' }
-      ]
-    },
-    {
-      id: 8,
-      name: '문서 표준화 태스크',
-      category: '기타',
-      color: 'bg-[#5A6F8A]',
-      members: 3,
-      createdAt: '2026-04-30',
-      teamLead: '송지영',
-      updatedAt: '3일 전',
-      participants: ['송지영', '정아름', '김소현'],
-      meetings: [
-        { id: 'm-801', title: '문서 템플릿 통합', date: '2026-06-06', round: '1회차' }
-      ]
-    },
-    {
-      id: 9,
-      name: '신규 기능 우선순위 정렬',
-      category: '기획',
-      color: 'bg-[#F59E0B]',
-      members: 5,
-      createdAt: '2026-05-21',
-      teamLead: '정아름',
-      updatedAt: '어제',
-      participants: ['정아름', '김소현', '송지영', '김민수', '채하율'],
-      meetings: [
-        { id: 'm-901', title: '우선순위 기준 정합', date: '2026-06-11', round: '1회차' },
-        { id: 'm-902', title: '백로그 재정리', date: '2026-06-14', round: '2회차' }
-      ]
-    },
-    {
-      id: 10,
-      name: '프로덕트 KPI 재정의',
-      category: '기획',
-      color: 'bg-[#F59E0B]',
-      members: 4,
-      createdAt: '2026-05-12',
-      teamLead: '김소현',
-      updatedAt: '3일 전',
-      participants: ['김소현', '정아름', '박디자이너', '송지영'],
-      meetings: [
-        { id: 'm-1001', title: '핵심 KPI 후보 정의', date: '2026-06-09', round: '1회차' }
-      ]
-    },
-    {
-      id: 11,
-      name: '온보딩 퍼널 개선안',
-      category: '기획',
-      color: 'bg-[#F59E0B]',
-      members: 6,
-      createdAt: '2026-05-30',
-      teamLead: '송지영',
-      updatedAt: '이번 주',
-      participants: ['송지영', '김소현', '정아름', '김민수', '채하율', '박디자이너'],
-      meetings: [
-        { id: 'm-1101', title: '퍼널 단계별 이탈 분석', date: '2026-06-08', round: '1회차' },
-        { id: 'm-1102', title: '가설 기반 개선안 리뷰', date: '2026-06-12', round: '2회차' }
-      ]
-    }
+    { id: 1, name: 'AI 회의록 자동화', category: '개발', color: 'bg-[#0099CC]', members: 5, createdAt: '2026-06-01', teamLead: '정아름', updatedAt: '2시간 전', participants: ['정아름', '김민수', '송지영', '김소현', '채하율'], meetings: [{ id: 'm-101', title: '주간 스프린트 회의', date: '2026-06-10', round: '1회차' }, { id: 'm-102', title: '요구사항 정제 미팅', date: '2026-06-13', round: '2회차' }] },
+    { id: 2, name: '디자인 시스템 구축', category: '디자인', color: 'bg-[#7C3AED]', members: 3, createdAt: '2026-05-27', teamLead: '박디자이너', updatedAt: '어제', participants: ['박디자이너', '정아름', '송지영'], meetings: [{ id: 'm-201', title: '컴포넌트 토큰 정리', date: '2026-06-09', round: '1회차' }] },
+    { id: 3, name: '사용자 인터뷰 분석', category: '기타', color: 'bg-[#10B981]', members: 7, createdAt: '2026-05-19', teamLead: '김소현', updatedAt: '3일 전', participants: ['김소현', '송지영', '채하율', '외부리서처A'], meetings: [{ id: 'm-301', title: '인터뷰 질문지 정합성 점검', date: '2026-06-05', round: '1회차' }, { id: 'm-302', title: 'VOC 인사이트 공유', date: '2026-06-11', round: '2회차' }, { id: 'm-303', title: '후속 액션 플래닝', date: '2026-06-14', round: '3회차' }] },
+    { id: 4, name: '분기별 기획안', category: '기획', color: 'bg-[#F59E0B]', members: 4, createdAt: '2026-06-08', teamLead: '송지영', updatedAt: '1시간 전', participants: ['송지영', '김소현', '정아름', '김민수'], meetings: [{ id: 'm-401', title: 'Q3 로드맵 정리', date: '2026-06-15', round: '1회차' }] },
+    { id: 5, name: '운영 자동화 개선', category: '개발', color: 'bg-[#0099CC]', members: 6, createdAt: '2026-04-23', teamLead: '김민수', updatedAt: '5시간 전', participants: ['김민수', '채하율', '정아름'], meetings: [{ id: 'm-501', title: '배치 작업 장애 복기', date: '2026-06-08', round: '1회차' }, { id: 'm-502', title: '자동화 아키텍처 리뷰', date: '2026-06-12', round: '2회차' }] },
+    { id: 6, name: '온보딩 가이드 리뉴얼', category: '기획', color: 'bg-[#F59E0B]', members: 2, createdAt: '2026-05-03', teamLead: '김소현', updatedAt: '이번 주', participants: ['김소현', '박디자이너'], meetings: [{ id: 'm-601', title: '신규 유입 시나리오 점검', date: '2026-06-07', round: '1회차' }] },
+    { id: 7, name: '캠페인 퍼널 분석', category: '마케팅', color: 'bg-[#EF4444]', members: 4, createdAt: '2026-05-15', teamLead: '마케터A', updatedAt: '어제', participants: ['마케터A', '김소현', '채하율'], meetings: [{ id: 'm-701', title: '캠페인 성과 리뷰', date: '2026-06-10', round: '1회차' }, { id: 'm-702', title: '채널별 액션 아이템', date: '2026-06-13', round: '2회차' }] },
+    { id: 8, name: '문서 표준화 태스크', category: '기타', color: 'bg-[#5A6F8A]', members: 3, createdAt: '2026-04-30', teamLead: '송지영', updatedAt: '3일 전', participants: ['송지영', '정아름', '김소현'], meetings: [{ id: 'm-801', title: '문서 템플릿 통합', date: '2026-06-06', round: '1회차' }] },
+    { id: 9, name: '신규 기능 우선순위 정렬', category: '기획', color: 'bg-[#F59E0B]', members: 5, createdAt: '2026-05-21', teamLead: '정아름', updatedAt: '어제', participants: ['정아름', '김소현', '송지영', '김민수', '채하율'], meetings: [{ id: 'm-901', title: '우선순위 기준 정합', date: '2026-06-11', round: '1회차' }, { id: 'm-902', title: '백로그 재정리', date: '2026-06-14', round: '2회차' }] },
+    { id: 10, name: '프로덕트 KPI 재정의', category: '기획', color: 'bg-[#F59E0B]', members: 4, createdAt: '2026-05-12', teamLead: '김소현', updatedAt: '3일 전', participants: ['김소현', '정아름', '박디자이너', '송지영'], meetings: [{ id: 'm-1001', title: '핵심 KPI 후보 정의', date: '2026-06-09', round: '1회차' }] },
+    { id: 11, name: '온보딩 퍼널 개선안', category: '기획', color: 'bg-[#F59E0B]', members: 6, createdAt: '2026-05-30', teamLead: '송지영', updatedAt: '이번 주', participants: ['송지영', '김소현', '정아름', '김민수', '채하율', '박디자이너'], meetings: [{ id: 'm-1101', title: '퍼널 단계별 이탈 분석', date: '2026-06-08', round: '1회차' }, { id: 'm-1102', title: '가설 기반 개선안 리뷰', date: '2026-06-12', round: '2회차' }] }
   ];
 
   const categories = ['전체', '개발', '디자인', '기획', '마케팅', '기타'];
   const sortOptions = ['최신순', '이름순', '인원 많은순'];
   const categoryPalette = {
-    '전체': { bg: '#EEF3FF', text: '#0099CC', border: 'rgba(0,153,204,0.32)', accent: '#0099CC' },
-    '개발': { bg: '#EEF3FF', text: '#0099CC', border: 'rgba(0,153,204,0.32)', accent: '#0099CC' },
-    '디자인': { bg: '#F3E8FF', text: '#7C3AED', border: 'rgba(124,58,237,0.3)', accent: '#7C3AED' },
-    '기획': { bg: '#E6F4EA', text: '#10B981', border: 'rgba(16,185,129,0.3)', accent: '#10B981' },
-    '마케팅': { bg: '#FCE8E6', text: '#EF4444', border: 'rgba(239,68,68,0.3)', accent: '#EF4444' },
-    '기타': { bg: '#FEF7E0', text: '#F59E0B', border: 'rgba(245,158,11,0.32)', accent: '#F59E0B' },
-    '기타(직접입력)': { bg: '#FEF7E0', text: '#F59E0B', border: 'rgba(245,158,11,0.32)', accent: '#F59E0B' }
+    '전체':        { bg: '#F0F2F5', text: '#5A6F8A', border: 'rgba(90,111,138,0.3)',   accent: '#8A9AB0', dot: '#8A9AB0' },
+    '개발':        { bg: '#EEF3FF', text: '#0099CC', border: 'rgba(0,153,204,0.32)',   accent: '#0099CC', dot: '#0099CC' },
+    '디자인':      { bg: '#F3E8FF', text: '#7C3AED', border: 'rgba(124,58,237,0.3)',   accent: '#7C3AED', dot: '#7C3AED' },
+    '기획':        { bg: '#E6F4EA', text: '#10B981', border: 'rgba(16,185,129,0.3)',   accent: '#10B981', dot: '#10B981' },
+    '마케팅':      { bg: '#FCE8E6', text: '#EF4444', border: 'rgba(239,68,68,0.3)',    accent: '#EF4444', dot: '#EF4444' },
+    '기타':        { bg: '#FEF7E0', text: '#F59E0B', border: 'rgba(245,158,11,0.32)',  accent: '#F59E0B', dot: '#F59E0B' },
+    '기타(직접입력)': { bg: '#FEF7E0', text: '#F59E0B', border: 'rgba(245,158,11,0.32)', accent: '#F59E0B', dot: '#F59E0B' }
   };
 
   const getCategoryPalette = (category) => categoryPalette[category] || categoryPalette['기타'];
 
   const getTimeRank = (value) => {
-    const order = {
-      '1시간 전': 6,
-      '2시간 전': 5,
-      '5시간 전': 4,
-      '어제': 3,
-      '3일 전': 2,
-      '이번 주': 1,
-    };
+    const order = { '1시간 전': 6, '2시간 전': 5, '5시간 전': 4, '어제': 3, '3일 전': 2, '이번 주': 1 };
     return order[value] || 0;
   };
 
-  // PC 해상도에서 카드 그리드에 한 번에 보여줄 컬럼 수 (3~4개 반응형)
   const getGridColumns = (width) => (width >= 1280 ? 4 : 3);
 
   const changeGroupPage = (categoryName, direction, totalPages) => {
@@ -300,19 +144,12 @@ const ProjectList = () => {
     .filter((project) => {
       const matchesCategory = categoryFilter === '전체' || project.category === categoryFilter;
       const q = searchQuery.trim().toLowerCase();
-      const matchesSearch =
-        q.length === 0 ||
-        project.name.toLowerCase().includes(q) ||
-        project.category.toLowerCase().includes(q);
+      const matchesSearch = q.length === 0 || project.name.toLowerCase().includes(q) || project.category.toLowerCase().includes(q);
       return matchesCategory && matchesSearch;
     })
     .sort((a, b) => {
-      if (sortFilter === '이름순') {
-        return a.name.localeCompare(b.name, 'ko');
-      }
-      if (sortFilter === '인원 많은순') {
-        return b.members - a.members;
-      }
+      if (sortFilter === '이름순') return a.name.localeCompare(b.name, 'ko');
+      if (sortFilter === '인원 많은순') return b.members - a.members;
       return getTimeRank(b.updatedAt) - getTimeRank(a.updatedAt);
     });
 
@@ -328,8 +165,7 @@ const ProjectList = () => {
     navigate(`/project/${project.id}/meetings`, { state: { project } });
   };
 
-  // 카드형 보기에서 사용하는 프로젝트 카드. railItem이 true면 모바일 가로 스크롤용 고정폭,
-  // 아니면 PC 그리드에서 컬럼 폭에 맞춰 늘어나는 형태로 렌더링합니다.
+  // 카드 컴포넌트: 카테고리 뱃지를 dot + 텍스트 방식으로 교체 (배경색 제거)
   const renderProjectCard = (project, { railItem = false } = {}) => {
     const palette = getCategoryPalette(project.category);
     return (
@@ -345,14 +181,15 @@ const ProjectList = () => {
           aria-hidden="true"
         />
 
-        <div className="p-5 flex-1">
-          <div className="relative flex items-start justify-between mb-3" data-project-menu-root="true">
+        <div className="p-5 flex-1 pt-7">
+          <div className="relative flex items-start justify-between mb-1.5" data-project-menu-root="true">
             <span
-              className="inline-flex text-xs font-bold px-3 py-1.5 rounded-full border border-white/40 shadow-sm"
-              style={{ backgroundColor: palette.bg, color: palette.text }}
+              className="text-[11px] font-semibold tracking-wide"
+              style={{ color: palette.text }}
             >
               {project.category}
             </span>
+
             <button
               type="button"
               onClick={(e) => {
@@ -368,34 +205,21 @@ const ProjectList = () => {
               <div className="absolute right-0 top-full mt-1 w-32 rounded-xl border border-[rgba(0,100,180,0.14)] bg-white shadow-[0_10px_24px_rgba(0,100,180,0.14)] overflow-hidden z-30">
                 <button
                   type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setOpenMenuProjectId(null);
-                    navigate('/configuration', { state: { project } });
-                  }}
+                  onClick={(e) => { e.stopPropagation(); setOpenMenuProjectId(null); navigate('/configuration', { state: { project } }); }}
                   className="w-full px-3 py-2.5 text-left text-sm text-[#0D1B2A] hover:bg-[#EEF3FF]"
-                >
-                  설정 페이지
-                </button>
+                >설정 페이지</button>
                 <button
                   type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setOpenMenuProjectId(null);
-                    openProjectMeetings(project);
-                  }}
+                  onClick={(e) => { e.stopPropagation(); setOpenMenuProjectId(null); openProjectMeetings(project); }}
                   className="w-full px-3 py-2.5 text-left text-sm text-[#0D1B2A] hover:bg-[#EEF3FF]"
-                >
-                  회의 목록
-                </button>
+                >회의 목록</button>
               </div>
             )}
           </div>
 
-          <h3 className="text-base sm:text-lg font-bold text-[#0D1B2A] mb-1.5 leading-snug">
+          <h3 className="text-base font-bold text-[#0D1B2A] leading-snug mb-1.5">
             {project.name}
           </h3>
-          <p className="text-xs text-[#5A6F8A]">생성일 {project.createdAt}</p>
         </div>
 
         <div className="border-t" style={{ borderColor: 'rgba(0,100,180,0.05)' }} />
@@ -403,9 +227,7 @@ const ProjectList = () => {
         <div className="px-5 py-3.5 flex items-center justify-between gap-2">
           <div className="flex items-center gap-1.5 text-[#0D1B2A]/70 min-w-0">
             <PIcon name="users" size={15} className="shrink-0" />
-            <span className="text-xs sm:text-sm truncate">
-              {project.teamLead}님 외 {Math.max(project.members - 1, 0)}명
-            </span>
+            <span className="text-xs truncate">참여팀원: {project.members}명</span>
           </div>
           <span className="text-xs text-[#0D1B2A]/55 shrink-0">{project.updatedAt}</span>
         </div>
@@ -413,13 +235,15 @@ const ProjectList = () => {
     );
   };
 
+  const selectedCategoryPalette = getCategoryPalette(categoryFilter);
+
   return (
     <div className="min-h-screen bg-[#F8FAFF] overflow-x-hidden pt-20 pb-20 md:pb-0 flex flex-col">
       <Header isMobile={isMobile} phase="IDLE" stateLabels={stateLabels} />
 
       <main className="flex-1 w-full px-4 md:px-8 py-6 md:py-8">
         <div className="max-w-6xl mx-auto">
-          {/* 상단 헤더 영역 */}
+          {/* 상단 헤더 */}
           <div className="mb-8 flex flex-col md:flex-row md:items-end justify-between gap-4">
             <div>
               <h1 className="text-2xl font-bold text-[#0D1B2A]">내 프로젝트</h1>
@@ -434,9 +258,10 @@ const ProjectList = () => {
             </button>
           </div>
 
-          {/* 검색/카테고리/정렬 툴바 */}
+          {/* 툴바 */}
           <div className="mb-6 rounded-2xl border border-[rgba(0,100,180,0.12)] bg-white p-4 sm:p-5 shadow-sm">
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-3">
+              {/* 검색 */}
               <div className="lg:col-span-5">
                 <input
                   type="text"
@@ -447,11 +272,60 @@ const ProjectList = () => {
                 />
               </div>
 
-              <div className="lg:col-span-7 flex items-center gap-2 sm:justify-end">
-                <div className="relative flex-1 sm:flex-none sm:w-[190px]" ref={sortDropdownRef}>
+              <div className="lg:col-span-7 flex items-center gap-2 sm:justify-end flex-wrap">
+                {/* ── 카테고리 드롭다운 ── */}
+                <div className="relative flex-1 sm:flex-none sm:w-[150px]" ref={categoryDropdownRef}>
                   <button
                     type="button"
-                    onClick={() => setIsSortOpen((prev) => !prev)}
+                    onClick={() => { setIsCategoryOpen((prev) => !prev); setIsSortOpen(false); }}
+                    className={`w-full px-3 py-2.5 text-sm rounded-xl border transition flex items-center justify-between gap-2 ${
+                      isCategoryOpen
+                        ? 'bg-[#EEF3FF] border-[#0099CC]/40 shadow-[0_0_0_3px_rgba(0,153,204,0.12)] text-[#0D1B2A]'
+                        : 'bg-[#F8FAFF] border-[rgba(0,100,180,0.12)] text-[#0D1B2A] hover:border-[rgba(0,153,204,0.4)]'
+                    }`}
+                  >
+                    <span className="flex items-center gap-1.5 min-w-0">
+                      <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: selectedCategoryPalette.dot }} />
+                      <span className="font-medium truncate">{categoryFilter}</span>
+                    </span>
+                    <PIcon
+                      name="chevronDown"
+                      size={14}
+                      className={`text-[#5A6F8A] transition-transform shrink-0 ${isCategoryOpen ? 'rotate-180' : ''}`}
+                    />
+                  </button>
+
+                  {isCategoryOpen && (
+                    <div className="absolute left-0 right-0 z-20 mt-2 overflow-hidden rounded-xl border border-[rgba(0,100,180,0.14)] bg-white shadow-[0_10px_28px_rgba(0,100,180,0.16)]">
+                      {categories.map((category) => {
+                        const palette = getCategoryPalette(category);
+                        const isActive = categoryFilter === category;
+                        return (
+                          <button
+                            key={category}
+                            type="button"
+                            onClick={() => { setCategoryFilter(category); setIsCategoryOpen(false); }}
+                            className={`w-full px-3.5 py-2.5 text-sm text-left flex items-center justify-between transition-colors ${
+                              isActive ? 'bg-[#F8FAFF] font-semibold' : 'text-[#0D1B2A] hover:bg-[#F8FAFF]'
+                            }`}
+                          >
+                            <span className="flex items-center gap-2">
+                              <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: palette.dot }} />
+                              <span style={{ color: isActive ? palette.text : '#0D1B2A' }}>{category}</span>
+                            </span>
+                            {isActive && <PIcon name="check" size={13} style={{ color: palette.text }} />}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {/* ── 정렬 드롭다운 ── */}
+                <div className="relative flex-1 sm:flex-none sm:w-[170px]" ref={sortDropdownRef}>
+                  <button
+                    type="button"
+                    onClick={() => { setIsSortOpen((prev) => !prev); setIsCategoryOpen(false); }}
                     className={`w-full px-3 py-2.5 text-sm rounded-xl border transition flex items-center justify-between ${
                       isSortOpen
                         ? 'bg-[#EEF3FF] border-[#0099CC]/40 shadow-[0_0_0_3px_rgba(0,153,204,0.12)] text-[#0D1B2A]'
@@ -472,14 +346,9 @@ const ProjectList = () => {
                         <button
                           key={option}
                           type="button"
-                          onClick={() => {
-                            setSortFilter(option);
-                            setIsSortOpen(false);
-                          }}
+                          onClick={() => { setSortFilter(option); setIsSortOpen(false); }}
                           className={`w-full px-3.5 py-2.5 text-sm text-left flex items-center justify-between transition-colors ${
-                            sortFilter === option
-                              ? 'bg-[#EEF3FF] text-[#0099CC] font-semibold'
-                              : 'text-[#0D1B2A] hover:bg-[#F8FAFF]'
+                            sortFilter === option ? 'bg-[#EEF3FF] text-[#0099CC] font-semibold' : 'text-[#0D1B2A] hover:bg-[#F8FAFF]'
                           }`}
                         >
                           <span>{option}</span>
@@ -490,15 +359,13 @@ const ProjectList = () => {
                   )}
                 </div>
 
+                {/* 뷰 모드 토글 */}
                 <div className="inline-flex items-center gap-1 p-1 rounded-xl border border-[rgba(0,100,180,0.12)] bg-[#F8FAFF] shrink-0">
                   <button
                     type="button"
                     onClick={() => setViewMode('card')}
                     aria-label="카드형 보기"
-                    title="카드형 보기"
-                    className={`w-9 h-9 rounded-lg flex items-center justify-center transition ${
-                      viewMode === 'card' ? 'bg-white text-[#0099CC] shadow-sm' : 'text-[#8A9AB0] hover:text-[#5A6F8A]'
-                    }`}
+                    className={`w-9 h-9 rounded-lg flex items-center justify-center transition ${viewMode === 'card' ? 'bg-white text-[#0099CC] shadow-sm' : 'text-[#8A9AB0] hover:text-[#5A6F8A]'}`}
                   >
                     <PIcon name="grid" size={17} />
                   </button>
@@ -506,38 +373,12 @@ const ProjectList = () => {
                     type="button"
                     onClick={() => setViewMode('list')}
                     aria-label="리스트형 보기"
-                    title="리스트형 보기"
-                    className={`w-9 h-9 rounded-lg flex items-center justify-center transition ${
-                      viewMode === 'list' ? 'bg-white text-[#0099CC] shadow-sm' : 'text-[#8A9AB0] hover:text-[#5A6F8A]'
-                    }`}
+                    className={`w-9 h-9 rounded-lg flex items-center justify-center transition ${viewMode === 'list' ? 'bg-white text-[#0099CC] shadow-sm' : 'text-[#8A9AB0] hover:text-[#5A6F8A]'}`}
                   >
                     <PIcon name="list" size={17} />
                   </button>
                 </div>
               </div>
-            </div>
-
-            <div className="mt-4 flex flex-wrap gap-2">
-              {categories.map((category) => {
-                const palette = getCategoryPalette(category);
-                const isActive = categoryFilter === category;
-                return (
-                  <button
-                    key={category}
-                    type="button"
-                    onClick={() => setCategoryFilter(category)}
-                    className={`px-3 py-1.5 text-xs rounded-full border transition font-semibold ${isActive ? '' : 'opacity-80 hover:opacity-100'}`}
-                    style={{
-                      backgroundColor: palette.bg,
-                      color: palette.text,
-                      borderColor: palette.border,
-                      boxShadow: isActive ? `0 0 0 2px ${palette.border}` : 'none'
-                    }}
-                  >
-                    {category}
-                  </button>
-                );
-              })}
             </div>
           </div>
 
@@ -569,9 +410,12 @@ const ProjectList = () => {
               <section key={categoryName} className="mb-8 last:mb-0">
                 <div className="mb-3 flex items-center justify-between gap-3">
                   <div className="flex items-center gap-2">
-                    <span className="w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: groupPalette.accent }}></span>
+                    <span className="w-2 h-2 rounded-full" style={{ backgroundColor: groupPalette.accent }} />
                     <span className="text-sm font-bold text-[#0D1B2A]">{categoryName}</span>
-                    <span className="text-xs px-2 py-0.5 rounded-full font-semibold" style={{ backgroundColor: groupPalette.bg, color: groupPalette.text }}>
+                    <span
+                      className="text-[11px] px-2 py-0.5 rounded-full font-semibold"
+                      style={{ backgroundColor: groupPalette.bg, color: groupPalette.text }}
+                    >
                       {items.length}개
                     </span>
                   </div>
@@ -584,7 +428,7 @@ const ProjectList = () => {
                         onClick={() => changeGroupPage(categoryName, 'prev', totalPages)}
                         disabled={currentPage === 0}
                         aria-label={`${categoryName} 이전 페이지`}
-                        className="w-8 h-8 rounded-full border border-[rgba(0,100,180,0.14)] bg-white text-[#5A6F8A] hover:text-[#0099CC] hover:border-[#0099CC]/35 disabled:opacity-30 disabled:hover:text-[#5A6F8A] disabled:hover:border-[rgba(0,100,180,0.14)] disabled:cursor-not-allowed flex items-center justify-center transition"
+                        className="w-8 h-8 rounded-full border border-[rgba(0,100,180,0.14)] bg-white text-[#5A6F8A] hover:text-[#0099CC] hover:border-[#0099CC]/35 disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center transition"
                       >
                         <PIcon name="chevronRight" size={14} className="rotate-180" />
                       </button>
@@ -593,7 +437,7 @@ const ProjectList = () => {
                         onClick={() => changeGroupPage(categoryName, 'next', totalPages)}
                         disabled={currentPage === totalPages - 1}
                         aria-label={`${categoryName} 다음 페이지`}
-                        className="w-8 h-8 rounded-full border border-[rgba(0,100,180,0.14)] bg-white text-[#5A6F8A] hover:text-[#0099CC] hover:border-[#0099CC]/35 disabled:opacity-30 disabled:hover:text-[#5A6F8A] disabled:hover:border-[rgba(0,100,180,0.14)] disabled:cursor-not-allowed flex items-center justify-center transition"
+                        className="w-8 h-8 rounded-full border border-[rgba(0,100,180,0.14)] bg-white text-[#5A6F8A] hover:text-[#0099CC] hover:border-[#0099CC]/35 disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center transition"
                       >
                         <PIcon name="chevronRight" size={14} />
                       </button>
@@ -625,23 +469,16 @@ const ProjectList = () => {
                           className={`px-4 sm:px-5 py-3.5 flex items-start justify-between gap-4 cursor-pointer hover:bg-[#F8FAFF] ${idx !== items.length - 1 ? 'border-b border-[rgba(0,100,180,0.08)]' : ''}`}
                         >
                           <div className="min-w-0 flex-1">
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-2.5">
                               <p className="text-[11px] text-[#8A9AB0]">생성일 {project.createdAt}</p>
-                              <span
-                                className="inline-flex text-[11px] font-medium px-2 py-0.5 rounded-full"
-                                style={{ backgroundColor: palette.bg, color: palette.text }}
-                              >
-                                {project.category}
-                              </span>
+                              <span className="text-[11px] font-semibold" style={{ color: palette.text }}>{project.category}</span>
                             </div>
                             <h4 className="text-sm sm:text-base font-semibold text-[#0D1B2A] mt-1 truncate">{project.name}</h4>
-
                             <div className="mt-2 flex items-center gap-1.5 text-[#5A6F8A]">
                               <PIcon name="users" size={15} />
                               <span className="text-xs sm:text-sm">{project.teamLead}님 외 {Math.max(project.members - 1, 0)}명</span>
                             </div>
                           </div>
-
                           <div className="shrink-0 flex items-center gap-1.5 text-[#5A6F8A] pt-0.5">
                             <span className="text-xs">{project.updatedAt}</span>
                             <span className="hidden sm:inline text-xs font-semibold text-[#0099CC]">열기</span>

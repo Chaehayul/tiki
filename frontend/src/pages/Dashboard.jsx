@@ -1,5 +1,6 @@
-import { useState, useEffect, useRef, useMemo } from "react";
-import { Link } from "react-router-dom";
+import { useState, useEffect, useRef, useMemo, forwardRef } from "react";
+import { createPortal } from "react-dom";
+import { Navigate } from "react-router-dom";
 import { clearAuthSession } from "../api/apiClient";
 import Header from "../components/Header";
 import Footer from "../components/Footer";
@@ -158,6 +159,12 @@ const STATUS_LABEL = {
 
 function getStatusLabel(status) {
   return STATUS_LABEL[status] || status;
+}
+
+function getPanelStatusStyle(status) {
+  if (status === "연동 완료") return { bg: "#EEF3FF", color: "#0099CC", border: "#0099CC" };
+  if (status === "진행중") return { bg: "#F1F5F9", color: "#475569", border: "#94A3B8" };
+  return { bg: "#FEF7E0", color: "#F59E0B", border: "#F59E0B" };
 }
 
 const TOAST_ICON_RULE = {
@@ -446,7 +453,7 @@ function buildCalendarGrid(year, month) {
   return cells;
 }
 
-function CustomDatePicker({ value, onSelect, onClose, anchorRef }) {
+const CustomDatePicker = forwardRef(function CustomDatePicker({ value, onSelect, onClose, anchorRef, panelRef }, forwardedRef) {
   const todayStr = "2026-06-18";
   const parsedValue = parseDateStr(value) || parseDateStr(todayStr);
   const [viewYear, setViewYear] = useState(parsedValue.year);
@@ -454,16 +461,35 @@ function CustomDatePicker({ value, onSelect, onClose, anchorRef }) {
   const [coords, setCoords] = useState(null);
   const calendarRef = useRef(null);
 
+  // 부모(App)가 outside-click 판정에 쓸 수 있도록 내부 DOM 노드를 그대로 노출
+  useEffect(() => {
+    if (!forwardedRef) return;
+    if (typeof forwardedRef === "function") {
+      forwardedRef(calendarRef.current);
+    } else {
+      forwardedRef.current = calendarRef.current;
+    }
+  });
+
   // 실제 렌더링된 캘린더 높이를 측정해서, 뷰포트 안에 완전히 들어오는 좌표를 직접 계산
   useEffect(() => {
     const anchorEl = anchorRef?.current;
     const calendarEl = calendarRef.current;
     if (!anchorEl || !calendarEl) return;
 
+    let rafId = null;
+    let cancelled = false;
+
     const computePosition = () => {
+      if (cancelled) return;
       const anchorRect = anchorEl.getBoundingClientRect();
-      const calendarHeight = calendarEl.offsetHeight || 320;
-      const calendarWidth = calendarEl.offsetWidth || 280;
+      // PC(넓은 뷰포트)에서 캘린더가 첫 페인트 시점에 측정되면
+      // offsetHeight/Width가 0으로 잡혀 좌표가 화면 밖으로 계산되는 문제가 있었음.
+      // 측정값이 비정상(0)이면 합리적인 기본값으로 폴백한다.
+      const measuredHeight = calendarEl.offsetHeight;
+      const measuredWidth = calendarEl.offsetWidth;
+      const calendarHeight = measuredHeight > 0 ? measuredHeight : 320;
+      const calendarWidth = measuredWidth > 0 ? measuredWidth : 280;
       const margin = 8;
       // 패널 헤더(상단 고정바) 및 화면 가장자리와 부딫히지 않도록 여유 마진
       const topBound = 72;
@@ -487,16 +513,51 @@ function CustomDatePicker({ value, onSelect, onClose, anchorRef }) {
         top = Math.max(topBound, Math.min(top, bottomBound - calendarHeight));
       }
 
+      // top/left가 유효하지 않은 숫자로 계산되는 경우 방지 (NaN/Infinity 가드)
+      if (!Number.isFinite(top)) {
+        top = Math.max(topBound, anchorRect.bottom + margin);
+      }
+
       let left = anchorRect.left + anchorRect.width / 2 - calendarWidth / 2;
-      left = Math.max(8, Math.min(left, window.innerWidth - calendarWidth - 8));
+      if (!Number.isFinite(left)) {
+        left = anchorRect.left;
+      }
+      // 캘린더는 createPortal로 body에 렌더링되지만,
+      // 시각적으로는 "사이드 패널 안의 요소"여야 하므로
+      // panelRef가 있으면 화면 전체가 아니라 패널의 좌우 경계 안으로 클램프한다.
+      // (패널 안의 버튼은 패널 왼쪽 절반에 있을 수 있어, 화면 기준 클램프만으로는
+      //  캘린더 일부가 패널 바깥, 즉 배경 오버레이 위로 삐져나오는 문제가 있었음)
+      const panelEl = panelRef?.current;
+      if (panelEl) {
+        const panelRect = panelEl.getBoundingClientRect();
+        const minLeft = panelRect.left + 8;
+        const maxLeft = panelRect.right - calendarWidth - 8;
+        left = maxLeft >= minLeft
+          ? Math.max(minLeft, Math.min(left, maxLeft))
+          : panelRect.left + (panelRect.width - calendarWidth) / 2;
+      } else {
+        left = Math.max(8, Math.min(left, window.innerWidth - calendarWidth - 8));
+      }
 
       setCoords({ top, left });
     };
 
+    // 첫 프레임에는 calendarEl의 실제 크기가 0일 수 있으므로,
+    // 레이아웃이 확정된 다음 프레임에서 다시 한 번 측정해 보정한다.
     computePosition();
+    rafId = requestAnimationFrame(() => {
+      computePosition();
+    });
+
     window.addEventListener("resize", computePosition);
-    return () => window.removeEventListener("resize", computePosition);
-  }, [anchorRef, viewYear, viewMonth]);
+    window.addEventListener("scroll", computePosition, true);
+    return () => {
+      cancelled = true;
+      if (rafId) cancelAnimationFrame(rafId);
+      window.removeEventListener("resize", computePosition);
+      window.removeEventListener("scroll", computePosition, true);
+    };
+  }, [anchorRef, panelRef, viewYear, viewMonth]);
 
   const cells = useMemo(() => buildCalendarGrid(viewYear, viewMonth), [viewYear, viewMonth]);
 
@@ -520,13 +581,17 @@ function CustomDatePicker({ value, onSelect, onClose, anchorRef }) {
     }
   };
 
-  return (
+  // position: fixed인 자식이라도 부모(사이드 패널)에 transform/overflow-hidden이 걸려 있으면
+  // 그 부모가 새로운 containing block이 되어 좌표가 패널 내부 기준으로 잘못 해석되고,
+  // 결국 패널의 overflow-hidden에 가려 보이지 않는 문제가 있었다.
+  // createPortal로 document.body에 직접 렌더링하면 이 문제를 완전히 피할 수 있다.
+  return createPortal(
     <div
       ref={calendarRef}
       className="fixed z-[300] w-[280px] max-w-[88vw] box-border overflow-hidden rounded-xl border border-[rgba(0,100,180,0.14)] bg-white shadow-[0_10px_28px_rgba(0,100,180,0.16)] p-3.5"
       style={{
-        top: coords ? `${coords.top}px` : 0,
-        left: coords ? `${coords.left}px` : 0,
+        top: coords ? `${coords.top}px` : "-9999px",
+        left: coords ? `${coords.left}px` : "-9999px",
         visibility: coords ? "visible" : "hidden"
       }}
       onClick={(e) => e.stopPropagation()}
@@ -600,9 +665,10 @@ function CustomDatePicker({ value, onSelect, onClose, anchorRef }) {
           );
         })}
       </div>
-    </div>
+    </div>,
+    document.body
   );
-}
+});
 
 function DDayBadge({ dday }) {
   return (
@@ -619,6 +685,8 @@ function DDayBadge({ dday }) {
     </span>
   );
 }
+
+const PANEL_FIELD_LABEL_CLASS = "text-xs font-bold text-[#0D1B2A]";
 
 export default function App() {
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
@@ -638,7 +706,6 @@ export default function App() {
       return null;
     }
   });
-  const [showLoginModal, setShowLoginModal] = useState(false);
   useEffect(() => {
     const syncAuthSession = () => {
       setIsAuthenticated(Boolean(localStorage.getItem("tiki_access_token")));
@@ -656,8 +723,6 @@ export default function App() {
       window.removeEventListener("tiki-auth-changed", syncAuthSession);
     };
   }, []);
-  const [loginForm, setLoginForm] = useState({ email: "tiki@neotech.com", password: "••••••••" });
-
   const [actionItems, setActionItems] = useState(INITIAL_ACTION_ITEMS);
   const [statusFilter, setStatusFilter] = useState("전체");
   const [projectFilter, setProjectFilter] = useState("전체");
@@ -678,6 +743,8 @@ export default function App() {
   const [justCompletedId, setJustCompletedId] = useState(null);
 
   const dueDateDropdownRef = useRef(null);
+  const dueDateButtonRef = useRef(null);
+  const datePickerRef = useRef(null);
   const assigneeDropdownRef = useRef(null);
   const statusDropdownRef = useRef(null);
   const projectDropdownRef = useRef(null);
@@ -728,7 +795,15 @@ export default function App() {
   useEffect(() => {
     if (!isAssigneeOpen && !isDueDateOpen && !isStatusSortOpen && !isProjectFilterOpen) return;
     const handleOutsideClick = (e) => {
-      if (isDueDateOpen && dueDateDropdownRef.current && !dueDateDropdownRef.current.contains(e.target)) {
+      // 캘린더는 createPortal로 document.body에 렌더링되므로
+      // dueDateDropdownRef(버튼을 감싼 div) 안에 포함되지 않는다.
+      // 캘린더 내부 클릭도 "안쪽 클릭"으로 인정하기 위해 datePickerRef를 함께 확인한다.
+      if (
+        isDueDateOpen &&
+        dueDateDropdownRef.current &&
+        !dueDateDropdownRef.current.contains(e.target) &&
+        !(datePickerRef.current && datePickerRef.current.contains(e.target))
+      ) {
         setIsDueDateOpen(false);
       }
       if (isAssigneeOpen && assigneeDropdownRef.current && !assigneeDropdownRef.current.contains(e.target)) {
@@ -744,17 +819,6 @@ export default function App() {
     document.addEventListener("mousedown", handleOutsideClick);
     return () => document.removeEventListener("mousedown", handleOutsideClick);
   }, [isAssigneeOpen, isDueDateOpen, isStatusSortOpen, isProjectFilterOpen]);
-
-  const handleLogin = (e) => {
-    e.preventDefault();
-    const demoUser = { name: CURRENT_USER_NAME, email: loginForm.email };
-    localStorage.setItem("tiki_access_token", "demo-dashboard-token");
-    localStorage.setItem("tiki_user", JSON.stringify(demoUser));
-    setUser(demoUser);
-    setIsAuthenticated(true);
-    setShowLoginModal(false);
-    triggerToast("네오테크 가상 B2B 도메인으로 로그인되었습니다.", "success");
-  };
 
   const handleLogout = () => {
     setUser(null);
@@ -985,7 +1049,11 @@ export default function App() {
 
   const isPanelOpen = Boolean(selectedItem);
   const isIntegratingSelected = selectedItem && integratingId === selectedItem.id;
-  const mobilePanelBottomOffset = isMobile ? "calc(74px + env(safe-area-inset-bottom, 0px))" : "0px";
+  const mobilePanelBottomOffset = "0px";
+
+  if (!isAuthenticated) {
+    return <Navigate to="/onboarding" replace />;
+  }
 
   return (
     <div className="min-h-screen flex flex-col bg-[#F8FAFF] text-[#0D1B2A] font-sans antialiased pt-20 pb-20 md:pb-0 [font-family:'Pretendard',-apple-system,sans-serif]">
@@ -998,10 +1066,15 @@ export default function App() {
           @keyframes completeFlash { 0% { background-color: rgba(16,185,129,0.14); } 100% { background-color: rgba(16,185,129,0); } }
           .complete-flash { animation: completeFlash 1.1s ease-out; }
 
-          /* 사이드 패널 슬라이드 애니메이션 */
+          /* 사이드 패널 슬라이드 애니메이션 (PC) */
           @keyframes slideInRight { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
           @keyframes slideOutRight { from { transform: translateX(0); opacity: 1; } to { transform: translateX(100%); opacity: 0; } }
           .panel-enter { animation: slideInRight 0.28s cubic-bezier(0.32, 0.72, 0, 1) forwards; }
+
+          /* 바텀시트 슬라이드 애니메이션 (모바일) */
+          @keyframes slideInUp { from { transform: translateY(100%); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+          @keyframes slideOutDown { from { transform: translateY(0); opacity: 1; } to { transform: translateY(100%); opacity: 0; } }
+          .sheet-enter { animation: slideInUp 0.28s cubic-bezier(0.32, 0.72, 0, 1) forwards; }
 
           /* 패널 내부 뷰 전환 슬라이드 */
           @keyframes slideInFromRight { from { transform: translateX(24px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
@@ -1023,149 +1096,6 @@ export default function App() {
         phase={uploadPhase}
         stateLabels={uploadStateLabels}
       />
-
-      {/* ── 랜딩 (비인증) ──────────────────────────────────────────────────── */}
-      {!isAuthenticated && (
-        <div className="flex-1 flex flex-col">
-          <section className="relative overflow-hidden pt-16 pb-20 lg:pt-24 lg:pb-28 bg-gradient-to-b from-[#F8FAFF] via-white to-[#F8FAFF]">
-            <div className="absolute top-0 left-1/2 -translate-x-1/2 w-full max-w-7xl h-full pointer-events-none">
-              <div className="absolute top-12 left-10 w-72 h-72 bg-[#EEF3FF] rounded-full blur-3xl opacity-60"></div>
-              <div className="absolute bottom-10 right-10 w-96 h-96 bg-[#7C3AED]/5 rounded-full blur-3xl opacity-60"></div>
-            </div>
-
-            <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
-              <span className="inline-flex items-center gap-1.5 px-3 py-1 text-xs font-semibold text-[#7C3AED] bg-[#7C3AED]/10 rounded-full mb-6">
-                <LucideIcon name="sparkles" size={12} className="text-[#7C3AED]" />
-                2026 AI · 협업 툴 마그네틱 플러그인
-              </span>
-              <h1 className="text-4xl sm:text-5xl lg:text-6xl font-extrabold tracking-tight text-[#0D1B2A] leading-tight mb-6">
-                회의만 하세요, <br />
-                <span className="bg-gradient-to-r from-[#0099CC] via-[#7C3AED] to-[#EF4444] bg-clip-text text-transparent">
-                  티켓은 TIKI가 만듭니다
-                </span>
-              </h1>
-              <p className="max-w-2xl mx-auto text-base sm:text-lg lg:text-xl text-[#5A6F8A] leading-relaxed mb-10">
-                수기로 회의 정리하고 Jira 복사/붙여넣기 하던 수동 파이프라인은 끝났습니다.
-                AI가 회의의 깊은 맥락을 읽고 정밀한 업무 티켓을 자동 빌드합니다.
-              </p>
-
-              <div className="flex flex-col sm:flex-row justify-center items-center gap-4">
-                <Link
-                  to="/login"
-                  className="w-full sm:w-auto px-8 py-4 text-base font-bold text-white bg-[#0099CC] hover:bg-[#0086b3] rounded-2xl shadow-xl shadow-cyan-500/20 transition-all flex items-center justify-center gap-2 no-underline"
-                >
-                  지금 무료로 시작하기 <LucideIcon name="sparkles" size={16} />
-                </Link>
-                <a
-                  href="#how-it-works"
-                  className="w-full sm:w-auto px-8 py-4 text-base font-semibold text-[#0D1B2A] hover:text-[#0099CC] bg-white border border-[rgba(0,100,180,0.12)] rounded-2xl hover:bg-[#EEF3FF] transition-all text-center"
-                >
-                  기능 작동 방식 알아보기
-                </a>
-              </div>
-
-              <div className="mt-16 border border-[rgba(0,100,180,0.12)] rounded-2xl bg-white shadow-2xl p-4 lg:p-6 max-w-5xl mx-auto transition-all">
-                <div className="flex items-center justify-between gap-2 border-b border-gray-100 pb-3 mb-4 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="w-3 h-3 rounded-full bg-[#EF4444]"></span>
-                    <span className="w-3 h-3 rounded-full bg-[#F59E0B]"></span>
-                    <span className="w-3 h-3 rounded-full bg-[#10B981]"></span>
-                  </div>
-                  <span className="min-w-0 flex-1 text-[10px] sm:text-xs text-[#5A6F8A] font-mono truncate">
-                    https://tiki.neotech.io/dashboard
-                  </span>
-                  <span className="shrink-0 text-[10px] sm:text-xs text-[#0099CC] font-bold whitespace-nowrap">
-                    <span className="sm:hidden">● LIVE</span>
-                    <span className="hidden sm:inline">● LIVE DEMO PREVIEW</span>
-                  </span>
-                </div>
-
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 sm:p-5 mb-5 bg-[#F8FAFF] border border-[rgba(0,100,180,0.12)] rounded-xl text-left">
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-1.5 mb-1.5">
-                      <span className="w-2 h-2 rounded-full bg-[#10B981]"></span>
-                      <span className="text-xs font-bold text-[#10B981]">AI 분석 완료</span>
-                    </div>
-                    <h4 className="text-base sm:text-lg font-bold text-[#0D1B2A] truncate">
-                      네오테크 6월 3주차 스프린트 회의
-                    </h4>
-                    <p className="text-xs sm:text-[13px] text-[#5A6F8A] mt-1">
-                      참여자 4명 · 녹화 시간 38분 · 액션아이템 7개 추출
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    className="shrink-0 w-full sm:w-auto px-4 py-2.5 text-sm font-bold text-white bg-[#0099CC] hover:bg-[#0086b3] rounded-xl shadow-sm transition-colors flex items-center justify-center gap-1.5"
-                  >
-                    Jira 전송 준비됨
-                    <LucideIcon name="chevronRight" size={14} className="text-white" />
-                  </button>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 text-left">
-                  {INITIAL_ACTION_ITEMS.slice(0, 3).map((item) => (
-                    <div
-                      key={item.id}
-                      className="border border-[rgba(0,100,180,0.12)] hover:border-[rgba(0,153,204,0.5)] rounded-xl p-4 bg-white hover:bg-[#EEF3FF] transition-colors"
-                    >
-                      <div className="flex justify-between items-center mb-2.5 gap-2">
-                        <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-[#5A6F8A]">
-                          <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: STATUS_DOT[item.status] || "#94A3B8" }}></span>
-                          {getStatusLabel(item.status)}
-                        </span>
-                        {item.jiraLink && <LucideIcon name="jira" size={12} className="text-[#0099CC]" />}
-                      </div>
-                      <h4 className="text-sm font-bold text-[#0D1B2A] line-clamp-1">{item.title}</h4>
-                      <div className="mt-3 pt-2 border-t border-gray-100 flex items-center justify-between text-[11px] text-[#5A6F8A]">
-                        <span className="flex items-center gap-1 truncate">
-                          <LucideIcon name="user" size={10} />
-                          {item.assignee}
-                        </span>
-                        <span className="text-[#0099CC] flex items-center gap-1 shrink-0">
-                          <LucideIcon name="clock" size={10} />
-                          {item.contextTime}
-                        </span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </section>
-
-          <section id="how-it-works" className="py-20 bg-white border-t border-[rgba(0,100,180,0.12)]">
-            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-              <div className="text-center max-w-3xl mx-auto mb-16">
-                <h2 className="text-3xl font-extrabold text-[#0D1B2A] tracking-tight mb-4">
-                  TIKI는 어떤 기술로 워크플로우를 완성할까요?
-                </h2>
-                <p className="text-[#5A6F8A]">
-                  단순히 받아쓰기만 하는 받아쓰기 도구가 아닙니다.
-                  TIKI는 회의 종료 즉시 도메인을 해석하여 실제 행동 지침으로 정량화합니다.
-                </p>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-10">
-                <div className="flex flex-col items-center text-center p-6 rounded-2xl bg-[#F8FAFF] border border-[rgba(0,100,180,0.08)]">
-                  <div className="w-16 h-16 rounded-2xl bg-[#EEF3FF] text-[#0099CC] flex items-center justify-center text-xl font-extrabold mb-6 shadow-sm">01</div>
-                  <h3 className="text-lg font-bold text-[#0D1B2A] mb-3">회의록 사후 업로드</h3>
-                  <p className="text-sm text-[#5A6F8A] leading-relaxed">실시간 스트리밍의 불안정성을 배제하고, 회의 완료 후 녹음 파일(.mp3, .wav)을 업로드하여 100% 온전한 원본 분석을 시작합니다.</p>
-                </div>
-                <div className="flex flex-col items-center text-center p-6 rounded-2xl bg-[#F8FAFF] border border-[rgba(0,100,180,0.08)]">
-                  <div className="w-16 h-16 rounded-2xl bg-[#7C3AED]/10 text-[#7C3AED] flex items-center justify-center text-xl font-extrabold mb-6 shadow-sm">02</div>
-                  <h3 className="text-lg font-bold text-[#0D1B2A] mb-3">LLM 문맥 및 보안 필터링</h3>
-                  <p className="text-sm text-[#5A6F8A] leading-relaxed">Whisper 엔진과 결합하여 화자를 정확히 분리하고, 사내 민감 정보나 기밀 고객 데이터는 AI 보안 마스킹 시스템을 통해 걸러냅니다.</p>
-                </div>
-                <div className="flex flex-col items-center text-center p-6 rounded-2xl bg-[#F8FAFF] border border-[rgba(0,100,180,0.08)]">
-                  <div className="w-16 h-16 rounded-2xl bg-[#10B981]/10 text-[#10B981] flex items-center justify-center text-xl font-extrabold mb-6 shadow-sm">03</div>
-                  <h3 className="text-lg font-bold text-[#0D1B2A] mb-3">Jira/Notion 원클릭 연동</h3>
-                  <p className="text-sm text-[#5A6F8A] leading-relaxed">사용자가 '승인(Approve)' 버튼을 누르는 즉시 Jira API로 전송되어 정식 업무 티켓으로 실시간 연동이 완료됩니다.</p>
-                </div>
-              </div>
-            </div>
-          </section>
-        </div>
-      )}
 
       {/* ── 대시보드 (인증) ─────────────────────────────────────────────────── */}
       {isAuthenticated && (
@@ -1277,7 +1207,7 @@ export default function App() {
                                   <LucideIcon name="calendar" size={10} className="text-[#9AA7B8]" />
                                   <span>출처: {MEETING_TITLES[item.projectKey]}</span>
                                   <span className="text-[#D7DEE8]">·</span>
-                                  <span className="font-mono">{item.contextTime}</span>
+                                  <span>{item.contextTime}</span>
                                 </p>
                               </div>
                               {isIntegrating ? (
@@ -1333,7 +1263,7 @@ export default function App() {
                       onClick={() => setIsStatusSortOpen((prev) => !prev)}
                       className={`flex w-full items-center justify-between gap-1.5 rounded-xl border py-2 pl-3 pr-2.5 text-sm transition ${isStatusSortOpen ? "border-[#0099CC]/40 bg-white shadow-[0_0_0_3px_rgba(0,153,204,0.10)]" : "border-[rgba(0,0,0,0.09)] bg-white text-[#0D1B2A] hover:border-[rgba(0,153,204,0.35)]"}`}
                     >
-                      <span className="truncate font-medium text-[#0D1B2A]">{statusFilter === "전체" ? "전체" : getStatusLabel(statusFilter)}</span>
+                      <span className="truncate font-normal text-[#0D1B2A] subpixel-antialiased">{statusFilter === "전체" ? "전체" : getStatusLabel(statusFilter)}</span>
                       <LucideIcon name="chevronDown" size={13} className={`shrink-0 text-[#A0AFBF] transition-transform ${isStatusSortOpen ? "rotate-180" : ""}`} />
                     </button>
                     {isStatusSortOpen && (
@@ -1364,7 +1294,7 @@ export default function App() {
                     >
                       <span className="inline-flex items-center gap-2 min-w-0">
                         {projectFilter !== "전체" && <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: PROJECTS[projectFilter].color }}></span>}
-                        <span className="truncate font-medium text-[#0D1B2A]">{projectFilter === "전체" ? "프로젝트: 전체" : PROJECTS[projectFilter].name}</span>
+                        <span className="truncate font-normal text-[#0D1B2A] subpixel-antialiased">{projectFilter === "전체" ? "프로젝트: 전체" : PROJECTS[projectFilter].name}</span>
                       </span>
                       <LucideIcon name="chevronDown" size={13} className={`shrink-0 text-[#A0AFBF] transition-transform ${isProjectFilterOpen ? "rotate-180" : ""}`} />
                     </button>
@@ -1452,7 +1382,7 @@ export default function App() {
                               <div className="mt-1.5 flex items-center gap-1.5 flex-wrap text-[11px] text-[#8A9AB0]">
                                 <span>{item.meetingDate} 회의</span>
                                 <span className="text-[#D7DEE8]">·</span>
-                                <span className="font-mono">{item.contextTime} 발화</span>
+                                <span>{item.contextTime} 발화</span>
                                 <span className="text-[#D7DEE8]">·</span>
                                 <span className="inline-flex items-center gap-1">
                                   <LucideIcon name={assigneeList.length > 1 ? "users" : "user"} size={11} className="text-[#9AA7B8]" />
@@ -1521,26 +1451,35 @@ export default function App() {
       )}
 
       {/* ══════════════════════════════════════════════════════════════════════
-          사이드 패널 — 모달 대체. 우측에서 슬라이드인, 배경은 반투명 오버레이.
+          PC: 우측 사이드 패널 / 모바일: 하단 바텀시트.
           panelView: "detail" | "integrate"
       ══════════════════════════════════════════════════════════════════════ */}
       {isPanelOpen && (
         <div
-          className="overlay-enter fixed inset-0 z-[200] flex justify-end"
+          className={`overlay-enter fixed inset-0 z-[200] flex ${isMobile ? "items-end" : "justify-end"}`}
           style={{
             backgroundColor: "rgba(13,27,42,0.35)",
             backdropFilter: "blur(2px)",
-            bottom: mobilePanelBottomOffset
+            bottom: isMobile ? mobilePanelBottomOffset : "0px"
           }}
           onClick={handleOverlayClick}
         >
           <div
             ref={panelRef}
-            className="panel-enter relative flex flex-col bg-white h-full w-full max-w-[480px] shadow-2xl overflow-hidden"
+            className={
+              isMobile
+                ? "sheet-enter relative flex flex-col bg-white w-full max-h-[85vh] rounded-t-2xl shadow-2xl overflow-hidden"
+                : "panel-enter relative flex flex-col bg-white h-full w-full max-w-[520px] border-l border-[rgba(0,100,180,0.14)] shadow-2xl overflow-hidden"
+            }
             onClick={(e) => e.stopPropagation()}
           >
+            {isMobile && (
+              <div className="shrink-0 pt-2.5 pb-1 flex justify-center">
+                <span className="w-9 h-1.5 rounded-full bg-[#E2E8F0]"></span>
+              </div>
+            )}
             {/* ── 패널 헤더 ─────────────────────────────────────────────────── */}
-            <div className="shrink-0 flex items-center justify-between gap-3 px-5 py-4 border-b border-gray-100">
+            <div className="shrink-0 flex items-center justify-between gap-3 px-4 sm:px-5 py-4 border-b border-[rgba(0,100,180,0.1)]">
               <div className="flex items-center gap-2 min-w-0">
                 {panelView === "integrate" ? (
                   <button
@@ -1554,11 +1493,21 @@ export default function App() {
                     뒤로
                   </button>
                 ) : (
-                  <span
-                    className={`text-[11px] font-bold px-2 py-0.5 rounded-full border whitespace-nowrap ${STATUS_BADGE_CLASS[selectedItem.status] || "border-gray-300 text-gray-500"}`}
-                  >
-                    {getStatusLabel(selectedItem.status)}
-                  </span>
+                  (() => {
+                    const panelStatusStyle = getPanelStatusStyle(selectedItem.status);
+                    return (
+                      <span
+                        className="inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-semibold border whitespace-nowrap"
+                        style={{
+                          backgroundColor: panelStatusStyle.bg,
+                          color: panelStatusStyle.color,
+                          borderColor: `${panelStatusStyle.border}40`
+                        }}
+                      >
+                        {getStatusLabel(selectedItem.status)}
+                      </span>
+                    );
+                  })()
                 )}
               </div>
 
@@ -1566,7 +1515,7 @@ export default function App() {
                 <button
                   type="button"
                   onClick={closePanel}
-                  className="p-1.5 rounded-lg text-[#9AA7B8] hover:text-[#0D1B2A] hover:bg-gray-100 transition-colors cursor-pointer"
+                  className="w-8 h-8 rounded-lg text-[#5A6F8A] hover:bg-[#F8FAFF] hover:text-[#0D1B2A] transition-colors cursor-pointer"
                   aria-label="패널 닫기"
                 >
                   <LucideIcon name="x" size={17} />
@@ -1579,81 +1528,83 @@ export default function App() {
 
               {/* ▸ 상세 뷰 */}
               {panelView === "detail" && (
-                <div className="view-enter-left p-5 space-y-5">
+                <div className="view-enter-left px-4 sm:px-5 py-4 space-y-4">
                   {/* 프로젝트 + 출처 배지 */}
-                  <div className="flex items-center gap-2 flex-wrap">
-                    {PROJECTS[selectedItem.projectKey] && (
-                      <span
-                        className="inline-flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-1 rounded-full"
-                        style={{ backgroundColor: PROJECTS[selectedItem.projectKey].bg, color: PROJECTS[selectedItem.projectKey].color }}
-                      >
-                        <LucideIcon name="grid" size={11} />
-                        {PROJECTS[selectedItem.projectKey].name}
+                  <div className="rounded-2xl border border-[rgba(0,100,180,0.12)] bg-[#F8FAFF] p-3.5">
+                    <div className="flex flex-wrap items-center gap-2 mb-2">
+                      {PROJECTS[selectedItem.projectKey] && (
+                        <span
+                          className="inline-flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-1 rounded-full bg-[#EEF3FF] text-[#0099CC]"
+                        >
+                          #{PROJECTS[selectedItem.projectKey].name}
+                        </span>
+                      )}
+                      <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-[#5A6F8A] bg-white border border-[rgba(0,100,180,0.12)] px-2.5 py-1 rounded-full">
+                        출처: {MEETING_TITLES[selectedItem.projectKey]}
                       </span>
-                    )}
-                    <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-[#5A6F8A] bg-[#F1F4F8] px-2.5 py-1 rounded-full">
-                      <LucideIcon name="calendar" size={11} />
-                      {MEETING_TITLES[selectedItem.projectKey]}
-                      <span className="font-mono text-[10px] text-[#9AA7B8]">{selectedItem.contextTime}</span>
-                    </span>
+                    </div>
+                    <p className="text-xs text-[#5A6F8A]">타임스탬프: {selectedItem.meetingDate} {selectedItem.contextTime}</p>
                   </div>
 
                   {/* 제목 */}
-                  <div>
-                    <label className="block text-xs font-bold text-[#0D1B2A] mb-1.5">제목</label>
+                  <div className="space-y-1.5">
+                    <label className={`block ${PANEL_FIELD_LABEL_CLASS}`}>제목</label>
                     <input
                       type="text"
                       value={editForm.title}
                       onChange={(e) => setEditForm({ ...editForm, title: e.target.value })}
-                      className="w-full px-3 py-2 border border-[rgba(0,100,180,0.12)] rounded-lg text-sm focus:border-[#0099CC] focus:ring-1 focus:ring-[#0099CC] outline-none"
+                      className="w-full px-3.5 py-2.5 border border-[rgba(0,100,180,0.14)] rounded-xl text-sm bg-white focus:border-[#0099CC] focus:outline-none"
                     />
                   </div>
 
                   {/* 설명 */}
-                  <div>
-                    <label className="block text-xs font-bold text-[#0D1B2A] mb-1.5">설명</label>
+                  <div className="space-y-1.5">
+                    <label className={`block ${PANEL_FIELD_LABEL_CLASS}`}>설명</label>
                     <textarea
                       rows={4}
                       value={editForm.description}
                       onChange={(e) => setEditForm({ ...editForm, description: e.target.value })}
-                      className="w-full px-3 py-2 border border-[rgba(0,100,180,0.12)] rounded-lg text-sm focus:border-[#0099CC] focus:ring-1 focus:ring-[#0099CC] outline-none resize-none"
+                      className="w-full px-3.5 py-2.5 border border-[rgba(0,100,180,0.14)] rounded-xl text-sm bg-white focus:border-[#0099CC] focus:outline-none resize-none"
                     />
                   </div>
 
                   {/* 마감 + 담당자 */}
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="relative" ref={dueDateDropdownRef}>
-                      <label className="block text-xs font-bold text-[#0D1B2A] mb-1.5">마감 기한</label>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="relative space-y-1.5" ref={dueDateDropdownRef}>
+                      <label className={`block ${PANEL_FIELD_LABEL_CLASS}`}>마감 기한</label>
                       <button
+                        ref={dueDateButtonRef}
                         type="button"
                         onClick={() => {
                           setIsAssigneeOpen(false);
                           setIsDueDateOpen((prev) => !prev);
                         }}
-                        className={`w-full px-3 py-2 text-sm rounded-lg border transition flex items-center justify-between cursor-pointer ${
-                          isDueDateOpen ? "bg-[#EEF3FF] border-[#0099CC]/40 shadow-[0_0_0_3px_rgba(0,153,204,0.12)]" : "bg-white border-[rgba(0,100,180,0.12)] hover:border-[rgba(0,153,204,0.4)]"
+                        className={`w-full px-3.5 py-2.5 text-sm rounded-xl border transition flex items-center justify-between cursor-pointer ${
+                          isDueDateOpen ? "bg-[#EEF3FF] border-[#0099CC]/40 shadow-[0_0_0_3px_rgba(0,153,204,0.12)]" : "bg-white border-[rgba(0,100,180,0.14)] hover:border-[rgba(0,153,204,0.4)]"
                         }`}
                       >
                         <span className={`font-medium ${editForm.dueDate ? "text-[#0D1B2A]" : "text-[#9AA7B8]"}`}>{editForm.dueDate || "날짜 선택"}</span>
-                        <LucideIcon name="chevronDown" size={14} className={`text-[#5A6F8A] transition-transform ${isDueDateOpen ? "rotate-180" : ""}`} />
+                        <LucideIcon name="calendar" size={14} className="text-[#5A6F8A]" />
                       </button>
                       {isDueDateOpen && (
                         <CustomDatePicker
+                          ref={datePickerRef}
                           value={editForm.dueDate}
                           onSelect={(dateStr) => setEditForm({ ...editForm, dueDate: dateStr })}
                           onClose={() => setIsDueDateOpen(false)}
-                          anchorRef={dueDateDropdownRef}
+                          anchorRef={dueDateButtonRef}
+                          panelRef={panelRef}
                         />
                       )}
                     </div>
 
-                    <div className="relative" ref={assigneeDropdownRef}>
-                      <label className="block text-xs font-bold text-[#0D1B2A] mb-1.5">담당자</label>
+                    <div className="relative space-y-1.5" ref={assigneeDropdownRef}>
+                      <label className={`block ${PANEL_FIELD_LABEL_CLASS}`}>담당자</label>
                       <button
                         type="button"
                         onClick={() => setIsAssigneeOpen((prev) => !prev)}
-                        className={`w-full px-3 py-2 text-sm rounded-lg border transition flex items-center justify-between cursor-pointer ${
-                          isAssigneeOpen ? "bg-[#EEF3FF] border-[#0099CC]/40 shadow-[0_0_0_3px_rgba(0,153,204,0.12)]" : "bg-white border-[rgba(0,100,180,0.12)] hover:border-[rgba(0,153,204,0.4)]"
+                        className={`w-full px-3.5 py-2.5 text-sm rounded-xl border transition flex items-center justify-between cursor-pointer ${
+                          isAssigneeOpen ? "bg-[#EEF3FF] border-[#0099CC]/40 shadow-[0_0_0_3px_rgba(0,153,204,0.12)]" : "bg-white border-[rgba(0,100,180,0.14)] hover:border-[rgba(0,153,204,0.4)]"
                         }`}
                       >
                         <span className="font-medium">{editForm.assignee}</span>
@@ -1680,13 +1631,13 @@ export default function App() {
 
                   {/* 연동 완료 상태: Jira/Notion 링크 카드 */}
                   {selectedItem.status === "연동 완료" && selectedItem.jiraLink && (
-                    <div className="rounded-xl border border-[#10B981]/30 bg-[#E6F4EA] p-4 flex items-center justify-between gap-3">
+                    <div className="rounded-2xl border border-[rgba(0,153,204,0.28)] bg-[#EEF8FF] px-3.5 py-3 flex items-center justify-between gap-3">
                       <div className="flex items-center gap-2 min-w-0">
-                        <span className="shrink-0 w-7 h-7 rounded-lg bg-[#10B981]/15 text-[#10B981] flex items-center justify-center">
+                        <span className="shrink-0 w-7 h-7 rounded-lg bg-[#EEF3FF] text-[#0099CC] flex items-center justify-center">
                           <LucideIcon name="checkCircle" size={15} />
                         </span>
                         <div className="min-w-0">
-                          <p className="text-[12px] font-bold text-[#0E8F69]">연동 완료</p>
+                          <p className="text-[12px] font-bold text-[#0D1B2A]">연동완료 | 외부 툴 링크 바로가기</p>
                           <p className="text-[11px] text-[#5A6F8A] truncate">{selectedItem.jiraLink}</p>
                         </div>
                       </div>
@@ -1706,7 +1657,7 @@ export default function App() {
 
               {/* ▸ 연동 도구 선택 뷰 */}
               {panelView === "integrate" && (
-                <div className="view-enter-right p-5 space-y-4">
+                <div className="view-enter-right px-4 sm:px-5 py-4 space-y-4">
                   <div>
                     <h3 className="text-base font-bold text-[#0D1B2A]">연동 도구 선택</h3>
                     <p className="text-sm text-[#5A6F8A] mt-1">이 액션 아이템을 어떤 툴로 내보낼까요?</p>
@@ -1819,20 +1770,6 @@ export default function App() {
                           </button>
                         </>
                       )}
-                      {selectedItem.status === "검증 전" && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const updated = { ...editForm };
-                            setActionItems(prev => prev.map(i => i.id === selectedItem.id ? { ...i, ...updated } : i));
-                            setSelectedItem(prev => ({ ...prev, ...updated }));
-                            triggerToast("변경 사항이 저장되었습니다.", "success");
-                          }}
-                          className="px-4 py-2.5 text-sm font-semibold text-[#5A6F8A] bg-white border border-gray-200 hover:border-gray-300 hover:bg-gray-50 rounded-xl transition-all cursor-pointer"
-                        >
-                          저장
-                        </button>
-                      )}
                     </div>
                   </>
                 )}
@@ -1842,45 +1779,9 @@ export default function App() {
         </div>
       )}
 
-      {/* 로그인 모달 */}
-      {showLoginModal && (
-        <div className="fixed inset-0 z-50 bg-[#0D1B2A]/40 backdrop-blur-sm flex items-center justify-center p-4">
-          <form
-            onSubmit={handleLogin}
-            className="bg-white rounded-2xl max-w-sm w-full border border-[rgba(0,100,180,0.12)] shadow-2xl p-6 space-y-4 animate-in fade-in zoom-in-95 duration-200"
-          >
-            <div className="text-center">
-              <span className="text-sm font-extrabold text-[#0099CC]">TIKI WORKSPACE</span>
-              <h3 className="text-xl font-bold text-[#0D1B2A] mt-1">네오테크 가상 B2B 채널 로그인</h3>
-              <p className="text-xs text-[#5A6F8A] mt-1">별도의 회원가입 없이 바로 테스트해보실 수 있습니다.</p>
-            </div>
-            <div className="space-y-3">
-              <div>
-                <label className="block text-xs text-[#0D1B2A] font-semibold mb-1">사내 이메일 주소</label>
-                <input type="email" required value={loginForm.email} onChange={(e) => setLoginForm({ ...loginForm, email: e.target.value })}
-                  className="w-full px-3 py-2 border border-[rgba(0,100,180,0.12)] rounded-lg text-sm focus:border-[#0099CC] focus:ring-1 focus:ring-[#0099CC] outline-none"
-                />
-              </div>
-              <div>
-                <label className="block text-xs text-[#0D1B2A] font-semibold mb-1">비밀번호</label>
-                <input type="password" required value={loginForm.password} onChange={(e) => setLoginForm({ ...loginForm, password: e.target.value })}
-                  className="w-full px-3 py-2 border border-[rgba(0,100,180,0.12)] rounded-lg text-sm focus:border-[#0099CC] focus:ring-1 focus:ring-[#0099CC] outline-none"
-                />
-              </div>
-            </div>
-            <div className="pt-2 flex gap-2">
-              <button type="button" onClick={() => setShowLoginModal(false)} className="flex-1 py-2 text-sm font-bold text-[#5A6F8A] hover:bg-gray-100 rounded-lg transition-colors cursor-pointer">닫기</button>
-              <button type="submit" className="flex-1 py-2 text-sm font-bold text-white bg-[#0099CC] hover:bg-[#0086b3] rounded-lg transition-colors shadow-md shadow-cyan-500/10 inline-flex items-center justify-center gap-1.5 cursor-pointer">
-                <LucideIcon name="zap" size={14} className="text-white" />입장 및 시연
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
-
       <ToastPopup show={toast.show} message={toast.message} type={toast.type} />
       {!isMobile && <Footer />}
-      {isMobile && <MobileTab active={activeTab} onChange={setActiveTab} />}
+      {isMobile && !isPanelOpen && <MobileTab active={activeTab} onChange={setActiveTab} />}
     </div>
   );
 }

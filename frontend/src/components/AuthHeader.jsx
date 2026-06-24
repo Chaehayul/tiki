@@ -39,12 +39,15 @@ function Icon({ name, size = 16, color = 'currentColor', sw = 2 }) {
 export default function AuthHeader() {
     const { pathname } = useLocation();
     const [isLoggedIn, setIsLoggedIn] = useState(() => Boolean(localStorage.getItem('tiki_access_token')));
-    const authLinks = isLoggedIn
-        ? [{ label: '대시보드', to: '/dashboard' }]
-        : [
+    const isAuthPage = pathname === '/login' || pathname === '/signup';
+    const shouldShowGuestTabs = isAuthPage || !isLoggedIn;
+
+    const authLinks = shouldShowGuestTabs
+        ? [
               { label: '로그인', to: '/login' },
               { label: '회원가입', to: '/signup' },
-          ];
+          ]
+        : [{ label: '대시보드', to: '/dashboard' }];
 
     useEffect(() => {
         const syncAuthSession = () => setIsLoggedIn(Boolean(localStorage.getItem('tiki_access_token')));

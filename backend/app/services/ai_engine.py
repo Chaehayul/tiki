@@ -15,6 +15,7 @@ from typing import Any
 from app.services.ai.llm_analysis import LLMAnalysisService, build_llm_analysis_service
 from app.services.ai.rag_context import RAGContext, normalize_rag_context
 from app.services.ai.stt import SpeechToTextService, WhisperSpeechToTextService
+from app.schemas.meeting_record import MeetingSearchChunk, MeetingSearchDocument
 from app.services.pipeline.security_masking import mask_personal_information
 
 logger = logging.getLogger(__name__)
@@ -40,17 +41,73 @@ def _build_tx_rows(segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for index, segment in enumerate(segments):
         start_seconds = segment.get("start_seconds")
         text = segment.get("masked_text") or segment.get("text") or ""
+        speaker_fields = _build_speaker_fields(
+            segment.get("speaker"),
+            segment.get("speaker_id"),
+            segment.get("speaker_label"),
+        )
         rows.append(
             {
                 "time": _format_mmss(start_seconds),
                 "ts": int(round(float(start_seconds))) if start_seconds is not None else None,
-                "spk": segment.get("speaker"),
+                "spk": speaker_fields["speaker"],
+                "speaker_id": speaker_fields["speaker_id"],
+                "speaker_label": speaker_fields["speaker_label"],
                 "txt": text,
                 "confidence": segment.get("confidence"),
                 "index": segment.get("index", index),
             }
         )
     return rows
+
+
+def _build_speaker_fields(
+    speaker: Any,
+    speaker_id: Any | None = None,
+    speaker_label: Any | None = None,
+) -> dict[str, Any]:
+    normalized_speaker = _normalize_segment_text(speaker)
+    normalized_speaker_id = _normalize_segment_text(speaker_id)
+    normalized_speaker_label = _normalize_segment_text(speaker_label)
+
+    if normalized_speaker.lower() in {"none", "null", "unknown"}:
+        normalized_speaker = ""
+    if normalized_speaker_id.lower() in {"none", "null", "unknown"}:
+        normalized_speaker_id = ""
+    if normalized_speaker_label.lower() in {"none", "null", "unknown"}:
+        normalized_speaker_label = ""
+
+    canonical_speaker = normalized_speaker or normalized_speaker_id or normalized_speaker_label or None
+    if canonical_speaker is None:
+        return {"speaker": None, "speaker_id": None, "speaker_label": None}
+
+    return {
+        "speaker": canonical_speaker,
+        "speaker_id": normalized_speaker_id or canonical_speaker,
+        "speaker_label": normalized_speaker_label or canonical_speaker,
+    }
+
+
+def _join_search_parts(*parts: Any) -> str:
+    values: list[str] = []
+    seen: set[str] = set()
+    for part in parts:
+        if part is None:
+            continue
+        if isinstance(part, (list, tuple, set)):
+            candidates = part
+        else:
+            candidates = (part,)
+        for candidate in candidates:
+            text = _normalize_segment_text(candidate)
+            if not text:
+                continue
+            key = text.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            values.append(text)
+    return " | ".join(values)
 
 
 @dataclass(slots=True)
@@ -251,10 +308,13 @@ def _build_sentence_segments(text: str) -> list[dict[str, Any]]:
     sentences = _split_sentences(text)
     segments: list[dict[str, Any]] = []
     for index, sentence in enumerate(sentences):
+        speaker_fields = _build_speaker_fields(None)
         segments.append(
             {
                 "index": index,
-                "speaker": None,
+                "speaker": speaker_fields["speaker"],
+                "speaker_id": speaker_fields["speaker_id"],
+                "speaker_label": speaker_fields["speaker_label"],
                 "start_seconds": None,
                 "end_seconds": None,
                 "confidence": None,
@@ -293,6 +353,117 @@ def _build_context_snapshot(context: Any | None) -> dict[str, Any] | None:
     }
 
 
+def _build_meeting_search_document(
+    *,
+    transcript: str,
+    masked_transcript: str,
+    analysis_data: dict[str, Any],
+    segments: list[dict[str, Any]],
+    context_snapshot: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    keyword_items = list(analysis_data.get("keywords", []))
+    keywords = [
+        _normalize_segment_text(item.get("text"))
+        for item in keyword_items
+        if isinstance(item, dict) and _normalize_segment_text(item.get("text"))
+    ]
+    decisions = [
+        _normalize_segment_text(item)
+        for item in analysis_data.get("decisions", [])
+        if _normalize_segment_text(item)
+    ]
+    action_items = []
+    for item in analysis_data.get("action_items", []):
+        if not isinstance(item, dict):
+            continue
+        normalized_item = {
+            "title": _normalize_segment_text(item.get("title")),
+            "description": _normalize_segment_text(item.get("description")),
+            "priority": item.get("priority"),
+            "assignee": _normalize_segment_text(item.get("assignee")) or item.get("assignee"),
+            "due_at": item.get("due_at"),
+            "status": item.get("status"),
+        }
+        if normalized_item["title"] or normalized_item["description"]:
+            action_items.append(normalized_item)
+    issues = [
+        _normalize_segment_text(item.get("text") if isinstance(item, dict) else item)
+        for item in analysis_data.get("issues", [])
+        if _normalize_segment_text(item.get("text") if isinstance(item, dict) else item)
+    ]
+    next_agenda = [
+        _normalize_segment_text(item)
+        for item in analysis_data.get("next_agenda", [])
+        if _normalize_segment_text(item)
+    ]
+
+    search_chunks: list[dict[str, Any]] = []
+    for index, segment in enumerate(segments):
+        speaker_fields = _build_speaker_fields(
+            segment.get("speaker"),
+            segment.get("speaker_id"),
+            segment.get("speaker_label"),
+        )
+        chunk_text = _normalize_segment_text(segment.get("masked_text") or segment.get("text"))
+        if not chunk_text:
+            continue
+        chunk = MeetingSearchChunk(
+            chunk_index=segment.get("chunk_index", index),
+            chunk_local_index=segment.get("chunk_local_index"),
+            speaker=speaker_fields["speaker"],
+            speaker_id=speaker_fields["speaker_id"],
+            speaker_label=speaker_fields["speaker_label"],
+            start_seconds=segment.get("start_seconds"),
+            end_seconds=segment.get("end_seconds"),
+            duration_seconds=segment.get("duration_seconds"),
+            model_name=segment.get("model_name"),
+            chunk_difficulty=segment.get("chunk_difficulty"),
+            text=_normalize_segment_text(segment.get("text")),
+            masked_text=chunk_text,
+            search_text=_join_search_parts(
+                speaker_fields["speaker_label"] or speaker_fields["speaker_id"] or speaker_fields["speaker"],
+                chunk_text,
+            ),
+        )
+        search_chunks.append(chunk.model_dump())
+
+    title = None
+    project_name = None
+    if context_snapshot:
+        title = _normalize_segment_text(context_snapshot.get("meeting_title")) or None
+        project_name = _normalize_segment_text(context_snapshot.get("project_name")) or None
+
+    search_text = _join_search_parts(
+        title,
+        project_name,
+        analysis_data.get("summary"),
+        keywords,
+        decisions,
+        [item["title"] for item in action_items if item.get("title")],
+        [item["description"] for item in action_items if item.get("description")],
+        issues,
+        next_agenda,
+        [chunk["search_text"] for chunk in search_chunks],
+        transcript,
+        masked_transcript,
+    )
+
+    document = MeetingSearchDocument(
+        meeting_title=title,
+        project_name=project_name,
+        summary=_normalize_segment_text(analysis_data.get("summary")),
+        keywords=keywords,
+        keyword_items=keyword_items,
+        decisions=decisions,
+        action_items=action_items,
+        issues=issues,
+        next_agenda=next_agenda,
+        chunks=search_chunks,
+        search_text=search_text,
+    )
+    return document.model_dump()
+
+
 def _summarize_audio_preprocessing(preprocessing: Any | None) -> dict[str, Any] | None:
     if preprocessing is None:
         return None
@@ -320,6 +491,62 @@ def _summarize_audio_preprocessing(preprocessing: Any | None) -> dict[str, Any] 
         "noisy_recording": bool(load_metadata.get("noisy_recording")),
     }
     return {key: value for key, value in summary.items() if value not in (None, "", [], {}, ())}
+
+
+def _summarize_stt_routing(segments: list[dict[str, Any]] | None) -> list[dict[str, Any]] | None:
+    if not segments:
+        return None
+
+    by_chunk: dict[int, dict[str, Any]] = {}
+    for segment in segments:
+        chunk_index = segment.get("chunk_index")
+        if chunk_index is None:
+            continue
+
+        try:
+            chunk_index_int = int(chunk_index)
+        except (TypeError, ValueError):
+            continue
+
+        bucket = by_chunk.setdefault(
+            chunk_index_int,
+            {
+                "chunk_index": chunk_index_int,
+                "start_seconds": segment.get("start_seconds"),
+                "end_seconds": segment.get("end_seconds"),
+                "model_name": segment.get("model_name"),
+                "chunk_difficulty": segment.get("chunk_difficulty"),
+                "segment_count": 0,
+            },
+        )
+        bucket["segment_count"] += 1
+        if segment.get("model_name"):
+            bucket["model_name"] = segment.get("model_name")
+        if segment.get("chunk_difficulty") is not None:
+            bucket["chunk_difficulty"] = segment.get("chunk_difficulty")
+        if bucket.get("start_seconds") is None or (
+            segment.get("start_seconds") is not None and segment.get("start_seconds") < bucket.get("start_seconds")
+        ):
+            bucket["start_seconds"] = segment.get("start_seconds")
+        if bucket.get("end_seconds") is None or (
+            segment.get("end_seconds") is not None and segment.get("end_seconds") > bucket.get("end_seconds")
+        ):
+            bucket["end_seconds"] = segment.get("end_seconds")
+
+    for bucket in by_chunk.values():
+        start_seconds = bucket.get("start_seconds")
+        end_seconds = bucket.get("end_seconds")
+        if start_seconds is not None and end_seconds is not None:
+            try:
+                bucket["chunk_duration_seconds"] = round(max(0.0, float(end_seconds) - float(start_seconds)), 3)
+            except (TypeError, ValueError):
+                pass
+
+    routing = [
+        {key: value for key, value in item.items() if value not in (None, "", [], {}, ())}
+        for item in sorted(by_chunk.values(), key=lambda row: row["chunk_index"])
+    ]
+    return routing or None
 
 
 def _augment_context_with_audio_quality(context: Any | None, preprocessing: Any | None) -> dict[str, Any] | Any | None:
@@ -523,6 +750,13 @@ class AIEngine:
         context_snapshot = _build_context_snapshot(rag_context)
         evidence = _build_evidence_items(masked_text, analysis_data, segments, context_snapshot=context_snapshot)
         analysis = _build_analysis_payload(analysis_data, evidence=evidence)
+        analysis.extra_data["search_document"] = _build_meeting_search_document(
+            transcript=text,
+            masked_transcript=masked_text,
+            analysis_data=analysis_data,
+            segments=segments,
+            context_snapshot=context_snapshot,
+        )
         return AIProcessingResult(
             transcript=text,
             masked_transcript=masked_text,
@@ -547,7 +781,13 @@ class AIEngine:
         segments = [
             {
                 "index": segment.get("index", index),
-                "speaker": segment.get("speaker"),
+                "chunk_index": segment.get("chunk_index"),
+                "chunk_local_index": segment.get("chunk_local_index"),
+                **_build_speaker_fields(
+                    segment.get("speaker"),
+                    segment.get("speaker_id"),
+                    segment.get("speaker_label"),
+                ),
                 "start_seconds": segment.get("start_seconds"),
                 "end_seconds": segment.get("end_seconds"),
                 "duration_seconds": segment.get("duration_seconds"),
@@ -555,6 +795,8 @@ class AIEngine:
                 "text": segment.get("text", ""),
                 "masked_text": mask_personal_information(segment.get("text", "")),
                 "source": "audio_chunk",
+                "model_name": segment.get("model_name"),
+                "chunk_difficulty": segment.get("chunk_difficulty"),
             }
             for index, segment in enumerate(raw_segments)
         ] or _build_sentence_segments(masked_transcript)
@@ -565,6 +807,21 @@ class AIEngine:
         analysis = _build_analysis_payload(analysis_data, evidence=evidence)
         if preprocessing:
             analysis.extra_data["audio_preprocessing"] = _summarize_audio_preprocessing(preprocessing)
+        get_last_diarization = getattr(self.stt_service, "get_last_diarization", None)
+        if callable(get_last_diarization):
+            diarization_summary = get_last_diarization()
+            if diarization_summary:
+                analysis.extra_data["speaker_diarization"] = diarization_summary
+        stt_routing = _summarize_stt_routing(segments)
+        if stt_routing:
+            analysis.extra_data["stt_routing"] = stt_routing
+        analysis.extra_data["search_document"] = _build_meeting_search_document(
+            transcript=transcript,
+            masked_transcript=masked_transcript,
+            analysis_data=analysis_data,
+            segments=segments,
+            context_snapshot=context_snapshot,
+        )
         return AIProcessingResult(
             transcript=transcript,
             masked_transcript=masked_transcript,
@@ -581,6 +838,7 @@ class AIEngine:
         masked_segments: list[str] = []
         timeline_segments: list[dict[str, Any]] = []
         audio_preprocessing_summaries: list[dict[str, Any]] = []
+        diarization_summaries: list[dict[str, Any]] = []
 
         for index, file_path in enumerate(file_paths):
             transcriber = getattr(self.stt_service, "transcribe_with_segments", None)
@@ -598,6 +856,11 @@ class AIEngine:
             preprocessing_summary = _summarize_audio_preprocessing(preprocessing)
             if preprocessing_summary:
                 audio_preprocessing_summaries.append(preprocessing_summary)
+            get_last_diarization = getattr(self.stt_service, "get_last_diarization", None)
+            if callable(get_last_diarization):
+                diarization_summary = get_last_diarization()
+                if diarization_summary:
+                    diarization_summaries.append({"file_index": index, "file_path": file_path, **diarization_summary})
             segment_label = f"[SEGMENT {index + 1}]"
 
             file_results.append(
@@ -618,7 +881,13 @@ class AIEngine:
                     "file_path": file_path,
                     "file_name": Path(file_path).name,
                     "segment_label": segment_label,
-                    "speaker": segment.get("speaker"),
+                    "chunk_index": segment.get("chunk_index"),
+                    "chunk_local_index": segment.get("chunk_local_index"),
+                    **_build_speaker_fields(
+                        segment.get("speaker"),
+                        segment.get("speaker_id"),
+                        segment.get("speaker_label"),
+                    ),
                     "start_seconds": segment.get("start_seconds"),
                     "end_seconds": segment.get("end_seconds"),
                     "duration_seconds": segment.get("duration_seconds"),
@@ -626,6 +895,8 @@ class AIEngine:
                     "text": segment.get("text", ""),
                     "masked_text": mask_personal_information(segment.get("text", "")),
                     "source": "audio_chunk",
+                    "model_name": segment.get("model_name"),
+                    "chunk_difficulty": segment.get("chunk_difficulty"),
                 }
                 for segment_index, segment in enumerate(raw_segments)
             ]
@@ -637,7 +908,7 @@ class AIEngine:
                         "file_path": file_path,
                         "file_name": Path(file_path).name,
                         "segment_label": segment_label,
-                        "speaker": None,
+                        **_build_speaker_fields(None),
                         "start_seconds": None,
                         "end_seconds": None,
                         "duration_seconds": None,
@@ -683,6 +954,18 @@ class AIEngine:
         analysis = _build_analysis_payload(analysis_data, evidence=evidence)
         if audio_preprocessing_summaries:
             analysis.extra_data["audio_preprocessing"] = audio_preprocessing_summaries
+        if diarization_summaries:
+            analysis.extra_data["speaker_diarization"] = diarization_summaries
+        stt_routing = _summarize_stt_routing(timeline_segments)
+        if stt_routing:
+            analysis.extra_data["stt_routing"] = stt_routing
+        analysis.extra_data["search_document"] = _build_meeting_search_document(
+            transcript=combined_transcript,
+            masked_transcript=combined_masked_transcript,
+            analysis_data=analysis_data,
+            segments=timeline_segments,
+            context_snapshot=context_snapshot,
+        )
         return AIProcessingBatchResult(
             file_count=len(file_paths),
             files=file_results,

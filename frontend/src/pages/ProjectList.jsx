@@ -103,7 +103,6 @@ function parseCurrentUser() {
 
 function ProjectCard({ project, onOpen, onOpenConfig, openMenuProjectId, setOpenMenuProjectId }) {
   const summary = PROJECT_SUMMARY[project.id] || '최근 회의 내용을 요약하고 있어요.';
-  const lastMeeting = project.meetings?.[project.meetings.length - 1];
 
   return (
     <div
@@ -153,16 +152,8 @@ function ProjectCard({ project, onOpen, onOpenConfig, openMenuProjectId, setOpen
             )}
           </div>
         </div>
-
-        {/* 최근 회의 제목 */}
-        {lastMeeting && (
-          <p className="mb-1.5 text-[11.5px] font-medium text-[#0099CC] truncate">
-            {lastMeeting.title}
-          </p>
-        )}
-
-        {/* 회의 요약 2줄 */}
-        <p className="flex-1 text-[12px] leading-[1.6] text-[#7A8FA6] line-clamp-2">
+        {/* 회의 요약 1줄 */}
+        <p className="flex-1 text-[12px] leading-[1.6] text-[#7A8FA6] line-clamp-1">
           {summary}
         </p>
 
@@ -460,7 +451,7 @@ export default function ProjectList() {
           <section>
             {isLoading ? (
               viewMode === 'card' ? (
-                <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-4">
+                <div className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-4">
                   {Array.from({ length: itemsPerPage }).map((_, i) => <ProjectCardSkeleton key={i} />)}
                 </div>
               ) : (
@@ -471,7 +462,7 @@ export default function ProjectList() {
             ) : paginatedProjects.length > 0 ? (
               <>
                 {viewMode === 'card' ? (
-                  <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-4">
+                  <div className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-4">
                     {paginatedProjects.map((project) => (
                       <ProjectCard
                         key={project.id}

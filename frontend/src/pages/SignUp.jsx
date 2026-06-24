@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { saveAuthSession, signupUser } from '../api/apiClient';
 import AuthHeader from '../components/AuthHeader';
@@ -243,12 +243,6 @@ export default function SignUpPage() {
     const [submitError, setSubmitError] = useState('');
 
     const strength = getPasswordStrength(password);
-
-    useEffect(() => {
-        if (localStorage.getItem('tiki_access_token')) {
-            navigate('/upload', { replace: true });
-        }
-    }, [navigate]);
 
     /* ── 유효성 검사 ── */
     const validateStep1 = () => {

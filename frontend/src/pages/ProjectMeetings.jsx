@@ -8,7 +8,6 @@ const PROJECTS = [
 	{
 		id: 1,
 		name: 'AI 회의록 자동화',
-		category: '개발',
 		description: '회의 녹음 파일 기반으로 AI가 요약하고 Jira 액션 아이템까지 자동 매핑하는 프로젝트입니다.',
 		createdAt: '2026-06-01',
 		status: '진행 중',
@@ -28,7 +27,6 @@ const PROJECTS = [
 	{
 		id: 2,
 		name: '디자인 시스템 구축',
-		category: '디자인',
 		description: '컴포넌트/토큰 규칙을 통일해 제품 전반의 UI 일관성과 협업 속도를 높이는 프로젝트입니다.',
 		createdAt: '2026-05-27',
 		status: '진행 중',
@@ -45,7 +43,6 @@ const PROJECTS = [
 	{
 		id: 3,
 		name: '사용자 인터뷰 분석',
-		category: '기타',
 		description: '인터뷰 VOC를 구조화해 핵심 인사이트를 도출하고 기능 우선순위 수립에 반영하는 프로젝트입니다.',
 		createdAt: '2026-05-19',
 		status: '보류',
@@ -60,7 +57,6 @@ const PROJECTS = [
 	{
 		id: 4,
 		name: '분기별 기획안',
-		category: '기획',
 		description: '분기 로드맵과 핵심 과제를 정리하고 실행 우선순위를 확정하는 기획 프로젝트입니다.',
 		createdAt: '2026-06-08',
 		status: '완료',
@@ -84,9 +80,80 @@ function statusBadgeClass(status) {
 	return 'bg-[#FEF7E0] text-[#F59E0B]';
 }
 
-const CATEGORY_TEXT_COLOR = {
-	개발: '#0099CC', 디자인: '#7C3AED', 기획: '#10B981', 마케팅: '#EF4444', 기타: '#F59E0B', '기타(직접입력)': '#F59E0B',
+// ✅ 액션 아이템 상태 뱃지 스타일 함수 추가
+const ACTION_STATUS_ORDER = ['검토대기', '검토완료', '연동완료', '완료히스토리'];
+const ACTION_STATUS_LABEL = {
+	검토대기: '검토대기',
+	검토완료: '검토완료',
+	연동완료: '연동완료',
+	완료히스토리: '완료히스토리',
 };
+
+function normalizeActionStatus(status) {
+	const normalized = String(status || '').trim();
+	if (normalized === '검증 전') return '검토대기';
+	if (normalized === '완료') return '완료히스토리';
+	if (normalized === '연동 완료') return '연동완료';
+	if (ACTION_STATUS_ORDER.includes(normalized)) return normalized;
+	return '검토대기';
+}
+
+function actionStatusStyle(status) {
+	if (status === '완료히스토리') return { bg: '#E6F4EA', color: '#10B981', border: '#10B981' };
+	if (status === '연동완료') return { bg: '#EEF3FF', color: '#0099CC', border: '#0099CC' };
+	if (status === '검토완료') return { bg: '#F1F5F9', color: '#475569', border: '#94A3B8' };
+	return { bg: '#FEF7E0', color: '#F59E0B', border: '#F59E0B' }; // 검토대기
+}
+
+function getActionStatusLabel(status) {
+	return ACTION_STATUS_LABEL[normalizeActionStatus(status)] || '검토대기';
+}
+
+function getActionStatusBadgeLabel(status) {
+	return normalizeActionStatus(status) === '완료히스토리' ? '완료' : getActionStatusLabel(status);
+}
+
+function toDateInputValue(value) {
+	const raw = String(value || '').trim();
+	if (!raw) return '';
+	if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+	if (/^\d{4}\.\d{2}\.\d{2}$/.test(raw)) return raw.replace(/\./g, '-');
+	return '';
+}
+
+function fromDateInputValue(value) {
+	const raw = String(value || '').trim();
+	if (!raw) return '-';
+	if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw.replace(/-/g, '.');
+	return raw;
+}
+
+function getKSTTimestampLabel(date = new Date()) {
+	const parts = new Intl.DateTimeFormat('ko-KR', {
+		timeZone: 'Asia/Seoul',
+		year: 'numeric',
+		month: '2-digit',
+		day: '2-digit',
+		hour: '2-digit',
+		minute: '2-digit',
+		hour12: false,
+	}).formatToParts(date);
+	const get = (type) => parts.find((item) => item.type === type)?.value || '';
+	return `${get('year')}.${get('month')}.${get('day')} ${get('hour')}:${get('minute')}`;
+}
+
+function buildExternalLink(tool, title = '') {
+	const query = String(title || '').trim();
+	if (tool === 'Jira') {
+		const params = new URLSearchParams({ jql: query ? `text ~ "${query}"` : 'order by created DESC' });
+		return `https://jira.atlassian.com/issues/?${params.toString()}`;
+	}
+	if (tool === 'Notion') {
+		const params = new URLSearchParams({ query: query || 'action item' });
+		return `https://www.notion.so/search?${params.toString()}`;
+	}
+	return '';
+}
 
 const ROLE_MAP = {
 	'정아름': 'PM', '김민수': 'Backend', '송지영': 'PM', '김소현': 'ML Engineer', '채하율': 'Frontend', '박디자이너': 'Designer', '외부리서처A': 'QA',
@@ -116,6 +183,14 @@ const readProjectOverrides = () => {
 	} catch { return {}; }
 };
 
+const writeProjectOverrides = (next) => {
+	try {
+		localStorage.setItem(PROJECT_OVERRIDE_STORAGE_KEY, JSON.stringify(next));
+	} catch {
+		// ignore storage write failures in local mock mode
+	}
+};
+
 function normalizeProject(project) {
 	if (!project) return null;
 	const participants = Array.isArray(project.participants) ? project.participants : [];
@@ -126,7 +201,7 @@ function normalizeProject(project) {
 			title: meeting.title || '회의 제목 없음',
 			status: meeting.status || '진행 중',
 			type: meeting.type || '정기',
-			tags: Array.isArray(meeting.tags) && meeting.tags.length > 0 ? meeting.tags : [`#${project.category || '회의'}`],
+			tags: Array.isArray(meeting.tags) && meeting.tags.length > 0 ? meeting.tags : ['#회의'],
 			participants: Array.isArray(meeting.participants) && meeting.participants.length > 0 ? meeting.participants : participants,
 			summary: meeting.summary || '회의 요약이 아직 등록되지 않았습니다.',
 			actionItems: typeof meeting.actionItems === 'number' ? meeting.actionItems : 0,
@@ -136,7 +211,6 @@ function normalizeProject(project) {
 	return {
 		id: project.id,
 		name: project.name || '프로젝트',
-		category: project.category || '기타',
 		description: project.description || '',
 		createdAt: project.createdAt || '',
 		status: project.status || '진행 중',
@@ -147,7 +221,6 @@ function normalizeProject(project) {
 	};
 }
 
-// SettingsIcon
 function SettingsIcon() {
 	return (
 		<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -157,7 +230,6 @@ function SettingsIcon() {
 	);
 }
 
-// MoreVertical icon
 function MoreVerticalIcon() {
 	return (
 		<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -184,6 +256,8 @@ function CheckIcon({ className = '' }) {
 	);
 }
 
+
+
 export default function ProjectMeetings() {
 	const navigate = useNavigate();
 	const location = useLocation();
@@ -194,12 +268,13 @@ export default function ProjectMeetings() {
 	const toastTimerRef = useRef(null);
 	const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
 	const [activeTab, setActiveTab] = useState('home');
-	const [activePageTab, setActivePageTab] = useState('meetings'); // 'meetings' | 'actions'
+	const [activePageTab, setActivePageTab] = useState('meetings');
 	const [isParticipantsModalOpen, setIsParticipantsModalOpen] = useState(false);
 	const [participantsModalMembers, setParticipantsModalMembers] = useState([]);
 	const [participantsModalTitle, setParticipantsModalTitle] = useState('회의 참여자');
 	const [deletedMeetingIds, setDeletedMeetingIds] = useState([]);
 	const [pendingDeleteMeeting, setPendingDeleteMeeting] = useState(null);
+	const [pendingDeleteActionItemId, setPendingDeleteActionItemId] = useState(null);
 	const [toast, setToast] = useState({ message: '', type: 'info' });
 	const [projectSearch, setProjectSearch] = useState('');
 	const [meetingSearch, setMeetingSearch] = useState('');
@@ -212,15 +287,19 @@ export default function ProjectMeetings() {
 	const [actionStatusFilter, setActionStatusFilter] = useState('전체');
 	const [actionSourceFilter, setActionSourceFilter] = useState('전체');
 	const [openActionFilter, setOpenActionFilter] = useState(null);
-	const [openActionStatusMenuId, setOpenActionStatusMenuId] = useState(null);
 	const [actionItems, setActionItems] = useState([]);
-	const [editingActionItemId, setEditingActionItemId] = useState(null);
-	const [editingActionText, setEditingActionText] = useState('');
+	const [isActionDrawerOpen, setIsActionDrawerOpen] = useState(false);
+	const [activeActionItemId, setActiveActionItemId] = useState(null);
+	const [actionDraft, setActionDraft] = useState(null);
+	const [pendingIntegrationTarget, setPendingIntegrationTarget] = useState('');
+	const [isDrawerAssigneeOpen, setIsDrawerAssigneeOpen] = useState(false);
 	const [openMoreMenuId, setOpenMoreMenuId] = useState(null);
+	const [openActionMoreMenuId, setOpenActionMoreMenuId] = useState(null);
 	const actionAssigneeFilterRef = useRef(null);
 	const actionStatusFilterRef = useRef(null);
 	const actionSourceFilterRef = useRef(null);
-	const moreMenuRef = useRef(null);
+	const drawerAssigneeRef = useRef(null);
+	const actionDescriptionRef = useRef(null);
 
 	useEffect(() => {
 		const handleResize = () => setIsMobile(window.innerWidth < 768);
@@ -238,8 +317,9 @@ export default function ProjectMeetings() {
 				|| (actionStatusFilterRef.current && actionStatusFilterRef.current.contains(e.target))
 				|| (actionSourceFilterRef.current && actionSourceFilterRef.current.contains(e.target));
 			if (!clickedActionFilter) setOpenActionFilter(null);
-			if (!e.target.closest('[data-action-status-root]')) setOpenActionStatusMenuId(null);
 			if (!e.target.closest('[data-more-menu-root]')) setOpenMoreMenuId(null);
+			if (!e.target.closest('[data-action-more-menu-root]')) setOpenActionMoreMenuId(null);
+			if (!e.target.closest('[data-drawer-assignee-root]')) setIsDrawerAssigneeOpen(false);
 		};
 		document.addEventListener('mousedown', handleOutsideClick);
 		return () => document.removeEventListener('mousedown', handleOutsideClick);
@@ -280,7 +360,7 @@ export default function ProjectMeetings() {
 	const filteredProjects = useMemo(() => {
 		const q = projectSearch.trim().toLowerCase();
 		if (!q) return projectCandidates;
-		return projectCandidates.filter((p) => p.name.toLowerCase().includes(q) || p.category.toLowerCase().includes(q));
+		return projectCandidates.filter((p) => p.name.toLowerCase().includes(q));
 	}, [projectSearch, projectCandidates]);
 
 	const visibleMeetings = useMemo(() => {
@@ -300,14 +380,19 @@ export default function ProjectMeetings() {
 			setActionItems([]);
 			return;
 		}
+		const fallbackMeetingTitle = project.meetings.find((meeting) => String(meeting.title || '').trim())?.title || project.name || '회의 제목 없음';
 		setActionItems(
 			(project.myActionItems || []).map((item) => ({
 				id: item.id,
 				text: item.text,
+				description: item.description || '',
 				due: item.due || '-',
-				assignee: item.assignee || project.teamLead || '담당자 미지정',
-				status: item.status || '검증 전',
-				source: item.source || '내 할 일',
+				assignee: (String(item.assignee || '').trim() && String(item.assignee || '').trim() !== '담당자 미지정') ? item.assignee : (project.teamLead || '담당자 미지정'),
+				status: normalizeActionStatus(item.status),
+				source: String(item.source || '').trim() || String(item.meeting?.title || '').trim() || fallbackMeetingTitle,
+				integrationTool: item.integrationTool || null,
+				externalLink: item.externalLink || '',
+				updatedAt: item.updatedAt || getKSTTimestampLabel(),
 				meeting: null,
 			}))
 		);
@@ -320,11 +405,10 @@ export default function ProjectMeetings() {
 		return ['전체', ...new Set([...participants, ...allActionItems.map((item) => item.assignee)].filter(Boolean))];
 	}, [project, allActionItems]);
 	const actionStatusOptions = useMemo(() => {
-		const statusSet = new Set(['검증 전', '연동 완료', '완료']);
-		allActionItems.forEach((item) => statusSet.add(item.status));
+		const statusSet = new Set(ACTION_STATUS_ORDER);
+		allActionItems.forEach((item) => statusSet.add(normalizeActionStatus(item.status)));
 		return ['전체', ...statusSet];
 	}, [allActionItems]);
-	const actionRowStatusOptions = useMemo(() => actionStatusOptions.filter((option) => option !== '전체'), [actionStatusOptions]);
 	const actionSourceOptions = useMemo(() => ['전체', ...new Set(allActionItems.map((item) => item.source))], [allActionItems]);
 
 	const filteredActionItems = useMemo(() => {
@@ -337,13 +421,28 @@ export default function ProjectMeetings() {
 	}, [allActionItems, actionAssigneeFilter, actionStatusFilter, actionSourceFilter]);
 
 	const actionDashboardStats = useMemo(() => {
-		const total = allActionItems.length;
-		const pending = allActionItems.filter((item) => item.status === '검증 전').length;
-		const linked = allActionItems.filter((item) => item.status === '연동 완료').length;
-		const completed = allActionItems.filter((item) => item.status === '완료').length;
-		const progress = total > 0 ? Math.round(((linked + completed) / total) * 100) : 0;
-		return { total, pending, linked, completed, progress };
+		return {
+			reviewPending: allActionItems.filter((item) => item.status === '검토대기').length,
+			reviewDone: allActionItems.filter((item) => item.status === '검토완료').length,
+			linked: allActionItems.filter((item) => item.status === '연동완료').length,
+			history: allActionItems.filter((item) => item.status === '완료히스토리').length,
+		};
 	}, [allActionItems]);
+
+	const activeActionItem = useMemo(() => {
+		if (!activeActionItemId) return null;
+		return allActionItems.find((item) => item.id === activeActionItemId) || null;
+	}, [allActionItems, activeActionItemId]);
+
+	const drawerAssigneeOptions = useMemo(() => {
+		if (!project) return [];
+		const fallbackParticipants = Array.isArray(project.participants) ? project.participants : [];
+		if (!actionDraft) return fallbackParticipants;
+		const source = String(actionDraft.source || '').trim();
+		const meeting = (project.meetings || []).find((item) => item.title === source);
+		const fromMeeting = Array.isArray(meeting?.participants) ? meeting.participants : [];
+		return [...new Set([...(fromMeeting.length > 0 ? fromMeeting : fallbackParticipants), actionDraft.assignee].filter(Boolean))];
+	}, [project, actionDraft]);
 
 	if (!project) {
 		return (
@@ -386,36 +485,102 @@ export default function ProjectMeetings() {
 	const closeParticipantsModal = () => setIsParticipantsModalOpen(false);
 	const handleEditMeeting = () => { showToast('수정 기능은 다음 단계에서 연결 예정입니다.', 'ai'); };
 	const handleDeleteMeeting = (meetingId) => { setPendingDeleteMeeting(meetingId); };
-	const handleActionStatusChange = (itemId, nextStatus) => {
-		setActionItems((prev) => prev.map((item) => (item.id === itemId ? { ...item, status: nextStatus } : item)));
-		showToast('액션 아이템 상태가 변경되었습니다.', 'success');
+	const persistProjectActionItems = (nextItems) => {
+		const id = String(project?.id || '');
+		if (!id) return;
+		const nextOverrides = readProjectOverrides();
+		const prev = nextOverrides[id] && typeof nextOverrides[id] === 'object' ? nextOverrides[id] : {};
+		nextOverrides[id] = { ...prev, myActionItems: nextItems };
+		writeProjectOverrides(nextOverrides);
 	};
-	const startActionItemInlineEdit = (item) => {
-		setEditingActionItemId(item.id);
-		setEditingActionText(item.text);
+
+	const openActionDrawer = (item) => {
+		setActiveActionItemId(item.id);
+		setActionDraft({
+			id: item.id,
+			text: item.text,
+			description: item.description || '',
+			due: item.due || '-',
+			assignee: item.assignee || project.teamLead || '담당자 미지정',
+			status: normalizeActionStatus(item.status),
+			source: item.source || '-',
+			integrationTool: item.integrationTool || null,
+			externalLink: item.externalLink || '',
+			updatedAt: item.updatedAt || getKSTTimestampLabel(),
+		});
+		setPendingIntegrationTarget('');
+		setIsDrawerAssigneeOpen(false);
+		setOpenActionMoreMenuId(null);
+		setIsActionDrawerOpen(true);
 	};
-	const cancelActionItemInlineEdit = () => {
-		setEditingActionItemId(null);
-		setEditingActionText('');
+
+	const closeActionDrawer = () => {
+		setIsActionDrawerOpen(false);
+		setActiveActionItemId(null);
+		setActionDraft(null);
+		setPendingIntegrationTarget('');
+		setIsDrawerAssigneeOpen(false);
 	};
-	const commitActionItemInlineEdit = (itemId) => {
-		const nextText = editingActionText.trim();
+
+	const saveActionDraft = ({ nextStatus = null, integrationTool = null, closeAfterSave = false } = {}) => {
+		if (!actionDraft) return false;
+		const nextText = String(actionDraft.text || '').trim();
 		if (!nextText) {
 			showToast('액션 아이템 제목을 입력해 주세요.', 'warning');
-			return;
+			return false;
 		}
-		setActionItems((prev) => prev.map((item) => (item.id === itemId ? { ...item, text: nextText } : item)));
-		setEditingActionItemId(null);
-		setEditingActionText('');
-		showToast('액션 아이템 제목이 수정되었습니다.', 'success');
+		const normalizedStatus = nextStatus ? normalizeActionStatus(nextStatus) : normalizeActionStatus(actionDraft.status);
+		const now = getKSTTimestampLabel();
+		const resolvedExternalLink = integrationTool
+			? buildExternalLink(integrationTool, nextText)
+			: (actionDraft.externalLink || '');
+		const nextItems = allActionItems.map((item) => {
+			if (item.id !== actionDraft.id) return item;
+			return {
+				...item,
+				text: nextText,
+				description: actionDraft.description || '',
+				due: actionDraft.due || '-',
+				assignee: actionDraft.assignee || project.teamLead || '담당자 미지정',
+				status: normalizedStatus,
+				source: actionDraft.source || item.source || '-',
+				integrationTool: integrationTool || actionDraft.integrationTool || item.integrationTool || null,
+				externalLink: resolvedExternalLink,
+				updatedAt: now,
+			};
+		});
+		setActionItems(nextItems);
+		persistProjectActionItems(nextItems);
+		setActionDraft((prev) => {
+			if (!prev) return prev;
+			return {
+				...prev,
+				status: normalizedStatus,
+				integrationTool: integrationTool || prev.integrationTool || null,
+				externalLink: resolvedExternalLink,
+				updatedAt: now,
+			};
+		});
+		if (closeAfterSave) closeActionDrawer();
+		return true;
 	};
+
 	const removeActionItem = (itemId) => {
-		setActionItems((prev) => prev.filter((item) => item.id !== itemId));
-		if (editingActionItemId === itemId) {
-			setEditingActionItemId(null);
-			setEditingActionText('');
-		}
+		const nextItems = allActionItems.filter((item) => item.id !== itemId);
+		setActionItems(nextItems);
+		persistProjectActionItems(nextItems);
+		if (activeActionItemId === itemId) closeActionDrawer();
+		setOpenActionMoreMenuId(null);
 		showToast('액션 아이템이 삭제되었습니다.', 'success');
+	};
+	const requestDeleteActionItem = (itemId) => {
+		setPendingDeleteActionItemId(itemId);
+		setOpenActionMoreMenuId(null);
+	};
+	const confirmDeleteActionItem = () => {
+		if (!pendingDeleteActionItemId) return;
+		removeActionItem(pendingDeleteActionItemId);
+		setPendingDeleteActionItemId(null);
 	};
 	const confirmDeleteMeeting = () => {
 		if (!pendingDeleteMeeting) return;
@@ -424,22 +589,14 @@ export default function ProjectMeetings() {
 		setPendingDeleteMeeting(null);
 	};
 	const currentToastVariant = TOAST_VARIANTS[toast.type] || TOAST_VARIANTS.info;
-	const projectCategoryColor = CATEGORY_TEXT_COLOR[project.category] || '#F59E0B';
 	const projectDescriptionText = project.description?.trim() || '';
+
+	// ✅ 수정된 그리드 컬럼 비율 — 각 컬럼이 컨텐츠에 맞게 배분
 	const actionTableGridStyle = {
-		gridTemplateColumns: '44px minmax(220px, 2fr) 120px 128px 150px 88px 96px',
+		gridTemplateColumns: '36px minmax(220px, 2.4fr) minmax(120px, 1fr) minmax(112px, 1fr) minmax(150px, 1.4fr) minmax(96px, 0.9fr) minmax(96px, 0.9fr)',
 	};
-	const actionFilterButtonClass = (isOpen) => `w-full px-4 py-3 text-left rounded-2xl border transition flex items-center justify-between gap-3 min-h-[54px] ${
-		isOpen
-			? 'bg-[#EEF3FF] border-[#0099CC]/45 shadow-[0_0_0_3px_rgba(0,153,204,0.12)] text-[#0D1B2A]'
-			: 'bg-white border-[rgba(0,100,180,0.12)] text-[#0D1B2A] hover:border-[rgba(0,153,204,0.4)] hover:bg-[#F8FAFF]'
-	}`;
+
 	const actionCompactFilterButtonClass = (isOpen) => `w-full px-3 py-2.5 rounded-2xl border transition flex items-start justify-between gap-3 min-h-[48px] ${
-		isOpen
-			? 'bg-[#EEF3FF] border-[#0099CC]/45 shadow-[0_0_0_3px_rgba(0,153,204,0.12)] text-[#0D1B2A]'
-			: 'bg-white border-[rgba(0,100,180,0.12)] text-[#0D1B2A] hover:border-[rgba(0,153,204,0.4)] hover:bg-[#F8FAFF]'
-	}`;
-	const actionStatusButtonClass = (isOpen) => `w-fit min-w-[106px] px-3 py-2 rounded-xl border transition inline-flex items-center justify-between gap-2 min-h-[40px] ${
 		isOpen
 			? 'bg-[#EEF3FF] border-[#0099CC]/45 shadow-[0_0_0_3px_rgba(0,153,204,0.12)] text-[#0D1B2A]'
 			: 'bg-white border-[rgba(0,100,180,0.12)] text-[#0D1B2A] hover:border-[rgba(0,153,204,0.4)] hover:bg-[#F8FAFF]'
@@ -451,6 +608,31 @@ export default function ProjectMeetings() {
 		document.addEventListener('keydown', handleEscClose);
 		return () => document.removeEventListener('keydown', handleEscClose);
 	}, [isParticipantsModalOpen]);
+
+	useEffect(() => {
+		if (!isActionDrawerOpen) return undefined;
+		const handleEscClose = (e) => { if (e.key === 'Escape') closeActionDrawer(); };
+		document.addEventListener('keydown', handleEscClose);
+		return () => document.removeEventListener('keydown', handleEscClose);
+	}, [isActionDrawerOpen]);
+
+	useEffect(() => {
+		document.body.style.overflow = isActionDrawerOpen ? 'hidden' : '';
+		return () => {
+			document.body.style.overflow = '';
+		};
+	}, [isActionDrawerOpen]);
+
+	useEffect(() => {
+		if (!isActionDrawerOpen || !actionDescriptionRef.current) return;
+		const textarea = actionDescriptionRef.current;
+		const minHeight = 128;
+		const maxHeight = 320;
+		textarea.style.height = 'auto';
+		const nextHeight = Math.min(Math.max(textarea.scrollHeight, minHeight), maxHeight);
+		textarea.style.height = `${nextHeight}px`;
+		textarea.style.overflowY = textarea.scrollHeight > maxHeight ? 'auto' : 'hidden';
+	}, [isActionDrawerOpen, actionDraft?.description]);
 
 	return (
 		<div className="min-h-screen bg-[#F8FAFF] overflow-x-hidden pt-20 pb-20 md:pb-0 flex flex-col">
@@ -466,7 +648,13 @@ export default function ProjectMeetings() {
 						<aside className="hidden md:block xl:col-span-3">
 							<section className="rounded-2xl border border-[rgba(0,100,180,0.12)] bg-white p-4">
 								<h3 className="text-sm font-bold text-[#0D1B2A] mb-3">프로젝트</h3>
-								<input value={projectSearch} onChange={(e) => setProjectSearch(e.target.value)} placeholder="프로젝트 검색" className="w-full px-3 py-2 text-sm rounded-xl border border-[rgba(0,100,180,0.12)] bg-[#F8FAFF] focus:outline-none focus:border-[#0099CC]" />
+								<div className="relative">
+									<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="absolute left-3 top-1/2 -translate-y-1/2 text-[#8A9AB0] pointer-events-none" aria-hidden="true">
+										<circle cx="11" cy="11" r="7" />
+										<path d="m21 21-4.3-4.3" />
+									</svg>
+									<input value={projectSearch} onChange={(e) => setProjectSearch(e.target.value)} placeholder="프로젝트 검색" className="w-full pl-9 pr-3 py-2 text-sm rounded-xl border border-[rgba(0,100,180,0.12)] bg-[#F8FAFF] focus:outline-none focus:border-[#0099CC]" />
+								</div>
 								<div className="mt-3 space-y-2 max-h-[220px] overflow-y-auto pr-1 [&::-webkit-scrollbar]:hidden" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
 									{filteredProjects.map((item) => (
 										<button key={item.id} type="button" onClick={() => navigate(`/project/${item.id}/meetings`, { state: { project: item } })} className={`w-full text-left px-3 py-2.5 rounded-xl border transition ${item.id === project.id ? 'bg-[#EEF3FF] border-[#0099CC]/35 text-[#0099CC] font-semibold' : 'bg-white border-[rgba(0,100,180,0.12)] text-[#0D1B2A] hover:bg-[#F8FAFF]'}`}>
@@ -480,24 +668,20 @@ export default function ProjectMeetings() {
 						{/* 메인 콘텐츠 */}
 						<section className="xl:col-span-9 space-y-4">
 
-							{/* ── 프로젝트 헤더 (통계 카드 제거) ── */}
+							{/* 프로젝트 헤더 */}
 							<section className="rounded-2xl border border-[rgba(0,100,180,0.12)] bg-white p-5">
 								<div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
 									<div className="flex-1 min-w-0">
 										<div className="flex flex-wrap items-center gap-2">
 											<span className="text-xs text-[#8A9AB0]">생성일 {project.createdAt}</span>
 										</div>
-
-										{/* 프로젝트명 + 상태 */}
 										<div className="mt-1 flex flex-wrap items-center gap-2">
 											<h1 className="text-2xl font-bold text-[#0D1B2A]">{project.name}</h1>
 											<span className={`px-2.5 py-1 rounded-full text-xs font-bold ${statusBadgeClass(project.status)}`}>{project.status}</span>
 										</div>
-
 										{projectDescriptionText && (
 											<p className="text-sm text-[#5A6F8A] mt-2 leading-relaxed">{projectDescriptionText}</p>
 										)}
-
 										<div className="mt-3 flex items-center gap-2.5">
 											<div className="flex -space-x-2 cursor-pointer" onClick={() => openParticipantsModal(project.participants, '프로젝트 참여자')}>
 												{visibleParticipants.map((name) => (
@@ -523,7 +707,7 @@ export default function ProjectMeetings() {
 								</div>
 							</section>
 
-							{/* ── 탭 네비게이션 ── */}
+							{/* 탭 네비게이션 */}
 							<div className="flex items-center gap-1 bg-white rounded-2xl border border-[rgba(0,100,180,0.12)] p-1.5">
 								<button
 									type="button"
@@ -546,10 +730,9 @@ export default function ProjectMeetings() {
 								</button>
 							</div>
 
-							{/* ── 회의 기록 탭 ── */}
+							{/* 회의 기록 탭 */}
 							{activePageTab === 'meetings' && (
 								<>
-									{/* 컨트롤 영역: 좌측 검색+필터 / 우측 새 회의록 버튼 */}
 									<section className="rounded-2xl border border-[rgba(0,100,180,0.12)] bg-white p-4">
 										<div className="space-y-2.5 sm:space-y-0 sm:flex sm:items-center sm:gap-3">
 											<input
@@ -575,38 +758,38 @@ export default function ProjectMeetings() {
 														</div>
 													)}
 												</div>
-													<div className="relative" ref={typeDropdownRef}>
-														<button type="button" onClick={() => { setIsTypeOpen((prev) => !prev); setIsSortOpen(false); }} className={`w-full sm:w-auto px-3.5 py-2.5 text-sm rounded-xl border transition flex items-center justify-between gap-1.5 ${isTypeOpen ? 'bg-[#EEF3FF] border-[#0099CC]/40 shadow-[0_0_0_3px_rgba(0,153,204,0.12)] text-[#0D1B2A]' : 'bg-[#F8FAFF] border-[rgba(0,100,180,0.12)] text-[#0D1B2A] hover:border-[rgba(0,153,204,0.4)]'}`}>
+												<div className="relative" ref={typeDropdownRef}>
+													<button type="button" onClick={() => { setIsTypeOpen((prev) => !prev); setIsSortOpen(false); }} className={`w-full sm:w-auto px-3.5 py-2.5 text-sm rounded-xl border transition flex items-center justify-between gap-1.5 ${isTypeOpen ? 'bg-[#EEF3FF] border-[#0099CC]/40 shadow-[0_0_0_3px_rgba(0,153,204,0.12)] text-[#0D1B2A]' : 'bg-[#F8FAFF] border-[rgba(0,100,180,0.12)] text-[#0D1B2A] hover:border-[rgba(0,153,204,0.4)]'}`}>
 														<span className="font-medium">{meetingType}</span>
-													<ChevronDownIcon className={`text-[#5A6F8A] transition-transform ${isTypeOpen ? 'rotate-180' : ''}`} />
+														<ChevronDownIcon className={`text-[#5A6F8A] transition-transform ${isTypeOpen ? 'rotate-180' : ''}`} />
 													</button>
 													{isTypeOpen && (
 														<div className="absolute left-0 z-20 mt-2 w-32 overflow-hidden rounded-xl border border-[rgba(0,100,180,0.14)] bg-white shadow-[0_10px_28px_rgba(0,100,180,0.16)]">
 															{['전체', '정기', '수시'].map((option) => (
 																<button key={option} type="button" onClick={() => { setMeetingType(option); setIsTypeOpen(false); }} className={`w-full px-3.5 py-2.5 text-sm text-left flex items-center justify-between transition-colors ${meetingType === option ? 'bg-[#EEF3FF] text-[#0099CC] font-semibold' : 'text-[#0D1B2A] hover:bg-[#F8FAFF]'}`}>
 																	<span>{option}</span>
-																{meetingType === option && <CheckIcon className="text-[#0099CC]" />}
+																	{meetingType === option && <CheckIcon className="text-[#0099CC]" />}
 																</button>
 															))}
 														</div>
 													)}
 												</div>
-													<div className="relative col-span-2 sm:col-auto shrink-0" ref={createDropdownRef}>
-														<button type="button" onClick={() => setIsCreateOpen((prev) => !prev)} className={`w-full sm:w-auto flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl text-white text-sm font-semibold transition ${isCreateOpen ? 'bg-[#007EA7]' : 'bg-[#0099CC] hover:bg-[#007EA7]'}`}>
-													<span>+ 새 회의록</span>
+												<div className="relative col-span-2 sm:col-auto shrink-0" ref={createDropdownRef}>
+													<button type="button" onClick={() => setIsCreateOpen((prev) => !prev)} className={`w-full sm:w-auto flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl text-white text-sm font-semibold transition ${isCreateOpen ? 'bg-[#007EA7]' : 'bg-[#0099CC] hover:bg-[#007EA7]'}`}>
+														<span>+ 새 회의록</span>
 														<ChevronDownIcon className={`transition-transform ${isCreateOpen ? 'rotate-180' : ''}`} />
-														</button>
-														{isCreateOpen && (
-															<div className="absolute right-0 z-30 mt-2 w-56 overflow-hidden rounded-xl border border-[rgba(0,100,180,0.16)] bg-white shadow-[0_12px_28px_rgba(0,100,180,0.18)]">
-														<button type="button" onClick={() => { setIsCreateOpen(false); navigate('/meeting-create', { state: { projectId: project.id, projectName: project.name } }); }} className="w-full px-3.5 py-3 text-left hover:bg-[#EEF3FF]">
-															<p className="text-sm font-semibold text-[#0D1B2A]">회의록 직접 작성</p>
-															<p className="text-xs text-[#5A6F8A] mt-0.5">템플릿에 바로 입력해서 회의록을 생성합니다.</p>
-														</button>
-														<button type="button" onClick={() => { setIsCreateOpen(false); navigate('/upload', { state: { from: 'project-meetings', projectId: project.id, projectName: project.name } }); }} className="w-full px-3.5 py-3 text-left border-t border-[rgba(0,100,180,0.08)] hover:bg-[#EEF3FF]">
-															<p className="text-sm font-semibold text-[#0D1B2A]">회의 파일 업로드</p>
-															<p className="text-xs text-[#5A6F8A] mt-0.5">녹음 파일을 올려 AI 회의록을 자동 생성합니다.</p>
-														</button>
-													</div>
+													</button>
+													{isCreateOpen && (
+														<div className="absolute right-0 z-30 mt-2 w-56 overflow-hidden rounded-xl border border-[rgba(0,100,180,0.16)] bg-white shadow-[0_12px_28px_rgba(0,100,180,0.18)]">
+															<button type="button" onClick={() => { setIsCreateOpen(false); navigate('/meeting-create', { state: { projectId: project.id, projectName: project.name } }); }} className="w-full px-3.5 py-3 text-left hover:bg-[#EEF3FF]">
+																<p className="text-sm font-semibold text-[#0D1B2A]">회의록 직접 작성</p>
+																<p className="text-xs text-[#5A6F8A] mt-0.5">템플릿에 바로 입력해서 회의록을 생성합니다.</p>
+															</button>
+															<button type="button" onClick={() => { setIsCreateOpen(false); navigate('/upload', { state: { from: 'project-meetings', projectId: project.id, projectName: project.name } }); }} className="w-full px-3.5 py-3 text-left border-t border-[rgba(0,100,180,0.08)] hover:bg-[#EEF3FF]">
+																<p className="text-sm font-semibold text-[#0D1B2A]">회의 파일 업로드</p>
+																<p className="text-xs text-[#5A6F8A] mt-0.5">녹음 파일을 올려 AI 회의록을 자동 생성합니다.</p>
+															</button>
+														</div>
 													)}
 												</div>
 											</div>
@@ -626,7 +809,6 @@ export default function ProjectMeetings() {
 											</div>
 										) : (
 											<>
-												{/* PC 테이블 헤더 — 관리 컬럼 제거, ⋮ 컬럼으로 대체 */}
 												<div className="hidden md:grid grid-cols-12 px-4 py-3 text-xs font-bold text-[#5A6F8A] bg-[#F8FAFF] border-b border-[rgba(0,100,180,0.1)]">
 													<div className="col-span-2">회의 날짜</div>
 													<div className="col-span-3">회의 제목</div>
@@ -645,7 +827,6 @@ export default function ProjectMeetings() {
 															<div className="col-span-4 flex flex-wrap gap-1">
 																{meeting.tags.map((tag) => (<span key={tag} className="px-2 py-0.5 rounded-full text-xs bg-[#EEF3FF] text-[#0099CC]">{tag}</span>))}
 															</div>
-															{/* ⋮ 모어 메뉴 */}
 															<div className="col-span-1 flex justify-end" data-more-menu-root>
 																<div className="relative">
 																	<button
@@ -702,10 +883,12 @@ export default function ProjectMeetings() {
 								</>
 							)}
 
-							{/* ── 액션 아이템 탭 ── */}
+							{/* 액션 아이템 탭 */}
 							{activePageTab === 'actions' && (
 								<section className="rounded-2xl border border-[rgba(0,100,180,0.12)] bg-white overflow-visible">
-									<div className="px-4 py-3.5 border-b border-[rgba(0,100,180,0.08)] bg-[#F8FAFF]">
+
+									{/* 필터 영역 */}
+									<div className="px-4 py-3.5 border-b border-[rgba(0,100,180,0.08)] bg-[#F8FAFF] rounded-t-2xl">
 										<div className="grid grid-cols-1 md:grid-cols-3 gap-2.5">
 											<div className="relative" ref={actionAssigneeFilterRef}>
 												<button
@@ -723,12 +906,7 @@ export default function ProjectMeetings() {
 													<div className="absolute left-0 right-0 z-30 mt-2 overflow-hidden rounded-2xl border border-[rgba(0,100,180,0.14)] bg-white shadow-[0_12px_30px_rgba(0,100,180,0.16)]">
 														<div className="max-h-64 overflow-auto py-1">
 															{actionAssigneeOptions.map((option) => (
-																<button
-																	key={option}
-																	type="button"
-																	onClick={() => { setActionAssigneeFilter(option); setOpenActionFilter(null); }}
-																	className={`flex w-full items-center justify-between px-4 py-2.5 text-left text-sm transition-colors ${actionAssigneeFilter === option ? 'bg-[#EEF3FF] text-[#0099CC] font-semibold' : 'text-[#0D1B2A] hover:bg-[#F8FAFF]'}`}
-																>
+																<button key={option} type="button" onClick={() => { setActionAssigneeFilter(option); setOpenActionFilter(null); }} className={`flex w-full items-center justify-between px-4 py-2.5 text-left text-sm transition-colors ${actionAssigneeFilter === option ? 'bg-[#EEF3FF] text-[#0099CC] font-semibold' : 'text-[#0D1B2A] hover:bg-[#F8FAFF]'}`}>
 																	<span>{option}</span>
 																	{actionAssigneeFilter === option && <CheckIcon className="text-[#0099CC]" />}
 																</button>
@@ -753,13 +931,8 @@ export default function ProjectMeetings() {
 													<div className="absolute left-0 right-0 z-30 mt-2 overflow-hidden rounded-2xl border border-[rgba(0,100,180,0.14)] bg-white shadow-[0_12px_30px_rgba(0,100,180,0.16)]">
 														<div className="max-h-64 overflow-auto py-1">
 															{actionStatusOptions.map((option) => (
-																<button
-																	key={option}
-																	type="button"
-																	onClick={() => { setActionStatusFilter(option); setOpenActionFilter(null); }}
-																	className={`flex w-full items-center justify-between px-4 py-2.5 text-left text-sm transition-colors ${actionStatusFilter === option ? 'bg-[#EEF3FF] text-[#0099CC] font-semibold' : 'text-[#0D1B2A] hover:bg-[#F8FAFF]'}`}
-																>
-																	<span>{option}</span>
+																<button key={option} type="button" onClick={() => { setActionStatusFilter(option); setOpenActionFilter(null); }} className={`flex w-full items-center justify-between px-4 py-2.5 text-left text-sm transition-colors ${actionStatusFilter === option ? 'bg-[#EEF3FF] text-[#0099CC] font-semibold' : 'text-[#0D1B2A] hover:bg-[#F8FAFF]'}`}>
+																	<span>{option === '전체' ? option : getActionStatusLabel(option)}</span>
 																	{actionStatusFilter === option && <CheckIcon className="text-[#0099CC]" />}
 																</button>
 															))}
@@ -783,12 +956,7 @@ export default function ProjectMeetings() {
 													<div className="absolute left-0 right-0 z-30 mt-2 overflow-hidden rounded-2xl border border-[rgba(0,100,180,0.14)] bg-white shadow-[0_12px_30px_rgba(0,100,180,0.16)]">
 														<div className="max-h-64 overflow-auto py-1">
 															{actionSourceOptions.map((option) => (
-																<button
-																	key={option}
-																	type="button"
-																	onClick={() => { setActionSourceFilter(option); setOpenActionFilter(null); }}
-																	className={`flex w-full items-center justify-between px-4 py-2.5 text-left text-sm transition-colors ${actionSourceFilter === option ? 'bg-[#EEF3FF] text-[#0099CC] font-semibold' : 'text-[#0D1B2A] hover:bg-[#F8FAFF]'}`}
-																>
+																<button key={option} type="button" onClick={() => { setActionSourceFilter(option); setOpenActionFilter(null); }} className={`flex w-full items-center justify-between px-4 py-2.5 text-left text-sm transition-colors ${actionSourceFilter === option ? 'bg-[#EEF3FF] text-[#0099CC] font-semibold' : 'text-[#0D1B2A] hover:bg-[#F8FAFF]'}`}>
 																	<span>{option}</span>
 																	{actionSourceFilter === option && <CheckIcon className="text-[#0099CC]" />}
 																</button>
@@ -799,172 +967,166 @@ export default function ProjectMeetings() {
 											</div>
 										</div>
 									</div>
+
+									{/* 상태 통계 */}
 									<div className="px-4 py-3.5 border-b border-[rgba(0,100,180,0.08)] bg-white">
 										<div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
 											<div className="rounded-xl border border-[rgba(0,100,180,0.1)] bg-[#F8FAFF] p-3">
-												<p className="text-[11px] text-[#5A6F8A]">프로젝트 진행률</p>
-												<p className="text-lg font-bold text-[#0D1B2A]">{actionDashboardStats.progress}%</p>
+												<p className="text-[11px] text-[#5A6F8A]">검토대기</p>
+												<p className="text-lg font-bold text-[#F59E0B]">{actionDashboardStats.reviewPending}</p>
 											</div>
 											<div className="rounded-xl border border-[rgba(0,100,180,0.1)] bg-[#F8FAFF] p-3">
-												<p className="text-[11px] text-[#5A6F8A]">검증 전</p>
-												<p className="text-lg font-bold text-[#F59E0B]">{actionDashboardStats.pending}</p>
+												<p className="text-[11px] text-[#5A6F8A]">검토완료</p>
+												<p className="text-lg font-bold text-[#0D1B2A]">{actionDashboardStats.reviewDone}</p>
 											</div>
 											<div className="rounded-xl border border-[rgba(0,100,180,0.1)] bg-[#F8FAFF] p-3">
-												<p className="text-[11px] text-[#5A6F8A]">연동 완료</p>
+												<p className="text-[11px] text-[#5A6F8A]">연동완료</p>
 												<p className="text-lg font-bold text-[#0099CC]">{actionDashboardStats.linked}</p>
 											</div>
 											<div className="rounded-xl border border-[rgba(0,100,180,0.1)] bg-[#F8FAFF] p-3">
-												<p className="text-[11px] text-[#5A6F8A]">완료 히스토리</p>
-												<p className="text-lg font-bold text-[#10B981]">{actionDashboardStats.completed}</p>
+												<p className="text-[11px] text-[#5A6F8A]">완료히스토리</p>
+												<p className="text-lg font-bold text-[#10B981]">{actionDashboardStats.history}</p>
 											</div>
 										</div>
 									</div>
+
 									{filteredActionItems.length === 0 ? (
 										<div className="px-4 py-12 text-center">
-											<p className="text-sm font-semibold text-[#0D1B2A]">조건에 맞는 액션 아이템이 없습니다.</p>
+											<p className="text-sm font-semibold text-[#0D1B2A]">조건에 맞는 해야 할 일이 없습니다.</p>
 											<p className="text-xs text-[#5A6F8A] mt-1">필터를 초기화하거나 다른 조건을 선택해 보세요.</p>
 										</div>
 									) : (
 										<>
-											<div className="hidden md:grid items-center px-4 py-3 bg-[#F8FAFF] border-b border-[rgba(0,100,180,0.1)] text-[12px] font-medium text-gray-500 text-left" style={actionTableGridStyle}>
+											{/* ✅ PC 테이블 헤더 — gridTemplateColumns 수정 */}
+											<div
+												className="hidden md:grid items-center px-4 py-3 bg-[#F8FAFF] border-b border-[rgba(0,100,180,0.1)] text-[12px] font-semibold text-[#5A6F8A] text-left"
+												style={actionTableGridStyle}
+											>
 												<div />
-												<div>액션 아이템</div>
+												<div>해야 할 일</div>
 												<div>담당자</div>
-												<div>상태 관리</div>
+												<div>상태</div>
 												<div>회의록 출처</div>
 												<div>마감일</div>
-												<div>관리</div>
+												<div />
 											</div>
-											<div className="divide-y divide-[rgba(0,100,180,0.08)]">
-												{filteredActionItems.map((item) => (
-													<div key={item.id} className="hidden md:grid items-center gap-3 px-4 py-3.5 group" style={actionTableGridStyle}>
-														<div className="hidden md:flex items-center justify-start">
-															<input type="checkbox" className="w-4 h-4 accent-[#0099CC]" />
-														</div>
-														<div className="flex items-center min-h-[44px] text-[14px] font-normal text-gray-800">
-															{editingActionItemId === item.id ? (
-																<input
-																	type="text"
-																	value={editingActionText}
-																	onChange={(e) => setEditingActionText(e.target.value)}
-																	onBlur={() => commitActionItemInlineEdit(item.id)}
-																	onKeyDown={(e) => {
-																		if (e.key === 'Enter') commitActionItemInlineEdit(item.id);
-																		if (e.key === 'Escape') cancelActionItemInlineEdit();
-																	}}
-																	className="w-full px-2.5 py-2 text-[14px] font-normal leading-none text-gray-800 bg-white border border-gray-200 rounded-lg focus:outline-none focus:border-[#0099CC]"
-																	autoFocus
-																/>
-															) : (
-																<button type="button" onClick={() => startActionItemInlineEdit(item)} className="text-left text-[14px] font-normal leading-snug text-gray-800 hover:text-[#0D1B2A]">
-																	{item.text}
-																</button>
-															)}
-														</div>
-														<div className="flex items-center justify-self-start min-h-[44px] text-[14px] font-normal text-gray-800">{item.assignee}</div>
-														<div className="relative flex items-center" data-action-status-root>
-															<button
-																type="button"
-																onClick={() => setOpenActionStatusMenuId((prev) => (prev === item.id ? null : item.id))}
-																className={actionStatusButtonClass(openActionStatusMenuId === item.id)}
-															>
-																<span className="truncate text-sm font-semibold">{item.status}</span>
-																<ChevronDownIcon className={`shrink-0 text-[#5A6F8A] transition-transform ${openActionStatusMenuId === item.id ? 'rotate-180' : ''}`} />
-															</button>
-															{openActionStatusMenuId === item.id && (
-																<div className="absolute left-0 top-full z-30 mt-2 min-w-full overflow-hidden rounded-2xl border border-[rgba(0,100,180,0.14)] bg-white shadow-[0_12px_30px_rgba(0,100,180,0.16)]">
-																	<div className="py-1">
-																		{actionRowStatusOptions.map((option) => (
-																			<button
-																				key={option}
-																				type="button"
-																				onClick={() => { handleActionStatusChange(item.id, option); setOpenActionStatusMenuId(null); }}
-																				className={`flex w-full items-center justify-between px-3.5 py-2.5 text-left text-sm transition-colors ${item.status === option ? 'bg-[#EEF3FF] text-[#0099CC] font-semibold' : 'text-[#0D1B2A] hover:bg-[#F8FAFF]'}`}
-																			>
-																				<span>{option}</span>
-																				{item.status === option && <CheckIcon className="text-[#0099CC]" />}
-																			</button>
-																		))}
-																	</div>
-																</div>
-															)}
-														</div>
-														<div className="flex items-center justify-self-start min-h-[44px] text-left">
-															<span className="text-[14px] font-normal text-gray-800">{item.source}</span>
-														</div>
-														<div className="flex items-center justify-self-start min-h-[44px] text-[14px] font-normal text-gray-800">{item.due}</div>
-														<div className="hidden md:flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
-															<button type="button" onClick={() => startActionItemInlineEdit(item)} className="px-2 py-1 text-[12px] font-medium text-gray-600 border border-gray-200 rounded-md hover:bg-gray-50">수정</button>
-															<button type="button" onClick={() => removeActionItem(item.id)} className="px-2 py-1 text-[12px] font-medium text-[#EF4444] border border-[#F8D1D1] rounded-md hover:bg-[#FFF5F5]">삭제</button>
-														</div>
-													</div>
-												))}
-											</div>
-											<div className="md:hidden divide-y divide-[rgba(0,100,180,0.08)]">
-												{filteredActionItems.map((item) => (
-													<article key={item.id} className="px-4 py-4">
-														<div className="flex items-start justify-between gap-3">
-															<div className="min-w-0 flex-1 space-y-2">
-																{editingActionItemId === item.id ? (
-																	<input
-																		type="text"
-																		value={editingActionText}
-																		onChange={(e) => setEditingActionText(e.target.value)}
-																		onBlur={() => commitActionItemInlineEdit(item.id)}
-																		onKeyDown={(e) => {
-																			if (e.key === 'Enter') commitActionItemInlineEdit(item.id);
-																			if (e.key === 'Escape') cancelActionItemInlineEdit();
-																		}}
-																		className="w-full px-3 py-2 text-sm font-semibold text-[#0D1B2A] bg-white border border-[rgba(0,100,180,0.12)] rounded-xl focus:outline-none focus:border-[#0099CC]"
-																		autoFocus
-																	/>
-																) : (
-																	<button type="button" onClick={() => startActionItemInlineEdit(item)} className="block w-full text-left text-sm font-semibold leading-snug text-[#0D1B2A] hover:text-[#0099CC]">
-																		{item.text}
-																	</button>
-																)}
-																<div className="flex flex-wrap gap-1.5">
-																	<span className="px-2 py-1 rounded-full text-[11px] bg-[#EEF3FF] text-[#0099CC]">{item.assignee}</span>
-																	<span className="px-2 py-1 rounded-full text-[11px] bg-[#F8FAFF] text-[#5A6F8A]">{item.source}</span>
-																	<span className="px-2 py-1 rounded-full text-[11px] bg-[#F8FAFF] text-[#5A6F8A]">{item.due}</span>
-																</div>
+
+											{/* ✅ PC 테이블 행 */}
+											<div className="hidden md:block divide-y divide-[rgba(0,100,180,0.08)]">
+												{filteredActionItems.map((item) => {
+													const statusStyle = actionStatusStyle(item.status);
+													const isFinalDone = normalizeActionStatus(item.status) === '완료히스토리';
+													return (
+														<div key={item.id} className="grid items-center px-4 py-3 cursor-pointer hover:bg-[#F8FAFF] transition-colors" style={actionTableGridStyle} onClick={() => openActionDrawer(item)}>
+															{/* 체크박스 */}
+															<div className="flex items-center justify-start">
+																<input type="checkbox" checked={isFinalDone} readOnly disabled={isFinalDone} className={`w-4 h-4 ${isFinalDone ? 'accent-[#94A3B8] cursor-not-allowed opacity-70' : 'accent-[#0099CC]'}`} onClick={(e) => e.stopPropagation()} />
 															</div>
-														<div className="shrink-0 flex flex-col items-end gap-2">
-															<div className="relative w-[132px]" data-action-status-root>
-																<button
-																	type="button"
-																	onClick={() => setOpenActionStatusMenuId((prev) => (prev === item.id ? null : item.id))}
-																	className={actionStatusButtonClass(openActionStatusMenuId === item.id)}
+
+															{/* 액션 아이템 텍스트 */}
+															<div className="flex items-center min-h-[44px] pr-0.5">
+																<span className="text-sm font-medium text-[#0D1B2A] leading-snug line-clamp-2">{item.text}</span>
+															</div>
+
+															{/* 담당자 */}
+															<div className="flex items-center min-h-[44px]">
+																<span className="text-sm text-[#0D1B2A]">{item.assignee}</span>
+															</div>
+
+															{/* 상태 배지 (수동 변경 금지) */}
+															<div className="flex items-center">
+																<span
+																	className="inline-flex items-center px-2 py-1 rounded-lg text-xs font-semibold border"
+																	style={{ backgroundColor: statusStyle.bg, color: statusStyle.color, borderColor: `${statusStyle.border}40` }}
 																>
-																	<span className="truncate text-sm font-semibold">{item.status}</span>
-																	<ChevronDownIcon className={`shrink-0 text-[#5A6F8A] transition-transform ${openActionStatusMenuId === item.id ? 'rotate-180' : ''}`} />
-																</button>
-																{openActionStatusMenuId === item.id && (
-																	<div className="absolute left-0 top-full z-30 mt-2 min-w-full overflow-hidden rounded-2xl border border-[rgba(0,100,180,0.14)] bg-white shadow-[0_12px_30px_rgba(0,100,180,0.16)]">
-																		<div className="py-1">
-																			{actionRowStatusOptions.map((option) => (
-																				<button
-																					key={option}
-																					type="button"
-																					onClick={() => { handleActionStatusChange(item.id, option); setOpenActionStatusMenuId(null); }}
-																					className={`flex w-full items-center justify-between px-3.5 py-2.5 text-left text-sm transition-colors ${item.status === option ? 'bg-[#EEF3FF] text-[#0099CC] font-semibold' : 'text-[#0D1B2A] hover:bg-[#F8FAFF]'}`}
-																				>
-																					<span>{option}</span>
-																					{item.status === option && <CheckIcon className="text-[#0099CC]" />}
-																				</button>
-																			))}
-																		</div>
-																	</div>
-																)}
+																	{getActionStatusBadgeLabel(item.status)}
+																</span>
 															</div>
-															<div className="flex gap-1.5">
-																	<button type="button" onClick={() => startActionItemInlineEdit(item)} className="px-2.5 py-1.5 text-[12px] font-semibold text-[#5A6F8A] border border-[rgba(0,100,180,0.12)] rounded-lg bg-white">수정</button>
-																	<button type="button" onClick={() => removeActionItem(item.id)} className="px-2.5 py-1.5 text-[12px] font-semibold text-[#EF4444] border border-[#F8D1D1] rounded-lg bg-white">삭제</button>
+
+															{/* ✅ 회의록 출처 */}
+															<div className="flex items-center min-h-[44px] pr-1">
+																<span className="text-sm text-[#5A6F8A] truncate" title={item.source}>{item.source}</span>
+															</div>
+
+															{/* 마감일 */}
+															<div className="flex items-center min-h-[44px]">
+																<span className="text-sm text-[#0D1B2A]">{item.due}</span>
+															</div>
+
+															{/* 관리 메뉴 */}
+															<div className="flex items-center justify-end" data-action-more-menu-root>
+																<div className="relative">
+																	<button
+																		type="button"
+																		onClick={(e) => { e.stopPropagation(); setOpenActionMoreMenuId((prev) => (prev === item.id ? null : item.id)); }}
+																		className="w-8 h-8 flex items-center justify-center rounded-lg text-[#5A6F8A] hover:text-[#0D1B2A] hover:bg-[#F8FAFF] transition"
+																		aria-label="액션 아이템 더 보기"
+																	>
+																		<MoreVerticalIcon />
+																	</button>
+																	{openActionMoreMenuId === item.id && (
+																		<div className="absolute right-full mr-1 top-0 z-40 w-28 overflow-hidden rounded-xl border border-[rgba(0,100,180,0.14)] bg-white shadow-[0_10px_24px_rgba(0,100,180,0.14)]">
+																			<button type="button" onClick={(e) => { e.stopPropagation(); requestDeleteActionItem(item.id); }} className="w-full px-3.5 py-2.5 text-left text-sm text-[#EF4444] hover:bg-[#FCE8E6]">삭제</button>
+																		</div>
+																	)}
 																</div>
 															</div>
 														</div>
-													</article>
-												))}
+													);
+												})}
+											</div>
+
+											{/* 모바일 카드 */}
+											<div className="md:hidden divide-y divide-[rgba(0,100,180,0.08)]">
+												{filteredActionItems.map((item) => {
+													const statusStyle = actionStatusStyle(item.status);
+													const isFinalDone = normalizeActionStatus(item.status) === '완료히스토리';
+													return (
+														<article key={item.id} className="px-4 py-4 space-y-2.5 cursor-pointer hover:bg-[#F8FAFF] transition-colors" onClick={() => openActionDrawer(item)}>
+															{/* 상단: 체크박스 + 텍스트 + 수정/삭제 */}
+															<div className="flex items-start gap-3">
+																<input type="checkbox" checked={isFinalDone} readOnly disabled={isFinalDone} className={`w-4 h-4 mt-0.5 shrink-0 ${isFinalDone ? 'accent-[#94A3B8] cursor-not-allowed opacity-70' : 'accent-[#0099CC]'}`} onClick={(e) => e.stopPropagation()} />
+																<div className="flex-1 min-w-0">
+																	<p className="text-sm font-semibold text-[#0D1B2A] leading-snug">{item.text}</p>
+																</div>
+																{/* 모바일 관리 메뉴 */}
+																<div className="relative shrink-0" data-action-more-menu-root>
+																	<button
+																		type="button"
+																		onClick={(e) => { e.stopPropagation(); setOpenActionMoreMenuId((prev) => (prev === item.id ? null : item.id)); }}
+																		className="w-7 h-7 flex items-center justify-center rounded-lg text-[#5A6F8A] hover:bg-[#F8FAFF] transition"
+																		aria-label="액션 아이템 더 보기"
+																	>
+																		<MoreVerticalIcon />
+																	</button>
+																	{openActionMoreMenuId === item.id && (
+																		<div className="absolute right-full mr-1 top-0 z-40 w-28 overflow-hidden rounded-xl border border-[rgba(0,100,180,0.14)] bg-white shadow-[0_10px_24px_rgba(0,100,180,0.14)]">
+																			<button type="button" onClick={(e) => { e.stopPropagation(); requestDeleteActionItem(item.id); }} className="w-full px-3.5 py-2.5 text-left text-sm text-[#EF4444] hover:bg-[#FCE8E6]">삭제</button>
+																		</div>
+																	)}
+																</div>
+															</div>
+
+															{/* 하단: 담당자 · 마감일 + 상태 */}
+															<div className="flex items-center justify-between pl-7 gap-2">
+																<div className="flex items-center gap-2 min-w-0 flex-1 text-xs text-[#5A6F8A]">
+																	<span className="font-medium text-[#0D1B2A] truncate max-w-[110px]">{item.assignee}</span>
+																	<span className="text-[#CBD5E1]">·</span>
+																	<span className="shrink-0">{item.due}</span>
+																</div>
+																{/* 상태 배지 (수동 변경 금지) */}
+																<div className="shrink-0">
+																	<span
+																		className="inline-flex items-center px-2.5 py-1 rounded-lg text-[11px] font-semibold border"
+																		style={{ backgroundColor: statusStyle.bg, color: statusStyle.color, borderColor: `${statusStyle.border}40` }}
+																	>
+																		{getActionStatusBadgeLabel(item.status)}
+																	</span>
+																</div>
+															</div>
+														</article>
+													);
+												})}
 											</div>
 										</>
 									)}
@@ -975,6 +1137,215 @@ export default function ProjectMeetings() {
 					</div>
 				</div>
 			</main>
+
+			{isActionDrawerOpen && actionDraft && (
+				<div className="fixed inset-0 z-[72]" aria-modal="true" role="dialog">
+					<div className="absolute inset-0 bg-[#0D1B2A]/45" onClick={closeActionDrawer} />
+					<aside className="absolute inset-y-0 right-0 w-full sm:w-[520px] bg-white border-l border-[rgba(0,100,180,0.14)] shadow-2xl flex flex-col">
+						<div className="px-4 sm:px-5 py-4 border-b border-[rgba(0,100,180,0.1)] flex items-center justify-between gap-3">
+							{(() => {
+								const statusStyle = actionStatusStyle(actionDraft.status);
+								return (
+									<span className="inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-semibold border" style={{ backgroundColor: statusStyle.bg, color: statusStyle.color, borderColor: `${statusStyle.border}40` }}>
+										{getActionStatusBadgeLabel(actionDraft.status)}
+									</span>
+								);
+							})()}
+							<button type="button" onClick={closeActionDrawer} className="w-8 h-8 rounded-lg text-[#5A6F8A] hover:bg-[#F8FAFF] hover:text-[#0D1B2A]" aria-label="드로어 닫기">✕</button>
+						</div>
+
+						<div className="flex-1 overflow-y-auto px-4 sm:px-5 py-4 space-y-4">
+							<div className="rounded-2xl border border-[rgba(0,100,180,0.12)] bg-[#F8FAFF] p-3.5">
+								<div className="flex flex-wrap items-center gap-2 mb-2">
+									<span className="px-2 py-0.5 rounded-full bg-[#EEF3FF] text-[#0099CC] text-xs font-semibold">#{project.name}</span>
+									<span className="px-2 py-0.5 rounded-full bg-white border border-[rgba(0,100,180,0.12)] text-[#5A6F8A] text-xs">출처: {actionDraft.source || '-'}</span>
+								</div>
+								<p className="text-xs text-[#5A6F8A]">타임스탬프: {actionDraft.updatedAt || getKSTTimestampLabel()}</p>
+							</div>
+
+							<div className="space-y-1.5">
+								<label className="text-xs font-semibold text-[#5A6F8A]">제목</label>
+								<input
+									type="text"
+									value={actionDraft.text}
+									onChange={(e) => setActionDraft((prev) => ({ ...prev, text: e.target.value }))}
+									className="w-full px-3.5 py-2.5 text-sm rounded-xl border border-[rgba(0,100,180,0.14)] bg-white focus:outline-none focus:border-[#0099CC]"
+									placeholder="액션 아이템 제목"
+								/>
+							</div>
+
+							<div className="space-y-1.5">
+								<label className="text-xs font-semibold text-[#5A6F8A]">설명</label>
+								<textarea
+									ref={actionDescriptionRef}
+									value={actionDraft.description || ''}
+									onChange={(e) => setActionDraft((prev) => ({ ...prev, description: e.target.value }))}
+									rows={5}
+									className="w-full px-3.5 py-2.5 text-sm rounded-xl border border-[rgba(0,100,180,0.14)] bg-white resize-none focus:outline-none focus:border-[#0099CC]"
+									placeholder="세부 설명을 입력하세요"
+								/>
+							</div>
+
+							<div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+								<div className="space-y-1.5">
+									<label className="text-xs font-semibold text-[#5A6F8A]">마감 기한</label>
+									<input
+										type="date"
+										value={toDateInputValue(actionDraft.due)}
+										onChange={(e) => setActionDraft((prev) => ({ ...prev, due: fromDateInputValue(e.target.value) }))}
+										className="w-full px-3.5 py-2.5 text-sm rounded-xl border border-[rgba(0,100,180,0.14)] bg-white focus:outline-none focus:border-[#0099CC]"
+									/>
+								</div>
+								<div className="space-y-1.5 relative" ref={drawerAssigneeRef} data-drawer-assignee-root>
+									<label className="text-xs font-semibold text-[#5A6F8A]">담당자</label>
+									<button
+										type="button"
+										onClick={() => setIsDrawerAssigneeOpen((prev) => !prev)}
+										className={`w-full px-3.5 py-2.5 text-sm rounded-xl border transition flex items-center justify-between gap-2 ${isDrawerAssigneeOpen ? 'bg-[#EEF3FF] border-[#0099CC]/40 shadow-[0_0_0_3px_rgba(0,153,204,0.12)] text-[#0D1B2A]' : 'bg-white border-[rgba(0,100,180,0.14)] text-[#0D1B2A] hover:border-[rgba(0,153,204,0.4)]'}`}
+									>
+										<span className="truncate text-left">{actionDraft.assignee || '담당자 선택'}</span>
+										<ChevronDownIcon className={`shrink-0 text-[#5A6F8A] transition-transform ${isDrawerAssigneeOpen ? 'rotate-180' : ''}`} />
+									</button>
+									{isDrawerAssigneeOpen && (
+										<div className="absolute left-0 right-0 z-30 mt-2 overflow-hidden rounded-2xl border border-[rgba(0,100,180,0.14)] bg-white shadow-[0_12px_30px_rgba(0,100,180,0.16)]">
+											<div className="max-h-64 overflow-auto py-1">
+												{drawerAssigneeOptions.map((member) => (
+													<button
+														key={member}
+														type="button"
+														onClick={() => {
+															setActionDraft((prev) => ({ ...prev, assignee: member }));
+															setIsDrawerAssigneeOpen(false);
+														}}
+														className={`flex w-full items-center justify-between px-4 py-2.5 text-left text-sm transition-colors ${actionDraft.assignee === member ? 'bg-[#EEF3FF] text-[#0099CC] font-semibold' : 'text-[#0D1B2A] hover:bg-[#F8FAFF]'}`}
+													>
+														<span>{member}</span>
+														{actionDraft.assignee === member && <CheckIcon className="text-[#0099CC]" />}
+													</button>
+												))}
+											</div>
+										</div>
+									)}
+								</div>
+							</div>
+
+							{normalizeActionStatus(actionDraft.status) === '연동완료' && (
+								<div className="rounded-2xl border border-[rgba(0,153,204,0.28)] bg-[#EEF8FF] px-3.5 py-3">
+									<p className="text-sm font-semibold text-[#0D1B2A]">연동완료 | 외부 툴 링크 바로가기</p>
+									{actionDraft.externalLink ? (
+										<a href={actionDraft.externalLink} target="_blank" rel="noreferrer" className="text-xs text-[#0099CC] underline mt-1 inline-block">{actionDraft.externalLink}</a>
+									) : (
+										<p className="text-xs text-[#5A6F8A] mt-1">연동 링크가 아직 없습니다.</p>
+									)}
+								</div>
+							)}
+
+							{normalizeActionStatus(actionDraft.status) === '완료히스토리' && (
+								<div className="rounded-2xl border border-[rgba(16,185,129,0.28)] bg-[#F3FBF7] px-3.5 py-3">
+									<p className="text-sm font-semibold text-[#0D1B2A]">완료 히스토리 상태입니다.</p>
+									<p className="text-xs text-[#5A6F8A] mt-1">내부 기록으로 보관 중이며 필요 시 변경 사항만 저장할 수 있습니다.</p>
+								</div>
+							)}
+						</div>
+
+						<div className="border-t border-[rgba(0,100,180,0.1)] px-4 sm:px-5 py-4 space-y-2.5 bg-white">
+							{normalizeActionStatus(actionDraft.status) === '검토대기' && (
+								<button
+									type="button"
+									onClick={() => {
+										const ok = saveActionDraft({ nextStatus: '검토완료', closeAfterSave: true });
+										if (ok) showToast('확인 완료 처리되어 검토 완료로 전환되었습니다.', 'success');
+									}}
+									className="w-full px-4 py-2.5 rounded-xl bg-[#0D1B2A] text-white text-sm font-semibold hover:opacity-95 transition"
+								>
+									완료
+								</button>
+							)}
+
+							{normalizeActionStatus(actionDraft.status) === '검토완료' && (
+								<div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+									<button
+										type="button"
+										disabled={pendingIntegrationTarget === 'Jira'}
+										onClick={() => {
+											setPendingIntegrationTarget('Jira');
+											const ok = saveActionDraft({ nextStatus: '연동완료', integrationTool: 'Jira', closeAfterSave: true });
+											setPendingIntegrationTarget('');
+											if (ok) showToast('Jira 연동이 완료되어 연동 완료로 전환되었습니다.', 'success');
+										}}
+										className="w-full px-3 py-2.5 rounded-xl bg-[#0052CC] text-white text-sm font-semibold hover:bg-[#0047B3] transition disabled:opacity-70"
+									>
+										Jira연동하기
+									</button>
+									<button
+										type="button"
+										disabled={pendingIntegrationTarget === 'Notion'}
+										onClick={() => {
+											setPendingIntegrationTarget('Notion');
+											const ok = saveActionDraft({ nextStatus: '연동완료', integrationTool: 'Notion', closeAfterSave: true });
+											setPendingIntegrationTarget('');
+											if (ok) showToast('Notion 연동이 완료되어 연동 완료로 전환되었습니다.', 'success');
+										}}
+										className="w-full px-3 py-2.5 rounded-xl bg-[#111827] text-white text-sm font-semibold hover:bg-black transition disabled:opacity-70"
+									>
+										Notion연동하기
+									</button>
+									<button
+										type="button"
+										onClick={() => {
+											const ok = saveActionDraft({ nextStatus: '완료히스토리', closeAfterSave: true });
+											if (ok) showToast('완료 히스토리에 저장되었습니다.', 'success');
+										}}
+										className="w-full px-3 py-2.5 rounded-xl border border-[rgba(0,100,180,0.2)] text-[#0D1B2A] text-sm font-semibold hover:bg-[#F8FAFF] transition"
+									>
+											완료히스토리저장
+									</button>
+								</div>
+							)}
+
+							{normalizeActionStatus(actionDraft.status) === '연동완료' && (
+								<div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+									<button
+										type="button"
+										onClick={() => {
+											const ok = saveActionDraft({ closeAfterSave: true });
+											if (ok) showToast('변경 사항이 저장되었습니다.', 'success');
+										}}
+										className="w-full px-4 py-2.5 rounded-xl bg-[#0D1B2A] text-white text-sm font-semibold hover:opacity-95 transition"
+									>
+											변경사항저장
+									</button>
+									<button
+										type="button"
+										onClick={() => {
+											const ok = saveActionDraft({ nextStatus: '완료히스토리', closeAfterSave: true });
+											if (ok) showToast('연동 완료 항목을 완료 히스토리로 저장했습니다.', 'success');
+										}}
+										className="w-full px-4 py-2.5 rounded-xl border border-[rgba(0,100,180,0.2)] text-[#0D1B2A] text-sm font-semibold hover:bg-[#F8FAFF] transition"
+									>
+											완료히스토리저장
+									</button>
+								</div>
+							)}
+
+							{normalizeActionStatus(actionDraft.status) === '완료히스토리' && (
+								<button
+									type="button"
+									onClick={() => {
+										const ok = saveActionDraft({ closeAfterSave: true });
+										if (ok) showToast('변경 사항이 저장되었습니다.', 'success');
+									}}
+									className="w-full px-4 py-2.5 rounded-xl bg-[#0D1B2A] text-white text-sm font-semibold hover:opacity-95 transition"
+								>
+									변경사항저장
+								</button>
+							)}
+
+							<button type="button" onClick={() => requestDeleteActionItem(actionDraft.id)} className="w-full px-4 py-2.5 rounded-xl border border-[#EF4444]/30 text-[#EF4444] text-sm font-semibold hover:bg-[#FCE8E6] transition">삭제</button>
+						</div>
+					</aside>
+				</div>
+			)}
 
 			{/* 참여자 모달 */}
 			{isParticipantsModalOpen && (
@@ -1023,6 +1394,21 @@ export default function ProjectMeetings() {
 						<div className="mt-5 flex justify-end gap-2">
 							<button type="button" onClick={() => setPendingDeleteMeeting(null)} className="px-3.5 py-2 rounded-lg border border-slate-200 text-sm text-slate-600 hover:bg-slate-50">취소</button>
 							<button type="button" onClick={confirmDeleteMeeting} className="px-3.5 py-2 rounded-lg bg-[#EF4444] text-white text-sm font-semibold hover:bg-[#DC2626]">삭제</button>
+						</div>
+					</div>
+				</div>
+			)}
+
+			{/* 액션아이템 삭제 확인 모달 */}
+			{pendingDeleteActionItemId && (
+				<div className="fixed inset-0 z-[74] flex items-center justify-center p-4" aria-modal="true" role="dialog">
+					<div className="absolute inset-0 bg-[#0D1B2A]/45" onClick={() => setPendingDeleteActionItemId(null)} />
+					<div className="relative w-full max-w-sm rounded-3xl border border-[rgba(0,100,180,0.12)] bg-white p-6 shadow-2xl">
+						<p className="text-base font-bold text-slate-900">액션 아이템을 삭제할까요?</p>
+						<p className="mt-2 text-sm text-slate-500">정말 삭제하시겠습니까? 삭제 후에는 되돌릴 수 없습니다.</p>
+						<div className="mt-5 flex justify-end gap-2">
+							<button type="button" onClick={() => setPendingDeleteActionItemId(null)} className="px-3.5 py-2 rounded-lg border border-slate-200 text-sm text-slate-600 hover:bg-slate-50">취소</button>
+							<button type="button" onClick={confirmDeleteActionItem} className="px-3.5 py-2 rounded-lg bg-[#EF4444] text-white text-sm font-semibold hover:bg-[#DC2626]">삭제</button>
 						</div>
 					</div>
 				</div>

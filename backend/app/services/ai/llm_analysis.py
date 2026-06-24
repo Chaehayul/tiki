@@ -464,6 +464,155 @@ def _compact_summary_text(text: Any, *, max_chars: int = MAX_SUMMARY_CHARS) -> s
     return WHITESPACE_PATTERN.sub(" ", cleaned).strip()
 
 
+def _compact_decision_text(text: Any, *, max_chars: int = 120) -> str:
+    cleaned = normalize_meeting_terms(_collapse_repeated_phrases(text))
+    cleaned = WHITESPACE_PATTERN.sub(" ", cleaned).strip().rstrip(".!?。")
+    if not cleaned:
+        return ""
+
+    cleaned = re.sub(r"^(?:그럼|그러면|우선|일단|다음으로|마지막으로)\s+", "", cleaned)
+    cleaned = re.sub(r"(?:걸로|방향으로|하는 게 좋겠습니다?|하는 게 좋을 것 같습니다?|하겠습니다?|하죠)$", "", cleaned).strip()
+
+    if len(cleaned) > max_chars:
+        cleaned = shorten(cleaned, width=max_chars, placeholder="...")
+
+    return WHITESPACE_PATTERN.sub(" ", cleaned).strip()
+
+
+def _build_action_item_sentence(title: Any, description: Any = "") -> str:
+    normalized_title = _normalize_title_value(title)
+    topic = HeuristicLLMAnalysisService._extract_action_item_topic(normalized_title)
+    action = HeuristicLLMAnalysisService._extract_action_item_action(normalized_title)
+
+    if not topic:
+        raw_description = _normalize_text_value(description)
+        topic = HeuristicLLMAnalysisService._extract_action_item_topic(raw_description)
+        if not action:
+            action = HeuristicLLMAnalysisService._extract_action_item_action(raw_description)
+
+    if topic and action:
+        topic_object = HeuristicLLMAnalysisService._with_particle(topic, "object")
+        if action == "진행":
+            sentence = f"{topic_object} 진행한다."
+        elif action == "검토":
+            sentence = f"{topic_object} 검토한다."
+        elif action == "반영":
+            sentence = f"{topic_object} 반영한다."
+        elif action == "공유":
+            sentence = f"{topic_object} 공유한다."
+        elif action == "확인":
+            sentence = f"{topic_object} 확인한다."
+        elif action == "배포":
+            sentence = f"{topic_object} 배포한다."
+        elif action == "정리":
+            sentence = f"{topic_object} 정리한다."
+        elif action == "대응":
+            sentence = f"{topic}에 대응한다."
+        elif action == "협의":
+            sentence = f"{topic_object} 협의한다."
+        elif action == "확보":
+            sentence = f"{topic_object} 확보한다."
+        elif action == "포함 검토":
+            sentence = f"{topic} 포함 여부를 검토한다."
+        elif action == "개발":
+            sentence = f"{topic_object} 개발한다."
+        else:
+            sentence = f"{topic_object} {action}한다."
+    else:
+        sentence = _normalize_text_value(description) or normalized_title
+
+    sentence = WHITESPACE_PATTERN.sub(" ", sentence).strip().rstrip(".!?。")
+    if not sentence:
+        return ""
+    if len(sentence) > 120:
+        sentence = shorten(sentence, width=120, placeholder="...")
+    return sentence if sentence.endswith(".") else f"{sentence}."
+
+
+def _build_issue_sentence(text: Any) -> str:
+    cleaned = _compact_decision_text(text, max_chars=120)
+    if not cleaned:
+        return ""
+
+    topic = HeuristicLLMAnalysisService._extract_issue_topic(cleaned)
+    kind = HeuristicLLMAnalysisService._extract_issue_kind(cleaned)
+
+    if topic and kind:
+        topic_object = HeuristicLLMAnalysisService._with_particle(topic, "object")
+        if kind == "일정 압박":
+            sentence = f"{topic} 일정이 빠듯하다."
+        elif kind == "영향 범위":
+            sentence = f"{topic_object} 영향 범위가 커서 일정 조정이 필요하다."
+        elif kind == "장애 대응":
+            sentence = f"{topic_object} 장애 대응이 필요하다."
+        elif kind == "성능 저하":
+            sentence = f"{topic_object} 성능 저하를 확인했다."
+        elif kind == "협의 필요":
+            sentence = f"{topic_object} 협의가 필요하다."
+        elif kind == "재검토 필요":
+            sentence = f"{topic_object} 재검토가 필요하다."
+        elif kind == "리스크":
+            sentence = f"{topic_object} 리스크를 확인했다."
+        else:
+            sentence = f"{topic} {kind}"
+    elif topic:
+        sentence = f"{HeuristicLLMAnalysisService._with_particle(topic, 'object')} 관련 리스크를 확인했다."
+    elif kind:
+        sentence = f"{kind}가 필요하다."
+    else:
+        sentence = cleaned
+
+    sentence = WHITESPACE_PATTERN.sub(" ", sentence).strip().rstrip(".!?。")
+    if not sentence:
+        return ""
+    if len(sentence) > 120:
+        sentence = shorten(sentence, width=120, placeholder="...")
+    return sentence if sentence.endswith(".") else f"{sentence}."
+
+
+def _build_next_agenda_sentence(text: Any) -> str:
+    cleaned = _compact_summary_text(text, max_chars=120)
+    if not cleaned:
+        return ""
+
+    cleaned = WHITESPACE_PATTERN.sub(" ", cleaned).strip().rstrip(".!?。")
+    cleaned = re.sub(
+        r"^(?:다음 안건(?:으로 넘어가서)?|다음 회의(?:에서는|에)?|이번 회의(?:에서는|에)?|이번에는|그럼|그러면|우선|일단)\s*",
+        "",
+        cleaned,
+    )
+    cleaned = re.sub(
+        r"(?:이야기해봅시다|이야기해 보겠습니다|이야기해보겠습니다|논의해봅시다|논의해 보겠습니다|다시 보죠|다시 보겠습니다|보죠|해봅시다)$",
+        "",
+        cleaned,
+    ).strip()
+
+    if not cleaned:
+        return ""
+
+    lowered = cleaned.lower()
+    if "어떻게 대응할지" in cleaned or "대응 방안" in lowered:
+        topic = cleaned.split("어떻게 대응할지", 1)[0].strip()
+        topic = re.sub(r"(?:이 부분|이건|추가 기능 요청|추가 기능|추가 요청|후속 안건|다음 안건)\s*$", "", topic).strip()
+        if topic:
+            cleaned = f"{topic} 대응 방안을 다음 회의에서 논의한다."
+        else:
+            cleaned = "다음 회의에서 대응 방안을 논의한다."
+    elif "개발 일정" in cleaned and "리스크" in cleaned:
+        cleaned = "다음 회의에서 개발 일정과 예상 리스크를 논의한다."
+    elif "추가 기능 요청" in cleaned or "추가 요청" in cleaned:
+        cleaned = "다음 회의에서 추가 기능 요청 대응 방안을 논의한다."
+    elif "후속" in cleaned and "안건" in cleaned:
+        cleaned = "다음 회의에서 후속 안건을 논의한다."
+    elif not cleaned.startswith("다음 회의"):
+        cleaned = f"다음 회의에서 {cleaned}"
+
+    cleaned = WHITESPACE_PATTERN.sub(" ", cleaned).strip().rstrip(".!?。")
+    if not cleaned:
+        return ""
+    return cleaned if cleaned.endswith(".") else f"{cleaned}."
+
+
 def _build_context_block(context: Any | None) -> str:
     normalized = normalize_rag_context(context)
     if not normalized:
@@ -498,8 +647,8 @@ def _normalize_title_value(value: Any) -> str:
 
 
 def _normalize_description_value(value: Any, title: str) -> str:
-    description = _collapse_repeated_phrases(value).rstrip(".!?。")
-    if not description or description == title:
+    description = _build_action_item_sentence(title, value)
+    if not description:
         return ""
     return shorten(description, width=240, placeholder="...")
 
@@ -717,6 +866,25 @@ def _normalize_string_list_value(items: Any, limit: int) -> list[str]:
     return normalized
 
 
+def _normalize_next_agenda_value(items: Any, limit: int) -> list[str]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+
+    for item in items or []:
+        text = _build_next_agenda_sentence(item)
+        if not text:
+            continue
+        signature = text.lower()
+        if signature in seen:
+            continue
+        seen.add(signature)
+        normalized.append(shorten(text, width=180, placeholder="..."))
+        if len(normalized) >= limit:
+            break
+
+    return normalized
+
+
 TENTATIVE_DECISION_MARKERS: tuple[str, ...] = (
     "검토",
     "우선",
@@ -767,7 +935,7 @@ def _normalize_decisions_value(decisions: Any, limit: int) -> tuple[list[str], l
             tentative.append(shorten(text, width=180, placeholder="..."))
             continue
 
-        normalized.append(shorten(text, width=180, placeholder="..."))
+        normalized.append(_compact_decision_text(text, max_chars=180))
         if len(normalized) >= limit:
             break
 
@@ -813,7 +981,7 @@ def _normalize_issues_value(issues: Any) -> list[dict[str, str]]:
         if signature in seen:
             continue
         seen.add(signature)
-        normalized.append({"level": level, "text": shorten(text, width=220, placeholder="...")})
+        normalized.append({"level": level, "text": _build_issue_sentence(text)})
         if len(normalized) >= MAX_ISSUES:
             break
     return normalized
@@ -1176,16 +1344,35 @@ class HeuristicLLMAnalysisService(LLMAnalysisService):
         issue_kind = self._extract_issue_kind(cleaned)
 
         if topic and issue_kind:
-            title = f"{topic} {issue_kind}"
+            if issue_kind == "일정 압박":
+                title = f"{topic} 일정이 빠듯하다."
+            elif issue_kind == "영향 범위":
+                title = f"{topic} 영향 범위가 커서 일정 조정이 필요하다."
+            elif issue_kind == "장애 대응":
+                title = f"{topic} 장애 대응이 필요하다."
+            elif issue_kind == "성능 저하":
+                title = f"{topic} 성능 저하를 확인했다."
+            elif issue_kind == "협의 필요":
+                title = f"{topic} 협의가 필요하다."
+            elif issue_kind == "재검토 필요":
+                title = f"{topic} 재검토가 필요하다."
+            elif issue_kind == "리스크":
+                title = f"{topic} 리스크를 확인했다."
+            else:
+                title = f"{topic} {issue_kind}"
         elif topic:
-            title = f"{topic} 리스크"
+            title = f"{topic} 관련 리스크를 확인했다."
         elif issue_kind:
-            title = issue_kind
+            title = f"{issue_kind}가 필요하다."
         else:
             title = self._build_title(cleaned)
 
         title = self._cleanup_issue_title(title)
-        return shorten(title, width=36, placeholder="...") if title else ""
+        if not title:
+            return ""
+
+        shortened = shorten(title, width=36, placeholder="...")
+        return shortened if shortened.endswith(".") else f"{shortened}."
 
     @staticmethod
     def _cleanup_action_item_title(title: str) -> str:
@@ -1407,7 +1594,9 @@ class HeuristicLLMAnalysisService(LLMAnalysisService):
             if signature in seen:
                 continue
             seen.add(signature)
-            cleaned.append(text)
+            rewritten = _build_next_agenda_sentence(text)
+            if rewritten:
+                cleaned.append(rewritten)
         return cleaned
 
     @staticmethod
@@ -1587,7 +1776,7 @@ class HeuristicLLMAnalysisService(LLMAnalysisService):
         return _is_followup_agenda_text(sentence)
 
     def _rewrite_decision_text(self, text: str) -> str:
-        cleaned = _compact_summary_text(text, max_chars=160)
+        cleaned = _compact_decision_text(text, max_chars=160)
         if not cleaned:
             return ""
 
@@ -1900,8 +2089,7 @@ class HeuristicLLMAnalysisService(LLMAnalysisService):
 
     @staticmethod
     def _normalize_description(value: Any, title: str) -> str:
-        description = _collapse_repeated_phrases(value)
-        description = description.rstrip(".!?。")
+        description = _build_action_item_sentence(title, value)
         if not description:
             return ""
         return shorten(description, width=240, placeholder="...")
@@ -2034,7 +2222,7 @@ class OpenAIAnalysisService(LLMAnalysisService):
                 for item in next_agenda_source + tentative_decisions
                 if _is_followup_agenda_text(item)
             ]
-            normalized_next_agenda = _normalize_string_list_value(next_agenda_candidates, MAX_NEXT_AGENDA)
+            normalized_next_agenda = _normalize_next_agenda_value(next_agenda_candidates, MAX_NEXT_AGENDA)
             return {
                 "summary": normalized_summary,
                 "keywords": normalized_keywords,

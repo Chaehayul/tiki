@@ -69,6 +69,7 @@ def main() -> int:
     result = engine.process_audio(str(args.audio_path))
 
     audio_summary = result.analysis.extra_data.get("audio_preprocessing", {})
+    stt_routing = result.analysis.extra_data.get("stt_routing", [])
 
     print(f"FILE: {args.audio_path}")
     print(f"MODE: {args.mode}")
@@ -76,6 +77,10 @@ def main() -> int:
     print(f"MODEL: {result.analysis.model_name}")
     print(f"PROMPT: {result.analysis.prompt_version}")
     _print_section("AUDIO_PREPROCESSING", audio_summary)
+    print()
+    _print_section("STT_ROUTING", stt_routing)
+    print()
+    _print_section("SPEAKER_DIARIZATION", result.analysis.extra_data.get("speaker_diarization", {}))
     print()
     _print_section("SUMMARY", result.analysis.summary)
     print()

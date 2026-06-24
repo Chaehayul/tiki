@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
@@ -36,8 +36,17 @@ class Settings(BaseSettings):
     notion_redirect_uri: str | None = Field(default=None, alias="NOTION_REDIRECT_URI")
     openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")
     openai_model: str = Field(default="gpt-5.4-mini", alias="OPENAI_MODEL")
-    whisper_model: str = Field(default="small", alias="WHISPER_MODEL")
-    whisper_noisy_model: str = Field(default="medium", alias="WHISPER_NOISY_MODEL")
+    whisper_model: str = Field(default="large", alias="WHISPER_MODEL")
+    whisper_light_model: str = Field(default="small", alias="WHISPER_LIGHT_MODEL")
+    diarization_enabled: bool = Field(default=False, alias="DIARIZATION_ENABLED")
+    diarization_model: str = Field(
+        default="pyannote/speaker-diarization-community-1",
+        alias="DIARIZATION_MODEL",
+    )
+    huggingface_token: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("HF_TOKEN", "HUGGINGFACE_ACCESS_TOKEN", "HUGGINGFACE_HUB_TOKEN"),
+    )
 
     @property
     def cors_origins(self) -> list[str]:

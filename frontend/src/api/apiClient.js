@@ -16,9 +16,17 @@ async function request(path, options = {}) {
   const data = await response.json().catch(() => null);
 
   if (!response.ok) {
+    if (response.status === 401) {
+      localStorage.removeItem('tiki_access_token');
+      localStorage.removeItem('tiki_user');
+      window.dispatchEvent(new Event('tiki-auth-changed'));
+      window.location.href = '/login';
+    }
     const message =
       typeof data?.detail === 'string'
         ? data.detail
+        : Array.isArray(data?.detail)
+        ? data.detail.map((e) => e.msg).join(', ')
         : '요청을 처리하지 못했습니다.';
     throw new Error(message);
   }
@@ -54,4 +62,15 @@ export function clearAuthSession() {
   localStorage.removeItem('tiki_access_token');
   localStorage.removeItem('tiki_user');
   window.dispatchEvent(new Event('tiki-auth-changed'));
+}
+
+export async function createProject({ name, description, category = '일반' }) {
+  return request('/projects', {
+    method: 'POST',
+    body: JSON.stringify({ name, description, category }),
+  });
+}
+
+export async function listProjects() {
+  return request('/projects');
 }

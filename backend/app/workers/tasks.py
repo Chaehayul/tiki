@@ -34,7 +34,9 @@ def _run_pipeline(db, file_id: UUID) -> None:
     uploaded_file.started_at = datetime.now(UTC)
     db.commit()
 
-    result = get_default_ai_engine().process_audio(uploaded_file.storage_path)
+    result = get_default_ai_engine().process_audio_parallel(
+        uploaded_file.storage_path, n_workers=2
+    )
 
     extracted_content = ExtractedContent(
         uploaded_file_id=uploaded_file.id,
@@ -59,14 +61,15 @@ def _run_pipeline(db, file_id: UUID) -> None:
     for item in result.analysis.action_items:
         due_at = None
         if item.get("due_at"):
-            due_at = datetime.fromisoformat(item["due_at"]).replace(tzinfo=UTC)
+            raw = datetime.fromisoformat(item["due_at"])
+            due_at = raw.astimezone(UTC) if raw.tzinfo else raw.replace(tzinfo=UTC)
 
         db.add(Ticket(
             analysis_result_id=analysis_result.id,
-            title=item["title"],
-            description=item["description"],
-            priority=item["priority"],
-            status=item["status"],
+            title=item.get("title", "제목 없음"),
+            description=item.get("description", ""),
+            priority=item.get("priority", "medium"),
+            status=item.get("status", "draft"),
             assignee=item.get("assignee"),
             due_at=due_at,
         ))

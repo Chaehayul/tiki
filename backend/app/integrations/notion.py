@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
@@ -77,8 +78,13 @@ class NotionClient:
                 "Accept": "application/json",
             },
         )
-        with urllib.request.urlopen(req) as response:
-            result = json.loads(response.read().decode("utf-8"))
+        try:
+            with urllib.request.urlopen(req, timeout=10) as response:
+                result = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            body_text = exc.read().decode("utf-8", errors="replace")
+            logger.error("Notion OAuth error %s: %s", exc.code, body_text)
+            raise RuntimeError(f"Notion OAuth {exc.code}: {body_text}") from exc
 
         return NotionTokenResult(
             access_token=result["access_token"],
@@ -103,8 +109,13 @@ class NotionClient:
                 "Accept": "application/json",
             },
         )
-        with urllib.request.urlopen(req) as response:
-            return json.loads(response.read().decode("utf-8"))
+        try:
+            with urllib.request.urlopen(req, timeout=10) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            body_text = exc.read().decode("utf-8", errors="replace")
+            logger.error("Notion API error %s: %s", exc.code, body_text)
+            raise RuntimeError(f"Notion API {exc.code}: {body_text}") from exc
 
     # ── 페이지 생성 ───────────────────────────────────────────────────────────
 
@@ -151,8 +162,9 @@ class NotionClient:
                     "rich_text": [{"type": "text", "text": {"content": assignee}}]
                 }
         else:
-            page_id = parent_page_id or ""
-            parent = {"type": "page_id", "page_id": page_id} if page_id else {"type": "workspace", "workspace": True}
+            if not parent_page_id:
+                raise ValueError("database_id 또는 parent_page_id 중 하나는 필요합니다.")
+            parent = {"type": "page_id", "page_id": parent_page_id}
             properties = {
                 "title": [{"type": "text", "text": {"content": f"{emoji} {title}"}}]
             }

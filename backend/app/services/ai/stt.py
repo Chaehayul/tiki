@@ -249,6 +249,144 @@ class WhisperSpeechToTextService(SpeechToTextService):
             "speakers": speaker_ids,
         }
 
+    def transcribe_with_segments_parallel(
+        self,
+        audio_path: str,
+        n_workers: int = 2,
+    ) -> tuple[str, list[dict[str, Any]]]:
+        """Parallel variant: splits audio into chunks and transcribes them concurrently.
+
+        Each worker thread owns its own Whisper model instance. Falls back to
+        the sequential path when the audio produces only one chunk.
+        """
+        from app.services.pipeline.parallel_transcription import transcribe_chunks_parallel
+
+        path = Path(audio_path)
+        if not path.exists():
+            raise FileNotFoundError(f"Audio file not found: {audio_path}")
+
+        preprocessing = self.preprocessor.prepare(path)
+        self._last_preprocessing = preprocessing
+        model_name = self._select_model_name(preprocessing)
+
+        if not preprocessing.chunking_enabled or len(preprocessing.chunks) <= 1:
+            logger.info("Parallel STT: single chunk, using sequential path for %s", path.name)
+            model = self._load_model(model_name)
+            return self._transcribe_preprocessed_with_segments(model, preprocessing)
+
+        logger.info(
+            "Parallel STT starting for %s (chunks=%d, workers=%d, model=%s)",
+            path.name, len(preprocessing.chunks), n_workers, model_name,
+        )
+
+        options: dict[str, object] = {
+            "task": "transcribe",
+            "temperature": 0.0,
+            "condition_on_previous_text": False,
+            "beam_size": 5,
+            "best_of": 5,
+            "patience": 1.0,
+            "no_speech_threshold": 0.4,
+            "compression_ratio_threshold": 2.4,
+            "logprob_threshold": -1.0,
+            "fp16": False,
+            "verbose": False,
+            "initial_prompt": self._build_initial_prompt(preprocessing),
+        }
+        if self.language:
+            options["language"] = self.language
+
+        raw_results = transcribe_chunks_parallel(
+            preprocessing.chunks, model_name, options, n_workers=n_workers,
+        )
+
+        # Assemble results in chunk order with the same filtering logic used
+        # by the sequential _transcribe_preprocessed_with_segments.
+        segments: list[str] = []
+        structured_segments: list[dict[str, Any]] = []
+
+        for chunk in preprocessing.chunks:
+            raw = raw_results.get(chunk.index, {"text": "", "segments": []})
+            chunk_text = self._clean_transcript_text(raw.get("text") or "")
+            chunk_segments = list(raw.get("segments") or [])
+            core_start = chunk.core_start_seconds if chunk.core_start_seconds is not None else chunk.start_seconds
+            core_end = chunk.core_end_seconds if chunk.core_end_seconds is not None else chunk.end_seconds
+            chunk_kept_texts: list[str] = []
+
+            if chunk_segments:
+                for local_index, segment in enumerate(chunk_segments):
+                    text = self._clean_transcript_text(segment.get("text") or "")
+                    segment_start = float(segment.get("start") or 0.0)
+                    segment_end = float(segment.get("end") or 0.0)
+                    if not self._should_keep_segment(text, segment, preprocessing):
+                        continue
+                    if not self._is_segment_in_core_region(segment_start, segment_end, core_start, core_end):
+                        continue
+
+                    start_seconds = chunk.start_seconds + segment_start
+                    end_seconds = chunk.start_seconds + segment_end
+                    confidence = self._segment_confidence(segment)
+                    chunk_kept_texts.append(text)
+                    segments.append(text)
+                    structured_segments.append(
+                        {
+                            "index": len(structured_segments),
+                            "chunk_index": chunk.index,
+                            "chunk_local_index": local_index,
+                            "start_seconds": round(start_seconds, 3),
+                            "end_seconds": round(end_seconds, 3),
+                            "duration_seconds": round(max(0.0, end_seconds - start_seconds), 3),
+                            "text": text,
+                            "confidence": confidence,
+                            "avg_logprob": segment.get("avg_logprob"),
+                            "no_speech_prob": segment.get("no_speech_prob"),
+                            "compression_ratio": segment.get("compression_ratio"),
+                        }
+                    )
+                if not chunk_kept_texts and chunk_text and not self._is_likely_noise_text(chunk_text):
+                    segments.append(chunk_text)
+                    structured_segments.append(
+                        {
+                            "index": len(structured_segments),
+                            "chunk_index": chunk.index,
+                            "start_seconds": round(chunk.start_seconds, 3),
+                            "end_seconds": round(chunk.end_seconds, 3),
+                            "duration_seconds": round(chunk.duration_seconds, 3),
+                            "text": chunk_text,
+                            "confidence": 0.45 if preprocessing.is_noisy else 0.7,
+                            "avg_logprob": None,
+                            "no_speech_prob": None,
+                            "compression_ratio": None,
+                        }
+                    )
+                continue
+
+            if chunk_text and not self._is_likely_noise_text(chunk_text):
+                segments.append(chunk_text)
+                structured_segments.append(
+                    {
+                        "index": len(structured_segments),
+                        "chunk_index": chunk.index,
+                        "start_seconds": round(chunk.start_seconds, 3),
+                        "end_seconds": round(chunk.end_seconds, 3),
+                        "duration_seconds": round(chunk.duration_seconds, 3),
+                        "text": chunk_text,
+                        "confidence": 0.55 if preprocessing.is_noisy else 0.75,
+                        "avg_logprob": None,
+                        "no_speech_prob": None,
+                        "compression_ratio": None,
+                    }
+                )
+
+        logger.info(
+            "Parallel STT completed for %s (chars=%d, chunks=%d, strategy=%s)",
+            path.name,
+            sum(len(s) for s in segments),
+            len(preprocessing.chunks),
+            preprocessing.strategy,
+        )
+        return " ".join(segments).strip(), structured_segments
+
     def prepare_audio(self, audio_path: str) -> AudioPreprocessingResult:
         """Expose audio splitting metadata for debugging and future diarization."""
         return self.preprocessor.prepare(audio_path)

@@ -1,11 +1,16 @@
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, status
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_current_user
 from app.db.database import get_db
+from app.models.analysis import AnalysisResult
+from app.models.enums import ProcessingStatus
+from app.models.file import ExtractedContent, UploadedFile
 from app.models.project import Project
+from app.models.ticket import Ticket
 from app.models.user import User
 from app.schemas.project import (
     MeetingCreate,
@@ -16,8 +21,11 @@ from app.schemas.project import (
     ProjectCreate,
     ProjectListItem,
     ProjectResponse,
+    ProjectStats,
     ProjectUpdate,
+    UploadStatusBreakdown,
 )
+from app.schemas.upload import UploadedFileResponse
 from app.services import project_service
 
 router = APIRouter(prefix="/projects", tags=["projects"])
@@ -114,6 +122,60 @@ def delete_project(
     db: Session = Depends(get_db),
 ) -> None:
     project_service.delete_project(db, project_id, current_user.id)
+
+
+# ── Project Stats ─────────────────────────────────────────────────────────────
+
+@router.get("/{project_id}/stats", response_model=ProjectStats)
+def get_project_stats(
+    project_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> ProjectStats:
+    project = project_service.get_project(db, project_id, current_user.id)
+
+    upload_rows = db.execute(
+        select(UploadedFile.status, func.count().label("cnt"))
+        .where(UploadedFile.project_id == project_id)
+        .group_by(UploadedFile.status)
+    ).all()
+
+    status_map: dict[str, int] = {s.value: 0 for s in ProcessingStatus}
+    for row in upload_rows:
+        status_map[row.status] = row.cnt
+
+    total_tickets = db.scalar(
+        select(func.count(Ticket.id))
+        .join(AnalysisResult, AnalysisResult.id == Ticket.analysis_result_id)
+        .join(ExtractedContent, ExtractedContent.id == AnalysisResult.extracted_content_id)
+        .join(UploadedFile, UploadedFile.id == ExtractedContent.uploaded_file_id)
+        .where(UploadedFile.project_id == project_id)
+    ) or 0
+
+    return ProjectStats(
+        total_uploads=sum(status_map.values()),
+        uploads_by_status=UploadStatusBreakdown(**status_map),
+        total_meetings=len(project.meetings),
+        total_tickets=total_tickets,
+        member_count=len(project.members) + 1,
+    )
+
+
+# ── Project Uploads ───────────────────────────────────────────────────────────
+
+@router.get("/{project_id}/uploads", response_model=list[UploadedFileResponse])
+def list_project_uploads(
+    project_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[UploadedFileResponse]:
+    project_service.get_project(db, project_id, current_user.id)
+    files = db.scalars(
+        select(UploadedFile)
+        .where(UploadedFile.project_id == project_id)
+        .order_by(UploadedFile.created_at.desc())
+    ).all()
+    return [UploadedFileResponse.model_validate(f) for f in files]
 
 
 # ── Meeting ───────────────────────────────────────────────────────────────────

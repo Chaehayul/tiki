@@ -286,17 +286,6 @@ function MobileSideMenu({ open, onClose, isLoggedIn, isSubscribed, onLogout }) {
     );
 }
 
-// ── Main Header ───────────────────────────────────────────────────────────────
-/**
- * Props:
- *   isMobile   boolean
- *   isLoggedIn boolean
- *   phase      'IDLE' | 'UPLOADING' | 'PROCESSING' | 'COMPLETED' | 'FAILED'
- *   stateLabels { UPLOADING: string, ... }
- *   user        { name: string, email: string }
- *   isSubscribed boolean
- *   onLogout    () => void
- */
 export default function Header({ isMobile, isLoggedIn, phase, stateLabels, user, isSubscribed, onLogout }) {
     const { pathname } = useLocation();
     const navigate = useNavigate();
@@ -333,14 +322,14 @@ export default function Header({ isMobile, isLoggedIn, phase, stateLabels, user,
     const effectiveLoggedIn = typeof isLoggedIn === 'boolean' ? isLoggedIn : authState;
     const effectiveUser = user ?? sessionUser;
     const subscribed = typeof isSubscribed === 'boolean' ? isSubscribed : Boolean(effectiveUser?.isSubscribed);
-    const logoDestination = effectiveLoggedIn ? '/upload' : '/dashboard';
+    const logoDestination = effectiveLoggedIn ? '/upload' : '/onboarding';
     const handleLogout = () => {
         clearAuthSession();
-        if (pathname !== '/dashboard') {
+        if (pathname !== '/onboarding') {
             sessionStorage.setItem('tiki_flash_toast', '로그아웃 되었습니다.');
         }
         onLogout?.();
-        navigate('/dashboard', { replace: true });
+        navigate('/onboarding', { replace: true });
     };
 
     const desktopLoggedOutLinks = [

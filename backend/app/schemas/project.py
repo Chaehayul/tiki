@@ -114,3 +114,20 @@ class ProjectListItem(BaseModel):
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+# ── Project Stats ─────────────────────────────────────────────────────────────
+
+class UploadStatusBreakdown(BaseModel):
+    pending: int = 0
+    processing: int = 0
+    completed: int = 0
+    failed: int = 0
+
+
+class ProjectStats(BaseModel):
+    total_uploads: int
+    uploads_by_status: UploadStatusBreakdown
+    total_meetings: int
+    total_tickets: int
+    member_count: int

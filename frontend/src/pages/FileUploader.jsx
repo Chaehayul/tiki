@@ -337,7 +337,7 @@ export default function TikiApp() {
       return;
     }
 
-    setFiles((currentFiles) => [...currentFiles, ...acceptedFiles]);
+    setFiles((currentFiles) => [...acceptedFiles, ...currentFiles]);
     setPhase("IDLE");
     setError(
       skippedCount > 0
@@ -533,10 +533,6 @@ export default function TikiApp() {
 
   const canAnalyze = files.length > 0 && !!selectedProject;
   const moveToMeetingResult = () => {
-    if (selectedProject?.id) {
-      navigate(`/project/${selectedProject.id}/meetings`);
-      return;
-    }
     navigate("/meeting-detail");
   };
 
@@ -723,7 +719,7 @@ export default function TikiApp() {
               <div>
                 <div className="text-sm font-semibold">{files.length}개 파일이 선택됐어요</div>
                 <div className="mt-0.5 text-xs text-[#5A6F8A]">총 용량 {formatBytes(totalSize)}</div>
-                <div className="mt-1 text-[11px] text-[#0099CC]">파일을 드래그해서 분석 순서를 바꿀 수 있어요</div>
+                <div className="mt-1 text-[11px] text-[#0099CC]">파일을 드래그해 순서를 바꾸면 위쪽부터 차례대로 분석됩니다.</div>
               </div>
               <button
                 className="rounded-[7px] border border-[rgba(0,0,0,.08)] bg-[rgba(0,0,0,.03)] px-3 py-1.5 text-xs font-semibold text-[#5A6F8A]"

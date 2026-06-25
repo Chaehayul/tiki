@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import Header from '../components/Header';
 import Footer from '../components/Footer';
 import MobileTab from '../components/MobileTab';
+import { createProject } from '../api/apiClient';
 
 const icons = {
   folder: ["M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"],
@@ -119,16 +120,30 @@ export default function CreateProject() {
     triggerToast('🗑️ 초대가 취소되었습니다.');
   };
 
-  const startWorkspaceBuild = (isSkipped = false) => {
+  const startWorkspaceBuild = async (isSkipped = false) => {
     setIsBuilding(true);
     setBuildProgress(10);
     setBuildStepText('프로젝트 데이터 인프라 구축 중...');
-    setTimeout(() => { setBuildProgress(45); setBuildStepText('AI 가이드라인 및 규칙 컨벤션 프로토콜 바인딩 중...'); }, 800);
-    setTimeout(() => {
+
+    try {
+      await new Promise((r) => setTimeout(r, 800));
+      setBuildProgress(45);
+      setBuildStepText('AI 가이드라인 및 규칙 컨벤션 프로토콜 바인딩 중...');
+
+      await createProject({ name: projectName, description });
+
+      await new Promise((r) => setTimeout(r, 800));
       setBuildProgress(80);
       setBuildStepText(isSkipped || invitedMembers.length === 0 ? 'Jira 연동 모듈 파이프라인 구성 검증 중...' : `팀원 대상 초대 메일 일괄 인증 배포 발송 중 (${invitedMembers.length}명)...`);
-    }, 1600);
-    setTimeout(() => { setBuildProgress(100); setBuildStepText('TIKI 업무 요약 자동화 프로젝트 생성 성공!'); setBuildSuccess(true); }, 2400);
+
+      await new Promise((r) => setTimeout(r, 800));
+      setBuildProgress(100);
+      setBuildStepText('TIKI 업무 요약 자동화 프로젝트 생성 성공!');
+      setBuildSuccess(true);
+    } catch (err) {
+      setIsBuilding(false);
+      triggerToast(`⚠️ 프로젝트 생성 실패: ${err.message}`);
+    }
   };
 
   return (

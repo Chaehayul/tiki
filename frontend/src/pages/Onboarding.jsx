@@ -91,7 +91,7 @@ function Hero() {
 
         {/* CTA row */}
         <div className="mt-8 flex flex-wrap items-center gap-3 pb-12 sm:pb-16">
-          <Link to="/signup" className="flex items-center gap-2 px-6 py-3.5 rounded-xl text-sm font-bold text-white bg-[#0099CC] hover:bg-[#007AA8] transition-all duration-200 shadow-[0_10px_28px_rgba(0,153,204,0.38)] hover:-translate-y-0.5 active:translate-y-0">
+          <Link to="/login" className="flex items-center gap-2 px-6 py-3.5 rounded-xl text-sm font-bold text-white bg-[#0099CC] hover:bg-[#007AA8] transition-all duration-200 shadow-[0_10px_28px_rgba(0,153,204,0.38)] hover:-translate-y-0.5 active:translate-y-0">
             <Icon name="play" size={14} className="text-white" strokeWidth={2.4} />
             무료로 시작하기
           </Link>
@@ -388,7 +388,7 @@ function FeatureShowcase() {
                   <p className="text-[13px] text-[#5A6F8A] leading-relaxed">{f.desc}</p>
                 </div>
                 <div className="self-center px-4 py-3 rounded-xl bg-white ring-1 ring-[rgba(0,100,180,0.12)]">
-                  <p className="text-[12px] font-semibold text-[#0D1B2A]">{f.highlight}</p>
+                  <p className="text-[12px] font-semibold text-[#0D1B2A] text-center">{f.highlight}</p>
                 </div>
               </div>
             </div>
@@ -503,10 +503,13 @@ function CTA() {
             </div>
 
             <div className="flex flex-col sm:flex-row gap-3 shrink-0">
-              <button className="flex items-center justify-center gap-2 px-6 py-3.5 rounded-xl text-sm font-bold text-white bg-[#0099CC] hover:bg-[#007AA8] transition-all duration-200 shadow-[0_8px_28px_rgba(0,153,204,0.45)] hover:-translate-y-0.5 whitespace-nowrap">
+              <Link
+                to="/login"
+                className="flex items-center justify-center gap-2 px-6 py-3.5 rounded-xl text-sm font-bold text-white bg-[#0099CC] hover:bg-[#007AA8] transition-all duration-200 shadow-[0_8px_28px_rgba(0,153,204,0.45)] hover:-translate-y-0.5 whitespace-nowrap"
+              >
                 <Icon name="play" size={14} className="text-white" strokeWidth={2.4} />
-                프로젝트 생성하기
-              </button>
+                무료로 시작하기
+              </Link>
             </div>
           </div>
         </div>

@@ -119,6 +119,7 @@ const SUMMARY_DATA = {
 const SPEEDS = [1.0, 1.25, 1.5, 2.0, 0.75];
 const MAX_TS = 4532;
 const PAGE_SIZE = 10;
+const PROJECTLIST_CHEVRON_COLOR = "#A0AFBF";
 
 /* ─── 유틸 ───────────────────────────────────────────── */
 function fmtTime(s) {
@@ -167,6 +168,8 @@ function LucideIcon({ name, size = 14, color = "currentColor", strokeWidth = 2, 
       return <svg {...common}><rect x="8" y="2" width="8" height="4" rx="1" /><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" /><path d="M9 11h.01" /><path d="M13 11h3" /><path d="M9 16h.01" /><path d="M13 16h3" /></svg>;
     case "rows-3":
       return <svg {...common}><path d="M4 7h16" /><path d="M4 12h16" /><path d="M4 17h16" /></svg>;
+    case "chevron-down":
+      return <svg {...common}><path d="m6 9 6 6 6-6" /></svg>;
     case "star":
       return <svg {...common}><path d="m12 3.5 2.8 5.67 6.25.9-4.52 4.41 1.07 6.22L12 17.76 6.4 20.7l1.07-6.22L2.95 10.07l6.25-.9L12 3.5Z" /></svg>;
     case "star-filled":
@@ -219,6 +222,7 @@ function Spinner({ size = 14, color = "#fff" }) {
 
 /* ─── 의제 달성률 카드 ──────────────────────────────── */
 function AgendaCompletionSection({ actions, onToggleAction }) {
+  const [isCollapsed, setIsCollapsed] = useState(false);
   const total = actions.length;
   const done = actions.filter((action) => action.status === "done").length;
   const pct = total === 0 ? 0 : Math.round((done / total) * 100);
@@ -245,20 +249,38 @@ function AgendaCompletionSection({ actions, onToggleAction }) {
             이번 회의, 할 일을 다 끝냈을까?
           </p>
         </div>
-        <span
-          className="text-xs font-bold px-3 py-1.5 rounded-full flex items-center gap-1.5"
-          style={{
-            color: achieved ? "#10B981" : "#0099CC",
-            background: achieved ? "rgba(16,185,129,0.12)" : "rgba(0,153,204,0.1)",
-          }}
-        >
-          {achieved && <LucideIcon name="check-circle" size={12} color="#10B981" />}
-          {achieved ? "목표 달성" : `${remaining}건 남음`}
-        </span>
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => setIsCollapsed((prev) => !prev)}
+            className="text-xs font-bold px-3 py-1.5 rounded-full flex items-center gap-1.5 cursor-pointer"
+            style={{
+              color: achieved ? "#10B981" : "#0099CC",
+              background: achieved ? "rgba(16,185,129,0.12)" : "rgba(0,153,204,0.1)",
+            }}
+          >
+            {achieved && <LucideIcon name="check-circle" size={12} color="#10B981" />}
+            {achieved ? "목표 달성" : `${remaining}건 남음`}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setIsCollapsed((prev) => !prev)}
+            className="h-7 px-1 flex items-center justify-center cursor-pointer"
+            style={{
+              color: achieved ? "#10B981" : "#0099CC",
+              background: "transparent",
+            }}
+            aria-label="의제 진행 접기/펼치기"
+          >
+            <LucideIcon name="chevron-down" size={12} color={PROJECTLIST_CHEVRON_COLOR} strokeWidth={2} />
+          </button>
+        </div>
       </div>
 
       {/* "다" 글자 위치에 맞춘 들여쓰기. 도넛↔구분선, 구분선↔액션리스트
           간격을 동일하게 SECTION_GAP(md:gap-10)으로 통일. */}
+      {!isCollapsed && (
       <div className="relative flex flex-col md:flex-row md:items-center gap-5 md:gap-30 md:ml-24">
         {/* 좌측 — 도넛 게이지 */}
         <div className="flex items-center gap-5 md:gap-0 md:flex-col md:items-center flex-shrink-0">
@@ -354,6 +376,7 @@ function AgendaCompletionSection({ actions, onToggleAction }) {
           </div>
         </div>
       </div>
+      )}
     </section>
   );
 }
@@ -448,16 +471,12 @@ function CustomDropdown({
         }}
       >
         <span className="truncate">{value || placeholder}</span>
-        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" className="flex-shrink-0">
-          <path
-            d="M3 5.5L7 9.5L11 5.5"
-            stroke="currentColor"
-            strokeWidth="1.6"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            style={{ transform: open ? "rotate(180deg)" : "rotate(0deg)", transformOrigin: "50% 50%", transition: "transform 0.2s ease" }}
-          />
-        </svg>
+        <span
+          className="flex-shrink-0"
+          style={{ transform: open ? "rotate(180deg)" : "rotate(0deg)", transformOrigin: "50% 50%", transition: "transform 0.2s ease" }}
+        >
+          <LucideIcon name="chevron-down" size={14} color={PROJECTLIST_CHEVRON_COLOR} strokeWidth={2} />
+        </span>
       </button>
 
       {open && !disabled && (
@@ -1100,7 +1119,10 @@ function RegenModal({ open, onClose, onRegen }) {
             취소
           </button>
           <button
-            onClick={() => { onRegen(); onClose(); }}
+            onClick={() => {
+              onRegen({ focus, prompt, len });
+              onClose();
+            }}
             className="text-sm font-bold px-5 py-2 rounded-xl text-white hover:-translate-y-0.5 transition-all"
             style={{ background: "linear-gradient(135deg,#7C3AED,#0099CC)" }}
           >
@@ -1195,10 +1217,9 @@ function TxCard({ item, isActive, isBookmarked, onSeek, onToggleBm, collapsed, o
           onClick={e => { e.stopPropagation(); onToggleCollapse(item.idx); }}
           className={`flex-shrink-0 w-6 h-6 flex items-center justify-center rounded-md text-slate-300 hover:text-slate-500 hover:bg-slate-100 transition-all opacity-0 group-hover:opacity-100 ${!collapsed ? "opacity-100" : ""}`}
         >
-          <svg width="12" height="12" viewBox="0 0 12 12" fill="none"
-            style={{ transform: collapsed ? "rotate(-90deg)" : "rotate(0deg)", transition: "transform 0.2s" }}>
-            <path d="M2 4l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
+          <span style={{ transform: collapsed ? "rotate(-90deg)" : "rotate(0deg)", transition: "transform 0.2s" }}>
+            <LucideIcon name="chevron-down" size={12} color={PROJECTLIST_CHEVRON_COLOR} strokeWidth={2} />
+          </span>
         </button>
       </div>
 
@@ -1307,13 +1328,114 @@ function Divider({ label }) {
 }
 
 /* ─── AI Summary Panel ───────────────────────────────── */
-function SummaryPanel({ onOpenRegen, onOpenIssue, transcriptVisible, onToggleTranscript, isMobile, summaryCollapsed, onToggleSummary, actions, onToggleAction }) {
-  const [decisions, setDecisions] = useState(SUMMARY_DATA.decisions);
+function SummaryPanel({ summaryData, onOpenRegen, onSaveSummaryEdit, onOpenIssue, transcriptVisible, onToggleTranscript, isMobile, summaryCollapsed, onToggleSummary, actions, onToggleAction }) {
+  const [decisions, setDecisions] = useState(summaryData.decisions);
+  const [isMoreOpen, setIsMoreOpen] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [keywordsText, setKeywordsText] = useState("");
+  const [summaryText, setSummaryText] = useState("");
+  const [decisionsText, setDecisionsText] = useState("");
+  const [actionsText, setActionsText] = useState("");
+  const [issuesText, setIssuesText] = useState("");
+  const [nextAgendaText, setNextAgendaText] = useState("");
+
+  const resetEditDraft = useCallback(() => {
+    setKeywordsText((summaryData.keywords || []).map((k) => k.text).join(", "));
+    setSummaryText(summaryData.summary || "");
+    setDecisionsText((summaryData.decisions || []).join("\n"));
+    setActionsText(
+      (summaryData.actions || [])
+        .map((a) => `${a.text} | ${a.assignee || ""} | ${a.due || "미정"} | ${a.status || "todo"}`)
+        .join("\n")
+    );
+    setIssuesText(
+      (summaryData.issues || [])
+        .map((i) => `${i.level}: ${i.text}`)
+        .join("\n")
+    );
+    setNextAgendaText((summaryData.next_agenda || []).join("\n"));
+  }, [summaryData]);
+
+  const handleInlineSave = useCallback(() => {
+    const keywordItems = keywordsText
+      .split(/,|\n/)
+      .map((v) => v.trim())
+      .filter(Boolean)
+      .map((text) => ({ text, type: "cyan" }));
+
+    const nextDecisions = decisionsText
+      .split("\n")
+      .map((v) => v.trim())
+      .filter(Boolean);
+
+    const nextActions = actionsText
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => {
+        const [textPart, assigneePart, duePart, statusPart] = line.split("|").map((v) => v.trim());
+        const normalizedStatus =
+          statusPart === "done" || statusPart === "완료" ? "done" : "todo";
+
+        return {
+          text: textPart || "",
+          assignee: assigneePart || "",
+          due: !duePart || duePart === "미정" ? null : duePart,
+          status: normalizedStatus,
+        };
+      })
+      .filter((a) => a.text);
+
+    const nextIssues = issuesText
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => {
+        const parts = line.split(":");
+        const first = (parts[0] || "").trim().toLowerCase();
+        const text = (parts.slice(1).join(":") || line).trim();
+        const level = first === "high" || first === "medium" || first === "low" ? first : "medium";
+        return { level, text };
+      })
+      .filter((i) => i.text);
+
+    const nextAgenda = nextAgendaText
+      .split("\n")
+      .map((v) => v.trim())
+      .filter(Boolean);
+
+    onSaveSummaryEdit?.({
+      ...summaryData,
+      keywords: keywordItems,
+      summary: summaryText,
+      decisions: nextDecisions,
+      actions: nextActions,
+      issues: nextIssues,
+      next_agenda: nextAgenda,
+    });
+    setIsEditing(false);
+  }, [actionsText, decisionsText, issuesText, keywordsText, nextAgendaText, onSaveSummaryEdit, summaryData, summaryText]);
+
+  const handleInlineCancel = useCallback(() => {
+    resetEditDraft();
+    setIsEditing(false);
+  }, [resetEditDraft]);
+
+  useEffect(() => {
+    setDecisions(summaryData.decisions);
+  }, [summaryData.decisions]);
+
+  useEffect(() => {
+    if (!isEditing) {
+      resetEditDraft();
+    }
+  }, [isEditing, resetEditDraft]);
+
   return (
     <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden h-full flex flex-col">
       <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 flex-shrink-0">
         <span className="text-sm font-bold text-slate-900">AI 요약</span>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 relative">
           {!isMobile && (
             <button
               onClick={onToggleTranscript}
@@ -1332,120 +1454,418 @@ function SummaryPanel({ onOpenRegen, onOpenIssue, transcriptVisible, onToggleTra
               <span className="hidden sm:inline">{transcriptVisible ? "스크립트 접기" : "스크립트 펼치기"}</span>
             </button>
           )}
+          <div className="relative" data-more-menu-root>
+            <button
+              onClick={() => setIsMoreOpen(v => !v)}
+              className="w-8 h-8 flex items-center justify-center rounded-lg text-[#5A6F8A] hover:text-[#0D1B2A] hover:bg-[#F8FAFF] transition"
+              aria-label="요약 메뉴"
+            >
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+              <circle cx="7" cy="2.75" r="1.1" fill="currentColor" />
+              <circle cx="7" cy="7" r="1.1" fill="currentColor" />
+              <circle cx="7" cy="11.25" r="1.1" fill="currentColor" />
+              </svg>
+            </button>
+            {isMoreOpen && (
+              <div className="absolute right-full mr-1 top-0 z-40 w-28 overflow-hidden rounded-xl border border-[rgba(0,100,180,0.14)] bg-white shadow-[0_10px_24px_rgba(0,100,180,0.14)]">
+                <button
+                  onClick={() => {
+                    setIsMoreOpen(false);
+                    onOpenRegen?.();
+                  }}
+                  className="w-full px-3.5 py-2.5 text-left text-sm text-[#0D1B2A] hover:bg-[#EEF3FF]"
+                >
+                  다시 생성
+                </button>
+                <button
+                  onClick={() => {
+                    setIsMoreOpen(false);
+                    resetEditDraft();
+                    setIsEditing(true);
+                  }}
+                  className="w-full px-3.5 py-2.5 text-left text-sm text-[#0D1B2A] hover:bg-[#EEF3FF]"
+                >
+                  수정
+                </button>
+              </div>
+            )}
+          </div>
           {isMobile && (
             <button
               onClick={onToggleSummary}
               className="h-8 w-8 rounded-lg border border-slate-200 bg-slate-50 text-slate-500 hover:bg-slate-100 transition-colors flex items-center justify-center"
             >
-              <svg
-                width="14" height="14" viewBox="0 0 14 14" fill="none"
-                style={{ transform: summaryCollapsed ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 0.2s ease" }}
-              >
-                <path d="M3 5.5L7 9.5L11 5.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
+              <span style={{ transform: summaryCollapsed ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 0.2s ease" }}>
+                <LucideIcon name="chevron-down" size={14} color={PROJECTLIST_CHEVRON_COLOR} strokeWidth={2} />
+              </span>
             </button>
           )}
-          <button
-            onClick={onOpenRegen}
-            className="text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-purple-50 text-purple-600 border border-purple-200 hover:bg-purple-100 transition-colors cursor-pointer"
-          >
-            다시 생성
-          </button>
         </div>
       </div>
 
       {(!isMobile || !summaryCollapsed) && (
         <div className="px-5 py-5 space-y-6 overflow-y-auto flex-1">
-          <div className="rounded-xl p-4 space-y-3 bg-blue-50 border border-blue-100">
-            <div>
-              <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-2">핵심 키워드</p>
-              <div className="flex flex-wrap gap-1.5">
-                {SUMMARY_DATA.keywords.map(k => (
-                  <span key={k.text} className={`text-xs font-semibold px-2.5 py-1 rounded-full ${KW_BADGE}`}>
-                    {k.text}
-                  </span>
-                ))}
-              </div>
-            </div>
-            <div className="border-t border-blue-100 pt-3">
-              <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-2">전체 요약</p>
-              <p className="text-sm text-slate-800 leading-relaxed">{SUMMARY_DATA.summary}</p>
-            </div>
-          </div>
-
-          <Divider label="협업" />
-
-          <div>
-            <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-3">주요 결정</p>
-            <div className="space-y-1">
-              {decisions.map((d, i) => (
-                <EditableDecision
-                  key={i}
-                  text={d}
-                  onSave={v => setDecisions(prev => prev.map((x, j) => (j === i ? v : x)))}
-                />
-              ))}
-            </div>
-          </div>
-
-          <div>
-            <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-3">Action Items</p>
-            <div className="space-y-2">
-              {actions.map((a, i) => (
-                <ActionItem
-                  key={i}
-                  item={a}
-                  checked={a.status === "done"}
-                  onToggle={() => onToggleAction(i)}
-                  onIssue={onOpenIssue}
-                />
-              ))}
-            </div>
-          </div>
-
-          <Divider label="인사이트" />
-
-          <div>
-            <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-3">이슈 &amp; 리스크</p>
-            <div className="space-y-2">
-              {SUMMARY_DATA.issues.map((iss, i) => {
-                const c = ISSUE_CFG[iss.level];
-                return (
-                  <div key={i} className={`flex items-start gap-3 p-3 rounded-xl border ${c.bg} ${c.border}`}>
-                    <span className="flex-shrink-0 mt-0.5">
-                      <LucideIcon
-                        name={c.icon}
-                        size={16}
-                        color={iss.level === "high" ? "#EF4444" : iss.level === "medium" ? "#F59E0B" : "#64748B"}
-                      />
-                    </span>
-                    <p className="flex-1 text-sm text-slate-800 leading-relaxed">{iss.text}</p>
-                    <span className={`flex-shrink-0 text-xs font-bold px-2 py-0.5 rounded ${c.badge}`}>{c.label}</span>
+          {isEditing ? (
+            <>
+              <div className="rounded-xl p-4 space-y-3 bg-cyan-50/60 border border-cyan-100">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <p className="text-xs font-semibold text-cyan-700 uppercase tracking-widest">인라인 편집 모드</p>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={handleInlineCancel}
+                      className="text-xs font-semibold px-2.5 py-1.5 rounded-lg text-slate-500 border border-slate-200 bg-white hover:bg-slate-100"
+                    >
+                      취소
+                    </button>
+                    <button
+                      onClick={handleInlineSave}
+                      className="text-xs font-bold px-3 py-1.5 rounded-lg text-white"
+                      style={{ background: "linear-gradient(135deg,#0099CC,#7C3AED)" }}
+                    >
+                      저장
+                    </button>
                   </div>
-                );
-              })}
-            </div>
-          </div>
-
-          <div>
-            <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-3">다음 회의 안건</p>
-            <div className="rounded-xl p-3 space-y-2 bg-cyan-50/60 border border-cyan-100">
-              {SUMMARY_DATA.next_agenda.map((item, i) => (
-                <div key={i} className="flex items-start gap-2.5">
-                  <span
-                    className="flex-shrink-0 text-xs font-bold w-5 h-5 rounded-full flex items-center justify-center text-white mt-0.5 bg-cyan-500"
-                    style={{ fontSize: 10 }}
-                  >
-                    {i + 1}
-                  </span>
-                  <p className="text-sm text-slate-800 leading-relaxed">{item}</p>
                 </div>
-              ))}
-            </div>
-          </div>
+                <p className="text-xs text-slate-500 leading-relaxed">
+                  아래 항목을 직접 수정한 뒤 저장하면 AI 요약에 바로 반영됩니다.
+                </p>
+              </div>
+              <div>
+                <p className="text-xs font-semibold text-slate-400 mb-1.5">핵심 키워드 (쉼표로 구분)</p>
+                <input
+                  value={keywordsText}
+                  onChange={(e) => setKeywordsText(e.target.value)}
+                  className="w-full text-sm rounded-xl px-4 py-2.5 outline-none border border-slate-200 focus:border-cyan-400 bg-slate-50 transition-colors"
+                  style={{ fontFamily: "inherit" }}
+                />
+              </div>
+
+              <div>
+                <p className="text-xs font-semibold text-slate-400 mb-1.5">전체 요약</p>
+                <textarea
+                  rows={4}
+                  value={summaryText}
+                  onChange={(e) => setSummaryText(e.target.value)}
+                  className="w-full text-sm rounded-xl px-4 py-3 outline-none resize-none border border-slate-200 focus:border-cyan-400 bg-slate-50 transition-colors"
+                  style={{ fontFamily: "inherit" }}
+                />
+              </div>
+
+              <div>
+                <p className="text-xs font-semibold text-slate-400 mb-1.5">주요 결정 (줄바꿈 구분)</p>
+                <textarea
+                  rows={4}
+                  value={decisionsText}
+                  onChange={(e) => setDecisionsText(e.target.value)}
+                  className="w-full text-sm rounded-xl px-4 py-3 outline-none resize-none border border-slate-200 focus:border-cyan-400 bg-slate-50 transition-colors"
+                  style={{ fontFamily: "inherit" }}
+                />
+              </div>
+
+              <div>
+                <p className="text-xs font-semibold text-slate-400 mb-1.5">Action Items (한 줄당: 내용 | 담당자 | 마감일 | 상태(todo/done))</p>
+                <textarea
+                  rows={5}
+                  value={actionsText}
+                  onChange={(e) => setActionsText(e.target.value)}
+                  className="w-full text-sm rounded-xl px-4 py-3 outline-none resize-none border border-slate-200 focus:border-cyan-400 bg-slate-50 transition-colors"
+                  style={{ fontFamily: "inherit" }}
+                />
+              </div>
+
+              <div>
+                <p className="text-xs font-semibold text-slate-400 mb-1.5">이슈/리스크 (한 줄당: high|medium|low: 내용)</p>
+                <textarea
+                  rows={4}
+                  value={issuesText}
+                  onChange={(e) => setIssuesText(e.target.value)}
+                  className="w-full text-sm rounded-xl px-4 py-3 outline-none resize-none border border-slate-200 focus:border-cyan-400 bg-slate-50 transition-colors"
+                  style={{ fontFamily: "inherit" }}
+                />
+              </div>
+
+              <div>
+                <p className="text-xs font-semibold text-slate-400 mb-1.5">다음 회의 안건 (줄바꿈 구분)</p>
+                <textarea
+                  rows={4}
+                  value={nextAgendaText}
+                  onChange={(e) => setNextAgendaText(e.target.value)}
+                  className="w-full text-sm rounded-xl px-4 py-3 outline-none resize-none border border-slate-200 focus:border-cyan-400 bg-slate-50 transition-colors"
+                  style={{ fontFamily: "inherit" }}
+                />
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="rounded-xl p-4 space-y-3 bg-blue-50 border border-blue-100">
+                <div>
+                  <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-2">핵심 키워드</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {summaryData.keywords.map(k => (
+                      <span key={k.text} className={`text-xs font-semibold px-2.5 py-1 rounded-full ${KW_BADGE}`}>
+                        {k.text}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+                <div className="border-t border-blue-100 pt-3">
+                  <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-2">전체 요약</p>
+                  <p className="text-sm text-slate-800 leading-relaxed whitespace-pre-line">{summaryData.summary}</p>
+                </div>
+              </div>
+
+              <Divider label="협업" />
+
+              <div>
+                <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-3">주요 결정</p>
+                <div className="space-y-1">
+                  {decisions.map((d, i) => (
+                    <EditableDecision
+                      key={i}
+                      text={d}
+                      onSave={v => setDecisions(prev => prev.map((x, j) => (j === i ? v : x)))}
+                    />
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-3">Action Items</p>
+                <div className="space-y-2">
+                  {actions.map((a, i) => (
+                    <ActionItem
+                      key={i}
+                      item={a}
+                      checked={a.status === "done"}
+                      onToggle={() => onToggleAction(i)}
+                      onIssue={onOpenIssue}
+                    />
+                  ))}
+                </div>
+              </div>
+
+              <Divider label="인사이트" />
+
+              <div>
+                <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-3">이슈 &amp; 리스크</p>
+                <div className="space-y-2">
+                  {summaryData.issues.map((iss, i) => {
+                    const c = ISSUE_CFG[iss.level];
+                    return (
+                      <div key={i} className={`flex items-start gap-3 p-3 rounded-xl border ${c.bg} ${c.border}`}>
+                        <span className="flex-shrink-0 mt-0.5">
+                          <LucideIcon
+                            name={c.icon}
+                            size={16}
+                            color={iss.level === "high" ? "#EF4444" : iss.level === "medium" ? "#F59E0B" : "#64748B"}
+                          />
+                        </span>
+                        <p className="flex-1 text-sm text-slate-800 leading-relaxed">{iss.text}</p>
+                        <span className={`flex-shrink-0 text-xs font-bold px-2 py-0.5 rounded ${c.badge}`}>{c.label}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div>
+                <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-3">다음 회의 안건</p>
+                <div className="rounded-xl p-3 space-y-2 bg-cyan-50/60 border border-cyan-100">
+                  {summaryData.next_agenda.map((item, i) => (
+                    <div key={i} className="flex items-start gap-2.5">
+                      <span
+                        className="flex-shrink-0 text-xs font-bold w-5 h-5 rounded-full flex items-center justify-center text-white mt-0.5 bg-cyan-500"
+                        style={{ fontSize: 10 }}
+                      >
+                        {i + 1}
+                      </span>
+                      <p className="text-sm text-slate-800 leading-relaxed">{item}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </>
+          )}
         </div>
       )}
     </div>
+  );
+}
+
+function SummaryEditModal({ open, onClose, summaryData, onSave }) {
+  const [keywordsText, setKeywordsText] = useState("");
+  const [summaryText, setSummaryText] = useState("");
+  const [decisionsText, setDecisionsText] = useState("");
+  const [actionsText, setActionsText] = useState("");
+  const [issuesText, setIssuesText] = useState("");
+  const [nextAgendaText, setNextAgendaText] = useState("");
+
+  useEffect(() => {
+    if (!open) return;
+
+    setKeywordsText((summaryData.keywords || []).map((k) => k.text).join(", "));
+    setSummaryText(summaryData.summary || "");
+    setDecisionsText((summaryData.decisions || []).join("\n"));
+    setActionsText(
+      (summaryData.actions || [])
+        .map((a) => `${a.text} | ${a.assignee || ""} | ${a.due || "미정"} | ${a.status || "todo"}`)
+        .join("\n")
+    );
+    setIssuesText(
+      (summaryData.issues || [])
+        .map((i) => `${i.level}: ${i.text}`)
+        .join("\n")
+    );
+    setNextAgendaText((summaryData.next_agenda || []).join("\n"));
+  }, [open, summaryData]);
+
+  const handleSave = () => {
+    const keywordItems = keywordsText
+      .split(/,|\n/)
+      .map((v) => v.trim())
+      .filter(Boolean)
+      .map((text) => ({ text, type: "cyan" }));
+
+    const decisions = decisionsText
+      .split("\n")
+      .map((v) => v.trim())
+      .filter(Boolean);
+
+    const actions = actionsText
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => {
+        const [textPart, assigneePart, duePart, statusPart] = line.split("|").map((v) => v.trim());
+        const normalizedStatus =
+          statusPart === "done" || statusPart === "완료" ? "done" : "todo";
+
+        return {
+          text: textPart || "",
+          assignee: assigneePart || "",
+          due: !duePart || duePart === "미정" ? null : duePart,
+          status: normalizedStatus,
+        };
+      })
+      .filter((a) => a.text);
+
+    const issues = issuesText
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => {
+        const parts = line.split(":");
+        const first = (parts[0] || "").trim().toLowerCase();
+        const text = (parts.slice(1).join(":") || line).trim();
+        const level = first === "high" || first === "medium" || first === "low" ? first : "medium";
+        return { level, text };
+      })
+      .filter((i) => i.text);
+
+    const next_agenda = nextAgendaText
+      .split("\n")
+      .map((v) => v.trim())
+      .filter(Boolean);
+
+    onSave({
+      ...summaryData,
+      keywords: keywordItems,
+      summary: summaryText,
+      decisions,
+      actions,
+      issues,
+      next_agenda,
+    });
+  };
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="AI 요약 전체 수정"
+      maxWidth={680}
+      footer={
+        <>
+          <button onClick={onClose} className="text-sm font-semibold px-4 py-2 rounded-xl text-slate-500 hover:bg-slate-100">
+            취소
+          </button>
+          <button
+            onClick={handleSave}
+            className="text-sm font-bold px-5 py-2 rounded-xl text-white hover:-translate-y-0.5 transition-all"
+            style={{ background: "linear-gradient(135deg,#0099CC,#7C3AED)" }}
+          >
+            저장
+          </button>
+        </>
+      }
+    >
+      <div className="space-y-4">
+        <div>
+          <p className="text-xs font-semibold text-slate-400 mb-1.5">핵심 키워드 (쉼표로 구분)</p>
+          <input
+            value={keywordsText}
+            onChange={(e) => setKeywordsText(e.target.value)}
+            className="w-full text-sm rounded-xl px-4 py-2.5 outline-none border border-slate-200 focus:border-cyan-400 bg-slate-50 transition-colors"
+            style={{ fontFamily: "inherit" }}
+          />
+        </div>
+
+        <div>
+          <p className="text-xs font-semibold text-slate-400 mb-1.5">전체 요약</p>
+          <textarea
+            rows={4}
+            value={summaryText}
+            onChange={(e) => setSummaryText(e.target.value)}
+            className="w-full text-sm rounded-xl px-4 py-3 outline-none resize-none border border-slate-200 focus:border-cyan-400 bg-slate-50 transition-colors"
+            style={{ fontFamily: "inherit" }}
+          />
+        </div>
+
+        <div>
+          <p className="text-xs font-semibold text-slate-400 mb-1.5">주요 결정 (줄바꿈 구분)</p>
+          <textarea
+            rows={4}
+            value={decisionsText}
+            onChange={(e) => setDecisionsText(e.target.value)}
+            className="w-full text-sm rounded-xl px-4 py-3 outline-none resize-none border border-slate-200 focus:border-cyan-400 bg-slate-50 transition-colors"
+            style={{ fontFamily: "inherit" }}
+          />
+        </div>
+
+        <div>
+          <p className="text-xs font-semibold text-slate-400 mb-1.5">Action Items (한 줄당: 내용 | 담당자 | 마감일 | 상태(todo/done))</p>
+          <textarea
+            rows={5}
+            value={actionsText}
+            onChange={(e) => setActionsText(e.target.value)}
+            className="w-full text-sm rounded-xl px-4 py-3 outline-none resize-none border border-slate-200 focus:border-cyan-400 bg-slate-50 transition-colors"
+            style={{ fontFamily: "inherit" }}
+          />
+        </div>
+
+        <div>
+          <p className="text-xs font-semibold text-slate-400 mb-1.5">이슈/리스크 (한 줄당: high|medium|low: 내용)</p>
+          <textarea
+            rows={4}
+            value={issuesText}
+            onChange={(e) => setIssuesText(e.target.value)}
+            className="w-full text-sm rounded-xl px-4 py-3 outline-none resize-none border border-slate-200 focus:border-cyan-400 bg-slate-50 transition-colors"
+            style={{ fontFamily: "inherit" }}
+          />
+        </div>
+
+        <div>
+          <p className="text-xs font-semibold text-slate-400 mb-1.5">다음 회의 안건 (줄바꿈 구분)</p>
+          <textarea
+            rows={4}
+            value={nextAgendaText}
+            onChange={(e) => setNextAgendaText(e.target.value)}
+            className="w-full text-sm rounded-xl px-4 py-3 outline-none resize-none border border-slate-200 focus:border-cyan-400 bg-slate-50 transition-colors"
+            style={{ fontFamily: "inherit" }}
+          />
+        </div>
+      </div>
+    </Modal>
   );
 }
 
@@ -1608,6 +2028,14 @@ export default function TikiSprint12() {
   const [summaryActions, setSummaryActions] = useState(() =>
     SUMMARY_DATA.actions.map((action) => ({ ...action }))
   );
+  const [summaryData, setSummaryData] = useState(() => ({
+    ...SUMMARY_DATA,
+    keywords: SUMMARY_DATA.keywords.map((k) => ({ ...k })),
+    decisions: [...SUMMARY_DATA.decisions],
+    actions: SUMMARY_DATA.actions.map((a) => ({ ...a })),
+    issues: SUMMARY_DATA.issues.map((i) => ({ ...i })),
+    next_agenda: [...SUMMARY_DATA.next_agenda],
+  }));
 
   const [modal, setModal] = useState(null);
   const [detailSvc, setDetailSvc] = useState(null);
@@ -1768,6 +2196,17 @@ export default function TikiSprint12() {
         };
       })
     );
+
+    setSummaryData((prev) => ({
+      ...prev,
+      actions: prev.actions.map((action, i) => {
+        if (i !== index) return action;
+        return {
+          ...action,
+          status: action.status === "done" ? "todo" : "done",
+        };
+      }),
+    }));
   }, []);
 
   return (
@@ -1851,17 +2290,23 @@ export default function TikiSprint12() {
           <div
             className="flex-shrink-0 transition-all duration-300"
             style={{
-              width: isMobile ? "100%" : transcriptVisible ? "clamp(360px, 38%, 540px)" : "100%",
+              width: isMobile ? "100%" : transcriptVisible ? "clamp(420px, 60%, 820px)" : "100%",
               transition: "width 0.35s cubic-bezier(0.4,0,0.2,1)",
             }}
           >
             <SummaryPanel
+              summaryData={summaryData}
               isMobile={isMobile}
               summaryCollapsed={summaryCollapsed}
               onToggleSummary={() => setSummaryCollapsed(prev => !prev)}
               transcriptVisible={transcriptVisible}
               onToggleTranscript={() => setTranscriptVisible(v => !v)}
               onOpenRegen={() => setModal("regen")}
+              onSaveSummaryEdit={(nextData) => {
+                setSummaryData(nextData);
+                setSummaryActions(nextData.actions.map((a) => ({ ...a })));
+                showToast("AI 요약 내용이 수정되었습니다.", "#0099CC");
+              }}
               onOpenIssue={() => setIssueOpen(true)}
               actions={summaryActions}
               onToggleAction={handleToggleAction}
@@ -1894,10 +2339,9 @@ export default function TikiSprint12() {
                   onClick={toggleAllCollapse}
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors bg-white text-slate-400 border-slate-200 hover:bg-blue-50 cursor-pointer"
                 >
-                  <svg width="13" height="13" viewBox="0 0 13 13" fill="none"
-                    style={{ transform: allCollapsed ? "rotate(-90deg)" : "rotate(0deg)", transition: "transform 0.2s" }}>
-                    <path d="M1 3.5l5.5 5.5L12 3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
+                  <span style={{ transform: allCollapsed ? "rotate(-90deg)" : "rotate(0deg)", transition: "transform 0.2s" }}>
+                    <LucideIcon name="chevron-down" size={13} color={PROJECTLIST_CHEVRON_COLOR} strokeWidth={2} />
+                  </span>
                   <span className="hidden sm:inline text-xs">{allCollapsed ? "전체 펼치기" : "전체 접기"}</span>
                 </button>
               </div>
@@ -1927,9 +2371,10 @@ export default function TikiSprint12() {
               {remaining > 0 && (
                 <button
                   onClick={() => setShownCount(c => c + PAGE_SIZE)}
-                  className="w-full py-3 rounded-xl text-sm font-semibold text-slate-400 hover:text-slate-700 bg-white border border-slate-200 hover:-translate-y-0.5 hover:shadow-sm transition-all cursor-pointer"
+                  className="w-full py-3 rounded-xl text-sm font-semibold text-slate-400 hover:text-slate-700 bg-white border border-slate-200 hover:-translate-y-0.5 hover:shadow-sm transition-all cursor-pointer flex items-center justify-center gap-1.5"
                 >
-                  대화 {remaining}개 더 보기 ↓
+                  <span>대화 {remaining}개 더 보기</span>
+                  <LucideIcon name="chevron-down" size={13} color={PROJECTLIST_CHEVRON_COLOR} strokeWidth={2} />
                 </button>
               )}
             </div>
@@ -1986,7 +2431,136 @@ export default function TikiSprint12() {
       <RegenModal
         open={modal === "regen"}
         onClose={() => setModal(null)}
-        onRegen={() => showToast("AI가 요약을 다시 생성하고 있습니다…", "#7C3AED")}
+        onRegen={({ focus, prompt, len }) => {
+          setSummaryData((prev) => {
+            const selectedFocus = (focus || "").trim();
+            const userPrompt = (prompt || "").trim();
+            const selectedLen = len || "보통";
+
+            const baseSummary = (prev.summary || "").trim();
+            const splitSentences = (text) =>
+              text
+                .split(/(?<=[.!?])\s+/)
+                .map((s) => s.trim())
+                .filter(Boolean);
+
+            const focusSummaryMap = {
+              "기술적 제약 사항 위주":
+                "이번 회의는 STT 처리 속도와 화자 분리 정확도 이슈를 중심으로 정리했습니다. 성능 목표 달성을 위해 최적화 우선순위와 추가 데이터 확보 필요성을 확인했습니다.",
+              "Action Item과 담당자 위주":
+                "이번 회의의 핵심은 실행 항목 정렬이었습니다. 담당자와 마감일을 기준으로 우선순위를 재확인하고, 지연 가능 항목을 선제적으로 관리하기로 했습니다.",
+              "일정 및 마일스톤 위주":
+                "개발 완료, QA, 배포 마일스톤을 중심으로 일정을 재점검했습니다. 현재 변수는 정확도 개선 작업이며, 일정 리스크를 줄이기 위한 선행 점검이 필요합니다.",
+              "의사결정 사항 위주":
+                "회의에서는 STT 기술 스택, 폴링 정책, 배포 일정과 같은 핵심 의사결정을 확정했습니다. 후속 작업은 확정된 기준에 맞춰 실행 단계로 이어지도록 정리했습니다.",
+            };
+
+            const focusKeywordMap = {
+              "기술적 제약 사항 위주": ["성능 최적화", "정확도 개선", "기술 리스크"],
+              "Action Item과 담당자 위주": ["실행 계획", "담당자", "마감 관리"],
+              "일정 및 마일스톤 위주": ["마일스톤", "일정 관리", "배포 계획"],
+              "의사결정 사항 위주": ["핵심 결정", "정책 확정", "우선순위"],
+            };
+
+            const focusSentences = splitSentences(focusSummaryMap[selectedFocus] || "");
+            const baseSentences = splitSentences(baseSummary);
+            const todoActions = (prev.actions || []).filter((a) => a.status !== "done");
+            const doneActions = (prev.actions || []).filter((a) => a.status === "done");
+            const topDecision = (prev.decisions || [])[0] || "핵심 의사결정 기준을 확정했습니다.";
+            const topRisk = (prev.issues || [])[0]?.text || "핵심 리스크를 점검했습니다.";
+            const firstAction = todoActions[0]?.text || "후속 실행 항목을 우선순위로 정리했습니다.";
+            const secondAction = todoActions[1]?.text || doneActions[0]?.text || "담당자 기준으로 실행 계획을 조정했습니다.";
+
+            const seed = [
+              focusSentences[0],
+              focusSentences[1],
+              baseSentences[0],
+              baseSentences[1],
+            ].filter(Boolean);
+
+            const conciseLines = [
+              seed[0] || "회의 핵심 내용을 압축해 정리했습니다.",
+              userPrompt ? `${firstAction} 중심으로 우선순위를 다시 잡았습니다.` : `${topDecision}`,
+            ];
+
+            const normalLines = [
+              seed[0] || "회의 핵심 진행 상황을 정리했습니다.",
+              seed[1] || `${topDecision}`,
+              `${firstAction}`,
+            ];
+
+            const detailedLines = [
+              seed[0] || "회의 핵심 진행 상황을 정리했습니다.",
+              seed[1] || `${topDecision}`,
+              `주요 결정: ${topDecision}`,
+              `실행 계획: ${firstAction} / ${secondAction}`,
+              `리스크 점검: ${topRisk}`,
+            ];
+
+            const selectedLines =
+              selectedLen === "간결"
+                ? conciseLines.slice(0, 2)
+                : selectedLen === "상세"
+                ? detailedLines.slice(0, 5)
+                : normalLines.slice(0, 3);
+
+            let generated = selectedLines.join("\n").trim();
+            if (!generated) {
+              generated = "회의 핵심 내용을 다시 정리했습니다.";
+            }
+
+            const focusAnchorMap = {
+              "기술적 제약 사항 위주": "기술 이슈",
+              "Action Item과 담당자 위주": "액션 아이템",
+              "일정 및 마일스톤 위주": "일정/마일스톤",
+              "의사결정 사항 위주": "의사결정",
+            };
+            const focusKeywords = focusKeywordMap[selectedFocus] || [];
+            const focusAnchor = focusAnchorMap[selectedFocus] || "일반 요약";
+
+            const contentKeywordPairs = [
+              { pattern: /STT|음성|처리 속도/i, keyword: "STT" },
+              { pattern: /화자 분리|정확도/i, keyword: "화자 분리" },
+              { pattern: /Jira|티켓/i, keyword: "Jira" },
+              { pattern: /QA|테스트/i, keyword: "QA" },
+              { pattern: /배포|릴리스/i, keyword: "배포" },
+              { pattern: /일정|마일스톤/i, keyword: "일정" },
+              { pattern: /의사결정|결정/i, keyword: "의사결정" },
+              { pattern: /리스크|위험/i, keyword: "리스크" },
+              { pattern: /실행 계획|액션|Action/i, keyword: "실행 계획" },
+            ];
+
+            const contentKeywords = contentKeywordPairs
+              .filter((item) => item.pattern.test(generated))
+              .map((item) => item.keyword);
+
+            const promptKeywords = userPrompt
+              ? userPrompt
+                  .replace(/[.,!?]/g, " ")
+                  .split(/\s+/)
+                  .map((w) => w.trim())
+                  .filter((w) => w.length >= 2)
+                  .slice(0, 2)
+              : [];
+
+            const nextKeywords = [
+              { text: focusAnchor, type: "cyan" },
+              ...focusKeywords.map((text) => ({ text, type: "cyan" })),
+              ...contentKeywords.map((text) => ({ text, type: "cyan" })),
+              ...promptKeywords.map((text) => ({ text, type: "cyan" })),
+              ...(userPrompt ? [{ text: "요청 반영", type: "cyan" }] : []),
+            ]
+              .filter((item, idx, arr) => arr.findIndex((v) => v.text === item.text) === idx)
+              .slice(0, 6);
+
+            return {
+              ...prev,
+              summary: generated,
+              keywords: nextKeywords,
+            };
+          });
+          showToast("다시 생성한 설정이 AI 요약에 반영되었습니다.", "#7C3AED");
+        }}
       />
 
       {!isMobile && <Footer />}

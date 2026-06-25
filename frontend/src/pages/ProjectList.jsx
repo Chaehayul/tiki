@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import Header from '../components/Header';
 import Footer from '../components/Footer';
 import MobileTab from '../components/MobileTab';
+import { listProjects } from '../api/apiClient';
 
 const iconPaths = {
   plus: ['M12 5v14', 'M5 12h14'],
@@ -116,21 +117,18 @@ function VisibilityBadge({ visibility }) {
 function getTimeRank(value) {
   const order = { '1시간 전': 6, '2시간 전': 5, '5시간 전': 4, 어제: 3, '3일 전': 2, '이번 주': 1 };
   return order[value] || 0;
+function toRelativeTime(isoString) {
+  const diff = Date.now() - new Date(isoString).getTime();
+  const mins = Math.floor(diff / 60000);
+  const hours = Math.floor(mins / 60);
+  const days = Math.floor(hours / 24);
+  if (mins < 60) return `${mins}분 전`;
+  if (hours < 24) return `${hours}시간 전`;
+  if (days === 1) return '어제';
+  if (days < 7) return `${days}일 전`;
+  return `${Math.floor(days / 7)}주 전`;
 }
 
-function parseCurrentUser() {
-  try {
-    const raw = localStorage.getItem('tiki_user');
-    if (!raw) return { name: '', email: '' };
-    const user = JSON.parse(raw);
-    return {
-      name: typeof user?.name === 'string' ? user.name.trim() : '',
-      email: typeof user?.email === 'string' ? user.email.trim().toLowerCase() : '',
-    };
-  } catch {
-    return { name: '', email: '' };
-  }
-}
 
 function getUserActivityStorageKey(user) {
   const identity = user?.email || user?.name || 'anonymous';
@@ -377,10 +375,30 @@ export default function ProjectList() {
   const [isLoading, setIsLoading] = useState(true);
   const [currentUser] = useState(() => parseCurrentUser());
   const [activityByProjectId, setActivityByProjectId] = useState(() => loadUserProjectActivity(parseCurrentUser()));
+  const [projects, setProjects] = useState([]);
 
   useEffect(() => {
     setActivityByProjectId(loadUserProjectActivity(currentUser));
   }, [currentUser]);
+
+  useEffect(() => {
+    listProjects()
+      .then((data) =>
+        setProjects(
+          data.map((p) => ({
+            id: p.id,
+            name: p.name,
+            category: p.category,
+            description: p.description,
+            members: p.member_count,
+            teamLead: p.team_lead,
+            updatedAt: toRelativeTime(p.updated_at),
+            _updatedAt: p.updated_at,
+          }))
+        )
+      )
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     const handleResize = () => setIsMobile(window.innerWidth < 768);
@@ -397,18 +415,7 @@ export default function ProjectList() {
     return () => document.removeEventListener('mousedown', handleOutsideClick);
   }, []);
 
-  const participatedProjects = useMemo(() => {
-    const userName = currentUser.name.toLowerCase();
-    const userEmail = currentUser.email;
-    if (!userName && !userEmail) return PROJECTS;
-    return PROJECTS.filter((project) => {
-      const names = Array.isArray(project.participants) ? project.participants : [];
-      return names.some((p) => {
-        const n = String(p).trim().toLowerCase();
-        return n === userName || n === userEmail;
-      });
-    });
-  }, [currentUser]);
+  const participatedProjects = projects;
 
   const searchedProjects = useMemo(() => {
     const keyword = searchQuery.trim().toLowerCase();
@@ -423,7 +430,7 @@ export default function ProjectList() {
     const copied = [...searchedProjects];
     if (sortFilter === '이름순') return copied.sort((a, b) => a.name.localeCompare(b.name, 'ko'));
     if (sortFilter === '인원 많은순') return copied.sort((a, b) => b.members - a.members);
-    return copied.sort((a, b) => getTimeRank(b.updatedAt) - getTimeRank(a.updatedAt));
+    return copied.sort((a, b) => new Date(b._updatedAt) - new Date(a._updatedAt));
   }, [searchedProjects, sortFilter]);
 
   const recentProjects = useMemo(() => {

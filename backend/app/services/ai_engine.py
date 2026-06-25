@@ -829,6 +829,65 @@ class AIEngine:
             analysis=analysis,
         )
 
+    def process_audio_parallel(
+        self,
+        file_path: str,
+        n_workers: int = 2,
+        rag_context: Any | None = None,
+    ) -> AIProcessingResult:
+        """Parallel variant of process_audio for long multi-chunk recordings.
+
+        Uses per-thread Whisper model instances to transcribe audio chunks
+        concurrently, then runs masking, LLM analysis, and evidence building
+        the same way as the sequential path.
+        """
+        parallel_transcribe = getattr(self.stt_service, "transcribe_with_segments_parallel", None)
+        if not callable(parallel_transcribe):
+            return self.process_audio(file_path, rag_context=rag_context)
+
+        transcript, raw_segments = parallel_transcribe(file_path, n_workers=n_workers)
+
+        masked_transcript = mask_personal_information(transcript)
+        preprocessing = None
+        get_last_preprocessing = getattr(self.stt_service, "get_last_preprocessing", None)
+        if callable(get_last_preprocessing):
+            preprocessing = get_last_preprocessing()
+        analysis_context = _augment_context_with_audio_quality(rag_context, preprocessing)
+        segments = [
+            {
+                "index": segment.get("index", index),
+                "speaker": segment.get("speaker"),
+                "start_seconds": segment.get("start_seconds"),
+                "end_seconds": segment.get("end_seconds"),
+                "duration_seconds": segment.get("duration_seconds"),
+                "confidence": segment.get("confidence"),
+                "text": segment.get("text", ""),
+                "masked_text": mask_personal_information(segment.get("text", "")),
+                "source": "audio_chunk_parallel",
+            }
+            for index, segment in enumerate(raw_segments)
+        ] or _build_sentence_segments(masked_transcript)
+
+        analysis_data = self.llm_service.summarize_and_extract_tickets(
+            masked_transcript, context=analysis_context
+        )
+        context_snapshot = _build_context_snapshot(rag_context)
+        evidence = _build_evidence_items(
+            masked_transcript, analysis_data, segments, context_snapshot=context_snapshot
+        )
+        analysis = _build_analysis_payload(analysis_data, evidence=evidence)
+        if preprocessing:
+            preprocessing_summary = _summarize_audio_preprocessing(preprocessing)
+            if preprocessing_summary:
+                preprocessing_summary["parallel_workers"] = n_workers
+                analysis.extra_data["audio_preprocessing"] = preprocessing_summary
+        return AIProcessingResult(
+            transcript=transcript,
+            masked_transcript=masked_transcript,
+            segments=segments,
+            analysis=analysis,
+        )
+
     def process_audio_batch(self, file_paths: list[str], rag_context: Any | None = None) -> AIProcessingBatchResult:
         if not file_paths:
             raise ValueError("At least one audio file path is required.")
@@ -1006,6 +1065,17 @@ def process_audio(file_path: str, rag_context: Any | None = None) -> dict[str, A
     """Convenience wrapper for callers that prefer dict payloads."""
     result = get_default_ai_engine().process_audio(file_path, rag_context=rag_context)
     logger.info("AI pipeline completed for %s", file_path)
+    return result.to_dict()
+
+
+def process_audio_parallel(
+    file_path: str, n_workers: int = 2, rag_context: Any | None = None
+) -> dict[str, Any]:
+    """Parallel variant of process_audio. Falls back to sequential for short files."""
+    result = get_default_ai_engine().process_audio_parallel(
+        file_path, n_workers=n_workers, rag_context=rag_context
+    )
+    logger.info("AI parallel pipeline completed for %s", file_path)
     return result.to_dict()
 
 

@@ -110,7 +110,7 @@ function getActionStatusLabel(status) {
 }
 
 function getActionStatusBadgeLabel(status) {
-	return normalizeActionStatus(status) === '완료히스토리' ? '완료' : getActionStatusLabel(status);
+	return getActionStatusLabel(status);
 }
 
 function toDateInputValue(value) {
@@ -124,7 +124,14 @@ function toDateInputValue(value) {
 function fromDateInputValue(value) {
 	const raw = String(value || '').trim();
 	if (!raw) return '-';
-	if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw.replace(/-/g, '.');
+	if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+	return raw;
+}
+
+function formatDueDateDisplay(value) {
+	const raw = String(value || '').trim();
+	if (!raw || raw === '-') return '-';
+	if (/^\d{4}\.\d{2}\.\d{2}$/.test(raw)) return raw.replace(/\./g, '-');
 	return raw;
 }
 
@@ -248,11 +255,190 @@ function ChevronDownIcon({ className = '' }) {
 	);
 }
 
+function CalendarIcon({ className = '' }) {
+	return (
+		<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+			<rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+			<line x1="16" y1="2" x2="16" y2="6" />
+			<line x1="8" y1="2" x2="8" y2="6" />
+			<line x1="3" y1="10" x2="21" y2="10" />
+		</svg>
+	);
+}
+
 function CheckIcon({ className = '' }) {
 	return (
 		<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
 			<path d="M20 6L9 17l-5-5" />
 		</svg>
+	);
+}
+
+function TrashIcon({ className = '' }) {
+	return (
+		<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+			<polyline points="3 6 5 6 21 6" />
+			<path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+			<line x1="10" y1="11" x2="10" y2="17" />
+			<line x1="14" y1="11" x2="14" y2="17" />
+		</svg>
+	);
+}
+
+function CheckCircleIcon({ className = '' }) {
+	return (
+		<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+			<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+			<polyline points="22 4 12 14.01 9 11.01" />
+		</svg>
+	);
+}
+
+function ZapIcon({ className = '' }) {
+	return (
+		<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+			<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+		</svg>
+	);
+}
+
+function ArrowUpRightIcon({ className = '' }) {
+	return (
+		<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+			<line x1="7" y1="17" x2="17" y2="7" />
+			<polyline points="7 7 17 7 17 17" />
+		</svg>
+	);
+}
+
+const WEEKDAY_LABELS = ['일', '월', '화', '수', '목', '금', '토'];
+
+function pad2(n) {
+	return String(n).padStart(2, '0');
+}
+
+function toDateStr(year, month, day) {
+	return `${year}-${pad2(month + 1)}-${pad2(day)}`;
+}
+
+function parseDateStr(dateStr) {
+	if (!dateStr) return null;
+	const [y, m, d] = dateStr.split('-').map(Number);
+	return { year: y, month: m - 1, day: d };
+}
+
+function buildCalendarGrid(year, month) {
+	const firstOfMonth = new Date(year, month, 1);
+	const startOffset = firstOfMonth.getDay();
+	const daysInMonth = new Date(year, month + 1, 0).getDate();
+	const daysInPrevMonth = new Date(year, month, 0).getDate();
+	const cells = [];
+
+	for (let i = 0; i < startOffset; i += 1) {
+		const day = daysInPrevMonth - startOffset + 1 + i;
+		const prevMonth = month === 0 ? 11 : month - 1;
+		const prevYear = month === 0 ? year - 1 : year;
+		cells.push({ day, inMonth: false, dateStr: toDateStr(prevYear, prevMonth, day) });
+	}
+
+	for (let day = 1; day <= daysInMonth; day += 1) {
+		cells.push({ day, inMonth: true, dateStr: toDateStr(year, month, day) });
+	}
+
+	const nextMonth = month === 11 ? 0 : month + 1;
+	const nextYear = month === 11 ? year + 1 : year;
+	let nextDay = 1;
+	while (cells.length < 42) {
+		cells.push({ day: nextDay, inMonth: false, dateStr: toDateStr(nextYear, nextMonth, nextDay) });
+		nextDay += 1;
+	}
+
+	return cells;
+}
+
+function CustomDatePicker({ value, onSelect, onClose }) {
+	const today = new Date();
+	const todayStr = toDateStr(today.getFullYear(), today.getMonth(), today.getDate());
+	const parsedValue = parseDateStr(value) || parseDateStr(todayStr);
+	const [viewYear, setViewYear] = useState(parsedValue.year);
+	const [viewMonth, setViewMonth] = useState(parsedValue.month);
+
+	const cells = useMemo(() => buildCalendarGrid(viewYear, viewMonth), [viewYear, viewMonth]);
+
+	const goPrevMonth = (e) => {
+		e.stopPropagation();
+		if (viewMonth === 0) {
+			setViewMonth(11);
+			setViewYear((y) => y - 1);
+		} else {
+			setViewMonth((m) => m - 1);
+		}
+	};
+
+	const goNextMonth = (e) => {
+		e.stopPropagation();
+		if (viewMonth === 11) {
+			setViewMonth(0);
+			setViewYear((y) => y + 1);
+		} else {
+			setViewMonth((m) => m + 1);
+		}
+	};
+
+	return (
+		<div
+			className="absolute z-[300] bottom-full mb-2 left-1/2 -translate-x-1/2 sm:left-0 sm:translate-x-0 w-[280px] max-w-[88vw] box-border overflow-hidden rounded-xl border border-[rgba(0,100,180,0.14)] bg-white shadow-[0_10px_28px_rgba(0,100,180,0.16)] p-3.5"
+			onClick={(e) => e.stopPropagation()}
+		>
+			<div className="flex items-center justify-between mb-2.5">
+				<button type="button" onClick={goPrevMonth} className="p-1.5 rounded-lg text-[#5A6F8A] hover:bg-[#F1F4F8] hover:text-[#0D1B2A] transition-colors" aria-label="이전 달">
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+						<polyline points="15 18 9 12 15 6" />
+					</svg>
+				</button>
+				<span className="text-sm font-bold text-[#0D1B2A]">{viewYear}년 {viewMonth + 1}월</span>
+				<button type="button" onClick={goNextMonth} className="p-1.5 rounded-lg text-[#5A6F8A] hover:bg-[#F1F4F8] hover:text-[#0D1B2A] transition-colors" aria-label="다음 달">
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+						<polyline points="9 18 15 12 9 6" />
+					</svg>
+				</button>
+			</div>
+
+			<div className="grid grid-cols-7 gap-y-1.5 w-full">
+				{WEEKDAY_LABELS.map((label, idx) => (
+					<div key={label} className={`text-center text-[11px] font-semibold py-1 ${idx === 0 ? 'text-[#EF4444]' : idx === 6 ? 'text-[#0099CC]' : 'text-[#9AA7B8]'}`}>
+						{label}
+					</div>
+				))}
+				{cells.map((cell, idx) => {
+					const isSelected = cell.dateStr === value;
+					const isToday = cell.dateStr === todayStr;
+					const weekdayIdx = idx % 7;
+					return (
+						<button
+							key={`${cell.dateStr}-${idx}`}
+							type="button"
+							onClick={() => { onSelect(cell.dateStr); onClose(); }}
+							className={`aspect-square w-full flex items-center justify-center text-[13px] rounded-lg transition-colors ${
+								isSelected
+									? 'bg-[#0099CC] text-white font-bold'
+									: !cell.inMonth
+									? 'text-[#C7D1DC] hover:bg-[#F8FAFF]'
+									: isToday
+									? 'text-[#0099CC] font-bold border border-[#0099CC]/40 hover:bg-[#EEF3FF]'
+									: weekdayIdx === 0
+									? 'text-[#EF4444] hover:bg-[#F8FAFF]'
+									: weekdayIdx === 6
+									? 'text-[#0099CC] hover:bg-[#F8FAFF]'
+									: 'text-[#0D1B2A] hover:bg-[#F8FAFF]'
+							}`}
+						>
+							{cell.day}
+						</button>
+					);
+				})}
+			</div>
+		</div>
 	);
 }
 
@@ -273,6 +459,11 @@ export default function ProjectMeetings() {
 	const [participantsModalMembers, setParticipantsModalMembers] = useState([]);
 	const [participantsModalTitle, setParticipantsModalTitle] = useState('회의 참여자');
 	const [deletedMeetingIds, setDeletedMeetingIds] = useState([]);
+	const [meetings, setMeetings] = useState([]);
+	const [pendingEditMeetingId, setPendingEditMeetingId] = useState(null);
+	const [editMeetingTitle, setEditMeetingTitle] = useState('');
+	const [editMeetingTagsDraft, setEditMeetingTagsDraft] = useState([]);
+	const [editMeetingTagInput, setEditMeetingTagInput] = useState('');
 	const [pendingDeleteMeeting, setPendingDeleteMeeting] = useState(null);
 	const [pendingDeleteActionItemId, setPendingDeleteActionItemId] = useState(null);
 	const [toast, setToast] = useState({ message: '', type: 'info' });
@@ -289,15 +480,18 @@ export default function ProjectMeetings() {
 	const [openActionFilter, setOpenActionFilter] = useState(null);
 	const [actionItems, setActionItems] = useState([]);
 	const [isActionDrawerOpen, setIsActionDrawerOpen] = useState(false);
+	const [actionDrawerView, setActionDrawerView] = useState('detail');
 	const [activeActionItemId, setActiveActionItemId] = useState(null);
 	const [actionDraft, setActionDraft] = useState(null);
 	const [pendingIntegrationTarget, setPendingIntegrationTarget] = useState('');
+	const [isDueDateOpen, setIsDueDateOpen] = useState(false);
 	const [isDrawerAssigneeOpen, setIsDrawerAssigneeOpen] = useState(false);
 	const [openMoreMenuId, setOpenMoreMenuId] = useState(null);
 	const [openActionMoreMenuId, setOpenActionMoreMenuId] = useState(null);
 	const actionAssigneeFilterRef = useRef(null);
 	const actionStatusFilterRef = useRef(null);
 	const actionSourceFilterRef = useRef(null);
+	const dueDateDropdownRef = useRef(null);
 	const drawerAssigneeRef = useRef(null);
 	const actionDescriptionRef = useRef(null);
 
@@ -319,11 +513,12 @@ export default function ProjectMeetings() {
 			if (!clickedActionFilter) setOpenActionFilter(null);
 			if (!e.target.closest('[data-more-menu-root]')) setOpenMoreMenuId(null);
 			if (!e.target.closest('[data-action-more-menu-root]')) setOpenActionMoreMenuId(null);
+			if (isDueDateOpen && dueDateDropdownRef.current && !dueDateDropdownRef.current.contains(e.target)) setIsDueDateOpen(false);
 			if (!e.target.closest('[data-drawer-assignee-root]')) setIsDrawerAssigneeOpen(false);
 		};
 		document.addEventListener('mousedown', handleOutsideClick);
 		return () => document.removeEventListener('mousedown', handleOutsideClick);
-	}, []);
+	}, [isDueDateOpen]);
 
 	useEffect(() => () => { if (toastTimerRef.current) clearTimeout(toastTimerRef.current); }, []);
 
@@ -366,14 +561,18 @@ export default function ProjectMeetings() {
 	const visibleMeetings = useMemo(() => {
 		if (!project) return [];
 		const q = meetingSearch.trim().toLowerCase();
-		let result = project.meetings.filter((m) => {
+		let result = meetings.filter((m) => {
 			if (deletedMeetingIds.includes(m.id)) return false;
 			const typeOk = meetingType === '전체' || m.type === meetingType;
 			const searchOk = !q || m.title.toLowerCase().includes(q) || m.summary.toLowerCase().includes(q) || m.tags.join(' ').toLowerCase().includes(q);
 			return typeOk && searchOk;
 		});
 		return result.sort((a, b) => (sortOrder === '과거순' ? a.date.localeCompare(b.date) : b.date.localeCompare(a.date)));
-	}, [project, meetingSearch, meetingType, sortOrder, deletedMeetingIds]);
+	}, [project, meetings, meetingSearch, meetingType, sortOrder, deletedMeetingIds]);
+
+	useEffect(() => {
+		setMeetings(Array.isArray(project?.meetings) ? project.meetings : []);
+	}, [project]);
 
 	useEffect(() => {
 		if (!project) {
@@ -392,6 +591,8 @@ export default function ProjectMeetings() {
 				source: String(item.source || '').trim() || String(item.meeting?.title || '').trim() || fallbackMeetingTitle,
 				integrationTool: item.integrationTool || null,
 				externalLink: item.externalLink || '',
+				snapshotOf: item.snapshotOf || null,
+				historySavedAt: item.historySavedAt || null,
 				updatedAt: item.updatedAt || getKSTTimestampLabel(),
 				meeting: null,
 			}))
@@ -483,7 +684,72 @@ export default function ProjectMeetings() {
 		setIsParticipantsModalOpen(true);
 	};
 	const closeParticipantsModal = () => setIsParticipantsModalOpen(false);
-	const handleEditMeeting = () => { showToast('수정 기능은 다음 단계에서 연결 예정입니다.', 'ai'); };
+	const parseTagInput = (raw) => {
+		return [...new Set(String(raw || '')
+			.split(/[\s,]+/)
+			.map((tag) => tag.trim())
+			.filter(Boolean)
+			.map((tag) => (tag.startsWith('#') ? tag : `#${tag}`)))];
+	};
+	const normalizeTag = (raw) => {
+		const base = String(raw || '').trim();
+		if (!base) return '';
+		return base.startsWith('#') ? base : `#${base}`;
+	};
+	const persistProjectMeetings = (nextMeetings) => {
+		const id = String(project?.id || '');
+		if (!id) return;
+		const nextOverrides = readProjectOverrides();
+		const prev = nextOverrides[id] && typeof nextOverrides[id] === 'object' ? nextOverrides[id] : {};
+		nextOverrides[id] = { ...prev, meetings: nextMeetings };
+		writeProjectOverrides(nextOverrides);
+	};
+	const handleEditMeeting = (meetingId) => {
+		const target = meetings.find((meeting) => meeting.id === meetingId);
+		if (!target) return;
+		setPendingEditMeetingId(meetingId);
+		setEditMeetingTitle(target.title || '');
+		setEditMeetingTagsDraft(Array.isArray(target.tags) ? [...target.tags] : []);
+		setEditMeetingTagInput('');
+	};
+	const addTagToDraft = () => {
+		const normalized = normalizeTag(editMeetingTagInput);
+		if (!normalized) return;
+		setEditMeetingTagsDraft((prev) => (prev.includes(normalized) ? prev : [...prev, normalized]));
+		setEditMeetingTagInput('');
+	};
+	const removeTagFromDraft = (tag) => {
+		setEditMeetingTagsDraft((prev) => prev.filter((item) => item !== tag));
+	};
+	const cancelEditMeeting = () => {
+		setPendingEditMeetingId(null);
+		setEditMeetingTitle('');
+		setEditMeetingTagsDraft([]);
+		setEditMeetingTagInput('');
+	};
+	const confirmEditMeeting = () => {
+		const nextTitle = String(editMeetingTitle || '').trim();
+		if (!pendingEditMeetingId) return;
+		if (!nextTitle) {
+			showToast('회의 제목을 입력해 주세요.', 'warning');
+			return;
+		}
+		const mergedTags = [...editMeetingTagsDraft, ...parseTagInput(editMeetingTagInput)];
+		const nextTags = [...new Set(mergedTags.map((tag) => normalizeTag(tag)).filter(Boolean))];
+		if (nextTags.length === 0) {
+			showToast('태그를 1개 이상 입력해 주세요.', 'warning');
+			return;
+		}
+		const nextMeetings = meetings.map((meeting) => (
+			meeting.id === pendingEditMeetingId
+				? { ...meeting, title: nextTitle, tags: nextTags }
+				: meeting
+		));
+		setMeetings(nextMeetings);
+		persistProjectMeetings(nextMeetings);
+		cancelEditMeeting();
+		showToast('회의 제목/태그가 수정되었습니다.', 'success');
+	};
 	const handleDeleteMeeting = (meetingId) => { setPendingDeleteMeeting(meetingId); };
 	const persistProjectActionItems = (nextItems) => {
 		const id = String(project?.id || '');
@@ -509,6 +775,8 @@ export default function ProjectMeetings() {
 			updatedAt: item.updatedAt || getKSTTimestampLabel(),
 		});
 		setPendingIntegrationTarget('');
+		setActionDrawerView('detail');
+		setIsDueDateOpen(false);
 		setIsDrawerAssigneeOpen(false);
 		setOpenActionMoreMenuId(null);
 		setIsActionDrawerOpen(true);
@@ -519,6 +787,8 @@ export default function ProjectMeetings() {
 		setActiveActionItemId(null);
 		setActionDraft(null);
 		setPendingIntegrationTarget('');
+		setActionDrawerView('detail');
+		setIsDueDateOpen(false);
 		setIsDrawerAssigneeOpen(false);
 	};
 
@@ -563,6 +833,41 @@ export default function ProjectMeetings() {
 		});
 		if (closeAfterSave) closeActionDrawer();
 		return true;
+	};
+
+	const saveActionToHistory = (itemId, { closeAfterSave = false } = {}) => {
+		const baseItem = allActionItems.find((item) => item.id === itemId);
+		if (!baseItem) return false;
+		const now = getKSTTimestampLabel();
+		const historyItem = {
+			...baseItem,
+			id: `${baseItem.id}-history-${Date.now()}`,
+			status: '완료히스토리',
+			snapshotOf: baseItem.id,
+			historySavedAt: now,
+			updatedAt: now,
+		};
+		const nextItems = [...allActionItems, historyItem];
+		setActionItems(nextItems);
+		persistProjectActionItems(nextItems);
+		showToast('히스토리에 저장되었습니다.', 'success');
+		if (closeAfterSave) closeActionDrawer();
+		return true;
+	};
+
+	const startActionIntegration = (tool) => {
+		if (!actionDraft) return;
+		setPendingIntegrationTarget(tool);
+		window.setTimeout(() => {
+			const isNotion = tool === 'notion';
+			const ok = saveActionDraft({
+				nextStatus: '연동완료',
+				integrationTool: isNotion ? 'Notion' : 'Jira',
+				closeAfterSave: true,
+			});
+			setPendingIntegrationTarget('');
+			if (ok) showToast(isNotion ? 'Notion 연동이 완료되어 연동 완료로 전환되었습니다.' : 'Jira 연동이 완료되어 연동 완료로 전환되었습니다.', 'success');
+		}, 650);
 	};
 
 	const removeActionItem = (itemId) => {
@@ -636,6 +941,22 @@ export default function ProjectMeetings() {
 
 	return (
 		<div className="min-h-screen bg-[#F8FAFF] overflow-x-hidden pt-20 pb-20 md:pb-0 flex flex-col">
+			<style>
+				{`
+					@keyframes spinSlow { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+					.spin-slow { animation: spinSlow 0.9s linear infinite; }
+					@keyframes slideInRight { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+					.panel-enter { animation: slideInRight 0.28s cubic-bezier(0.32, 0.72, 0, 1) forwards; }
+					@keyframes slideInUp { from { transform: translateY(100%); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+					.panel-enter-bottom { animation: slideInUp 0.28s cubic-bezier(0.32, 0.72, 0, 1) forwards; }
+					@keyframes slideInFromRight { from { transform: translateX(24px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+					@keyframes slideInFromLeft { from { transform: translateX(-24px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+					.view-enter-right { animation: slideInFromRight 0.22s ease-out forwards; }
+					.view-enter-left { animation: slideInFromLeft 0.22s ease-out forwards; }
+					@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+					.overlay-enter { animation: fadeIn 0.2s ease-out forwards; }
+				`}
+			</style>
 			<Header isMobile={isMobile} phase="IDLE" stateLabels={stateLabels} />
 			<main className="flex-1 w-full px-4 md:px-8 py-6 md:py-8">
 				<div className="max-w-7xl mx-auto">
@@ -733,24 +1054,32 @@ export default function ProjectMeetings() {
 							{/* 회의 기록 탭 */}
 							{activePageTab === 'meetings' && (
 								<>
-									<section className="rounded-2xl border border-[rgba(0,100,180,0.12)] bg-white p-4">
-										<div className="space-y-2.5 sm:space-y-0 sm:flex sm:items-center sm:gap-3">
-											<input
-												value={meetingSearch}
-												onChange={(e) => setMeetingSearch(e.target.value)}
-												placeholder="회의록 검색"
-												className="w-full sm:flex-1 sm:min-w-[220px] px-3.5 py-2.5 text-sm bg-[#F8FAFF] border border-[rgba(0,100,180,0.12)] rounded-xl focus:outline-none focus:border-[#0099CC]"
-											/>
-											<div className="grid grid-cols-2 gap-2 sm:flex sm:items-center sm:gap-2 sm:shrink-0">
-												<div className="relative" ref={sortDropdownRef}>
-													<button type="button" onClick={() => { setIsSortOpen((prev) => !prev); setIsTypeOpen(false); }} className={`w-full sm:w-auto px-3.5 py-2.5 text-sm rounded-xl border transition flex items-center justify-between gap-1.5 ${isSortOpen ? 'bg-[#EEF3FF] border-[#0099CC]/40 shadow-[0_0_0_3px_rgba(0,153,204,0.12)] text-[#0D1B2A]' : 'bg-[#F8FAFF] border-[rgba(0,100,180,0.12)] text-[#0D1B2A] hover:border-[rgba(0,153,204,0.4)]'}`}>
-														<span className="font-medium">{sortOrder}</span>
-														<ChevronDownIcon className={`text-[#5A6F8A] transition-transform ${isSortOpen ? 'rotate-180' : ''}`} />
+									<section className="mt-4 p-0">
+										<div className="grid w-full grid-cols-2 gap-2 md:flex md:w-full md:flex-wrap md:items-center md:gap-2">
+											<div className="relative col-span-2 w-full md:col-span-1 md:w-72 lg:w-80">
+												<span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-[#B0BFCC]">
+													<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+														<circle cx="11" cy="11" r="6" />
+														<path d="m21 21-4.35-4.35" />
+													</svg>
+												</span>
+												<input
+													value={meetingSearch}
+													onChange={(e) => setMeetingSearch(e.target.value)}
+													placeholder="회의록 검색"
+													className="w-full rounded-xl border border-[rgba(0,0,0,0.09)] bg-white py-2 pl-8 pr-3 text-sm text-[#0D1B2A] placeholder-[#B0BFCC] transition focus:border-[#0099CC] focus:outline-none focus:ring-2 focus:ring-[rgba(0,153,204,0.12)]"
+												/>
+											</div>
+											<div className="grid w-full grid-cols-2 gap-2 md:ml-auto md:flex md:w-auto md:items-center md:gap-2 md:shrink-0">
+												<div className="relative min-w-0" ref={sortDropdownRef}>
+																	<button type="button" onClick={() => { setIsSortOpen((prev) => !prev); setIsTypeOpen(false); }} className={`w-full min-w-0 md:w-auto px-3.5 py-2.5 text-sm rounded-xl border transition flex items-center justify-between gap-1.5 ${isSortOpen ? 'border-[#0099CC]/40 bg-white shadow-[0_0_0_3px_rgba(0,153,204,0.10)] text-[#0D1B2A]' : 'border-[rgba(0,0,0,0.09)] bg-white text-[#0D1B2A] hover:border-[rgba(0,153,204,0.35)]'}`}>
+														<span className="truncate whitespace-nowrap font-medium">{sortOrder}</span>
+																			<ChevronDownIcon className={`text-[#A0AFBF] transition-transform ${isSortOpen ? 'rotate-180' : ''}`} />
 													</button>
 													{isSortOpen && (
-														<div className="absolute left-0 z-20 mt-2 w-32 overflow-hidden rounded-xl border border-[rgba(0,100,180,0.14)] bg-white shadow-[0_10px_28px_rgba(0,100,180,0.16)]">
+																			<div className="absolute left-0 z-20 mt-2 w-32 overflow-hidden rounded-xl border border-[rgba(0,0,0,0.08)] bg-white shadow-[0_12px_32px_rgba(0,0,0,0.12)]">
 															{['최신순', '과거순'].map((option) => (
-																<button key={option} type="button" onClick={() => { setSortOrder(option); setIsSortOpen(false); }} className={`w-full px-3.5 py-2.5 text-sm text-left flex items-center justify-between transition-colors ${sortOrder === option ? 'bg-[#EEF3FF] text-[#0099CC] font-semibold' : 'text-[#0D1B2A] hover:bg-[#F8FAFF]'}`}>
+																					<button key={option} type="button" onClick={() => { setSortOrder(option); setIsSortOpen(false); }} className={`w-full px-3.5 py-2.5 text-sm text-left flex items-center justify-between transition-colors ${sortOrder === option ? 'bg-[#F5F7FB] text-[#0099CC] font-semibold' : 'text-[#0D1B2A] hover:bg-[#F5F7FB]'}`}>
 																	<span>{option}</span>
 																	{sortOrder === option && <CheckIcon className="text-[#0099CC]" />}
 																</button>
@@ -758,15 +1087,15 @@ export default function ProjectMeetings() {
 														</div>
 													)}
 												</div>
-												<div className="relative" ref={typeDropdownRef}>
-													<button type="button" onClick={() => { setIsTypeOpen((prev) => !prev); setIsSortOpen(false); }} className={`w-full sm:w-auto px-3.5 py-2.5 text-sm rounded-xl border transition flex items-center justify-between gap-1.5 ${isTypeOpen ? 'bg-[#EEF3FF] border-[#0099CC]/40 shadow-[0_0_0_3px_rgba(0,153,204,0.12)] text-[#0D1B2A]' : 'bg-[#F8FAFF] border-[rgba(0,100,180,0.12)] text-[#0D1B2A] hover:border-[rgba(0,153,204,0.4)]'}`}>
-														<span className="font-medium">{meetingType}</span>
-														<ChevronDownIcon className={`text-[#5A6F8A] transition-transform ${isTypeOpen ? 'rotate-180' : ''}`} />
+												<div className="relative min-w-0" ref={typeDropdownRef}>
+																	<button type="button" onClick={() => { setIsTypeOpen((prev) => !prev); setIsSortOpen(false); }} className={`w-full min-w-0 md:w-auto px-3.5 py-2.5 text-sm rounded-xl border transition flex items-center justify-between gap-1.5 ${isTypeOpen ? 'border-[#0099CC]/40 bg-white shadow-[0_0_0_3px_rgba(0,153,204,0.10)] text-[#0D1B2A]' : 'border-[rgba(0,0,0,0.09)] bg-white text-[#0D1B2A] hover:border-[rgba(0,153,204,0.35)]'}`}>
+														<span className="truncate whitespace-nowrap font-medium">{meetingType}</span>
+																			<ChevronDownIcon className={`text-[#A0AFBF] transition-transform ${isTypeOpen ? 'rotate-180' : ''}`} />
 													</button>
 													{isTypeOpen && (
-														<div className="absolute left-0 z-20 mt-2 w-32 overflow-hidden rounded-xl border border-[rgba(0,100,180,0.14)] bg-white shadow-[0_10px_28px_rgba(0,100,180,0.16)]">
+																			<div className="absolute left-0 z-20 mt-2 w-32 overflow-hidden rounded-xl border border-[rgba(0,0,0,0.08)] bg-white shadow-[0_12px_32px_rgba(0,0,0,0.12)]">
 															{['전체', '정기', '수시'].map((option) => (
-																<button key={option} type="button" onClick={() => { setMeetingType(option); setIsTypeOpen(false); }} className={`w-full px-3.5 py-2.5 text-sm text-left flex items-center justify-between transition-colors ${meetingType === option ? 'bg-[#EEF3FF] text-[#0099CC] font-semibold' : 'text-[#0D1B2A] hover:bg-[#F8FAFF]'}`}>
+																					<button key={option} type="button" onClick={() => { setMeetingType(option); setIsTypeOpen(false); }} className={`w-full px-3.5 py-2.5 text-sm text-left flex items-center justify-between transition-colors ${meetingType === option ? 'bg-[#F5F7FB] text-[#0099CC] font-semibold' : 'text-[#0D1B2A] hover:bg-[#F5F7FB]'}`}>
 																	<span>{option}</span>
 																	{meetingType === option && <CheckIcon className="text-[#0099CC]" />}
 																</button>
@@ -774,10 +1103,10 @@ export default function ProjectMeetings() {
 														</div>
 													)}
 												</div>
-												<div className="relative col-span-2 sm:col-auto shrink-0" ref={createDropdownRef}>
-													<button type="button" onClick={() => setIsCreateOpen((prev) => !prev)} className={`w-full sm:w-auto flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl text-white text-sm font-semibold transition ${isCreateOpen ? 'bg-[#007EA7]' : 'bg-[#0099CC] hover:bg-[#007EA7]'}`}>
+												<div className="relative col-span-2 w-full md:col-auto md:w-auto shrink-0" ref={createDropdownRef}>
+													<button type="button" onClick={() => setIsCreateOpen((prev) => !prev)} className={`w-full md:w-auto flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl whitespace-nowrap text-white text-sm font-semibold transition ${isCreateOpen ? 'bg-[#007EA7]' : 'bg-[#0099CC] hover:bg-[#007EA7]'}`}>
 														<span>+ 새 회의록</span>
-														<ChevronDownIcon className={`transition-transform ${isCreateOpen ? 'rotate-180' : ''}`} />
+																			<ChevronDownIcon className={`text-[#E6F4FF] transition-transform ${isCreateOpen ? 'rotate-180' : ''}`} />
 													</button>
 													{isCreateOpen && (
 														<div className="absolute right-0 z-30 mt-2 w-56 overflow-hidden rounded-xl border border-[rgba(0,100,180,0.16)] bg-white shadow-[0_12px_28px_rgba(0,100,180,0.18)]">
@@ -809,73 +1138,179 @@ export default function ProjectMeetings() {
 											</div>
 										) : (
 											<>
-												<div className="hidden md:grid grid-cols-12 px-4 py-3 text-xs font-bold text-[#5A6F8A] bg-[#F8FAFF] border-b border-[rgba(0,100,180,0.1)]">
+												<div className="hidden md:grid grid-cols-12 px-4 py-3 text-xs font-bold text-[#5A6F8A] bg-[#F8FAFF] border-b border-[rgba(0,100,180,0.1)] rounded-t-2xl">
 													<div className="col-span-2">회의 날짜</div>
 													<div className="col-span-3">회의 제목</div>
 													<div className="col-span-2">상태</div>
 													<div className="col-span-4">주요 태그</div>
 													<div className="col-span-1" />
 												</div>
-												<div className="hidden md:block">
-													{visibleMeetings.map((meeting) => (
-														<div key={meeting.id} className="grid grid-cols-12 px-4 py-3 items-center border-b border-[rgba(0,100,180,0.08)] last:border-b-0">
-															<div className="col-span-2 text-sm text-[#5A6F8A]">{meeting.date}</div>
-															<button type="button" onClick={() => navigate('/meeting-detail')} className="col-span-3 text-left text-sm font-semibold text-[#0D1B2A] hover:text-[#0099CC]">{meeting.title}</button>
-															<div className="col-span-2">
-																<span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${statusBadgeClass(meeting.status)}`}>{meeting.status}</span>
-															</div>
-															<div className="col-span-4 flex flex-wrap gap-1">
-																{meeting.tags.map((tag) => (<span key={tag} className="px-2 py-0.5 rounded-full text-xs bg-[#EEF3FF] text-[#0099CC]">{tag}</span>))}
-															</div>
-															<div className="col-span-1 flex justify-end" data-more-menu-root>
-																<div className="relative">
-																	<button
-																		type="button"
-																		onClick={() => setOpenMoreMenuId((prev) => (prev === meeting.id ? null : meeting.id))}
-																		className="w-8 h-8 flex items-center justify-center rounded-lg text-[#5A6F8A] hover:text-[#0D1B2A] hover:bg-[#F8FAFF] transition"
-																		aria-label="더 보기"
-																	>
-																		<MoreVerticalIcon />
-																	</button>
-																	{openMoreMenuId === meeting.id && (
-																		<div className="absolute right-full mr-1 top-0 z-40 w-28 overflow-hidden rounded-xl border border-[rgba(0,100,180,0.14)] bg-white shadow-[0_10px_24px_rgba(0,100,180,0.14)]">
-																			<button type="button" onClick={() => { setOpenMoreMenuId(null); handleEditMeeting(); }} className="w-full px-3.5 py-2.5 text-left text-sm text-[#0D1B2A] hover:bg-[#EEF3FF]">수정</button>
-																			<button type="button" onClick={() => { setOpenMoreMenuId(null); handleDeleteMeeting(meeting.id); }} className="w-full px-3.5 py-2.5 text-left text-sm text-[#EF4444] hover:bg-[#FCE8E6]">삭제</button>
-																		</div>
-																	)}
+																<div className="hidden md:block">
+																	{visibleMeetings.map((meeting) => {
+																		const isEditing = pendingEditMeetingId === meeting.id;
+																		const onTitleKeyDown = (e) => {
+																			if (e.key === 'Enter') {
+																				e.preventDefault();
+																				confirmEditMeeting();
+																			}
+																			if (e.key === 'Escape') {
+																				e.preventDefault();
+																				cancelEditMeeting();
+																			}
+																		};
+																		const onTagKeyDown = (e) => {
+																			if (e.key === 'Enter') {
+																				e.preventDefault();
+																				addTagToDraft();
+																			}
+																			if (e.key === 'Escape') {
+																				e.preventDefault();
+																				cancelEditMeeting();
+																			}
+																		};
+																		return (
+																			<div key={meeting.id} className="grid grid-cols-12 px-4 py-3 items-center border-b border-[rgba(0,100,180,0.08)] last:border-b-0">
+																				<div className="col-span-2 text-sm text-[#5A6F8A]">{formatDueDateDisplay(meeting.date)}</div>
+																				{isEditing ? (
+																					<input
+																						type="text"
+																						value={editMeetingTitle}
+																						onChange={(e) => setEditMeetingTitle(e.target.value)}
+																						onKeyDown={onTitleKeyDown}
+																						className="col-span-3 w-full pr-3 px-2.5 py-1.5 text-sm rounded-lg border border-[rgba(0,100,180,0.16)] bg-white focus:outline-none focus:border-[#0099CC]"
+																					/>
+																				) : (
+																					<button type="button" onClick={() => navigate('/meeting-detail')} className="col-span-3 text-left text-sm font-semibold text-[#0D1B2A] hover:text-[#0099CC]">{meeting.title}</button>
+																				)}
+																				<div className={`col-span-2 ${isEditing ? 'pl-2' : ''}`}>
+																					<span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${statusBadgeClass(meeting.status)}`}>{meeting.status}</span>
+																				</div>
+																				<div className="col-span-4 flex flex-wrap gap-1">
+																					{isEditing ? (
+																						<div className="w-full min-h-[36px] px-2 py-1 rounded-lg border border-[rgba(0,100,180,0.16)] bg-white flex flex-wrap items-center gap-1">
+																							{editMeetingTagsDraft.map((tag) => (
+																								<span key={tag} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] bg-[#EEF3FF] text-[#0099CC]">
+																									{tag}
+																									<button type="button" onClick={() => removeTagFromDraft(tag)} className="text-[#5A6F8A] hover:text-[#0D1B2A]">×</button>
+																								</span>
+																							))}
+																							<input
+																								type="text"
+																								value={editMeetingTagInput}
+																								onChange={(e) => setEditMeetingTagInput(e.target.value)}
+																								onKeyDown={onTagKeyDown}
+																								onBlur={addTagToDraft}
+																								placeholder="#태그"
+																								className="flex-1 min-w-[72px] text-xs py-0.5 bg-transparent focus:outline-none"
+																							/>
+																						</div>
+																					) : (
+																						meeting.tags.map((tag) => (<span key={tag} className="px-2 py-0.5 rounded-full text-xs bg-[#EEF3FF] text-[#0099CC]">{tag}</span>))
+																					)}
+																				</div>
+																				<div className="col-span-1 flex justify-end" data-more-menu-root>
+																					{isEditing ? (
+																						<div className="flex items-center gap-1.5">
+																							<button type="button" onClick={confirmEditMeeting} className="w-7 h-7 rounded-full bg-[#0099CC] text-white hover:bg-[#007EA7] flex items-center justify-center" aria-label="저장">
+																								<CheckIcon className="text-white" />
+																							</button>
+																							<button type="button" onClick={cancelEditMeeting} className="w-7 h-7 rounded-full border border-slate-200 text-slate-500 hover:bg-slate-50 flex items-center justify-center" aria-label="취소">
+																								<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>
+																							</button>
+																						</div>
+																					) : (
+																						<div className="relative">
+																							<button
+																								type="button"
+																								onClick={() => setOpenMoreMenuId((prev) => (prev === meeting.id ? null : meeting.id))}
+																								className="w-8 h-8 flex items-center justify-center rounded-lg text-[#5A6F8A] hover:text-[#0D1B2A] hover:bg-[#F8FAFF] transition"
+																								aria-label="더 보기"
+																							>
+																								<MoreVerticalIcon />
+																							</button>
+																							{openMoreMenuId === meeting.id && (
+																								<div className="absolute right-full mr-1 top-0 z-40 w-28 overflow-hidden rounded-xl border border-[rgba(0,100,180,0.14)] bg-white shadow-[0_10px_24px_rgba(0,100,180,0.14)]">
+																									<button type="button" onClick={() => { setOpenMoreMenuId(null); handleEditMeeting(meeting.id); }} className="w-full px-3.5 py-2.5 text-left text-sm text-[#0D1B2A] hover:bg-[#EEF3FF]">수정</button>
+																									<button type="button" onClick={() => { setOpenMoreMenuId(null); handleDeleteMeeting(meeting.id); }} className="w-full px-3.5 py-2.5 text-left text-sm text-[#EF4444] hover:bg-[#FCE8E6]">삭제</button>
+																								</div>
+																							)}
+																						</div>
+																					)}
+																				</div>
+																			</div>
+																		);
+																	})}
 																</div>
-															</div>
-														</div>
-													))}
-												</div>
 
 												{/* 모바일 카드 */}
-												<div className="md:hidden divide-y divide-[rgba(0,100,180,0.08)]">
-													{visibleMeetings.map((meeting) => (
-														<article key={meeting.id} className="p-4 space-y-2.5">
+																<div className="md:hidden divide-y divide-[rgba(0,100,180,0.08)]">
+																	{visibleMeetings.map((meeting) => {
+																		const isEditing = pendingEditMeetingId === meeting.id;
+																		const onMobileTitleKeyDown = (e) => {
+																			if (e.key === 'Enter') {
+																				e.preventDefault();
+																				confirmEditMeeting();
+																			}
+																			if (e.key === 'Escape') {
+																				e.preventDefault();
+																				cancelEditMeeting();
+																			}
+																		};
+																		const onMobileTagKeyDown = (e) => {
+																			if (e.key === 'Enter') {
+																				e.preventDefault();
+																				addTagToDraft();
+																			}
+																		};
+																		return (
+																			<article key={meeting.id} className="p-4 space-y-2.5">
 															<div className="flex items-start justify-between gap-2">
-																<span className="text-xs text-[#5A6F8A]">{meeting.date}</span>
+																<span className="text-xs text-[#5A6F8A]">{formatDueDateDisplay(meeting.date)}</span>
 																<div className="flex items-center gap-2">
 																	<span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${statusBadgeClass(meeting.status)}`}>{meeting.status}</span>
-																	<div className="relative" data-more-menu-root>
-																		<button type="button" onClick={() => setOpenMoreMenuId((prev) => (prev === meeting.id ? null : meeting.id))} className="w-7 h-7 flex items-center justify-center rounded-lg text-[#5A6F8A] hover:bg-[#F8FAFF] transition">
-																			<MoreVerticalIcon />
-																		</button>
-																		{openMoreMenuId === meeting.id && (
-																			<div className="absolute right-full mr-1 top-0 z-40 w-28 overflow-hidden rounded-xl border border-[rgba(0,100,180,0.14)] bg-white shadow-[0_10px_24px_rgba(0,100,180,0.14)]">
-																				<button type="button" onClick={() => { setOpenMoreMenuId(null); handleEditMeeting(); }} className="w-full px-3.5 py-2.5 text-left text-sm text-[#0D1B2A] hover:bg-[#EEF3FF]">수정</button>
-																				<button type="button" onClick={() => { setOpenMoreMenuId(null); handleDeleteMeeting(meeting.id); }} className="w-full px-3.5 py-2.5 text-left text-sm text-[#EF4444] hover:bg-[#FCE8E6]">삭제</button>
-																			</div>
-																		)}
-																	</div>
+																					{!isEditing && (
+																						<div className="relative" data-more-menu-root>
+																							<button type="button" onClick={() => setOpenMoreMenuId((prev) => (prev === meeting.id ? null : meeting.id))} className="w-7 h-7 flex items-center justify-center rounded-lg text-[#5A6F8A] hover:bg-[#F8FAFF] transition">
+																								<MoreVerticalIcon />
+																							</button>
+																							{openMoreMenuId === meeting.id && (
+																								<div className="absolute right-full mr-1 top-0 z-40 w-28 overflow-hidden rounded-xl border border-[rgba(0,100,180,0.14)] bg-white shadow-[0_10px_24px_rgba(0,100,180,0.14)]">
+																									<button type="button" onClick={() => { setOpenMoreMenuId(null); handleEditMeeting(meeting.id); }} className="w-full px-3.5 py-2.5 text-left text-sm text-[#0D1B2A] hover:bg-[#EEF3FF]">수정</button>
+																									<button type="button" onClick={() => { setOpenMoreMenuId(null); handleDeleteMeeting(meeting.id); }} className="w-full px-3.5 py-2.5 text-left text-sm text-[#EF4444] hover:bg-[#FCE8E6]">삭제</button>
+																								</div>
+																							)}
+																						</div>
+																					)}
 																</div>
 															</div>
-															<button type="button" onClick={() => navigate('/meeting-detail')} className="text-left text-sm font-semibold text-[#0D1B2A] leading-snug">{meeting.title}</button>
-															<div className="flex flex-wrap gap-1">
-																{meeting.tags.map((tag) => (<span key={tag} className="px-2 py-0.5 rounded-full text-xs bg-[#EEF3FF] text-[#0099CC]">{tag}</span>))}
-															</div>
-														</article>
-													))}
+																			{isEditing ? (
+																				<div className="space-y-2">
+																					<input type="text" value={editMeetingTitle} onChange={(e) => setEditMeetingTitle(e.target.value)} onKeyDown={onMobileTitleKeyDown} className="w-full px-2.5 py-2 text-sm rounded-lg border border-[rgba(0,100,180,0.16)] bg-white focus:outline-none focus:border-[#0099CC]" />
+																					<div className="w-full min-h-[38px] px-2 py-1 rounded-lg border border-[rgba(0,100,180,0.16)] bg-white flex flex-wrap items-center gap-1">
+																						{editMeetingTagsDraft.map((tag) => (
+																							<span key={tag} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] bg-[#EEF3FF] text-[#0099CC]">
+																								{tag}
+																								<button type="button" onClick={() => removeTagFromDraft(tag)} className="text-[#5A6F8A] hover:text-[#0D1B2A]">×</button>
+																							</span>
+																						))}
+																						<input type="text" value={editMeetingTagInput} onChange={(e) => setEditMeetingTagInput(e.target.value)} onKeyDown={onMobileTagKeyDown} onBlur={addTagToDraft} placeholder="#태그" className="flex-1 min-w-[72px] text-xs py-0.5 bg-transparent focus:outline-none" />
+																					</div>
+																					<div className="flex justify-end gap-2 pt-1">
+																						<button type="button" onClick={cancelEditMeeting} className="w-7 h-7 rounded-full border border-slate-200 text-slate-500 hover:bg-slate-50 flex items-center justify-center" aria-label="취소"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg></button>
+																						<button type="button" onClick={confirmEditMeeting} className="w-7 h-7 rounded-full bg-[#0099CC] text-white hover:bg-[#007EA7] flex items-center justify-center" aria-label="저장"><CheckIcon className="text-white" /></button>
+																					</div>
+																				</div>
+																			) : (
+																				<>
+																					<button type="button" onClick={() => navigate('/meeting-detail')} className="text-left text-sm font-semibold text-[#0D1B2A] leading-snug">{meeting.title}</button>
+																					<div className="flex flex-wrap gap-1">
+																						{meeting.tags.map((tag) => (<span key={tag} className="px-2 py-0.5 rounded-full text-xs bg-[#EEF3FF] text-[#0099CC]">{tag}</span>))}
+																					</div>
+																				</>
+																			)}
+																		</article>
+																		);
+																	})}
 												</div>
 											</>
 										)}
@@ -896,7 +1331,7 @@ export default function ProjectMeetings() {
 													onClick={() => setOpenActionFilter((prev) => (prev === 'assignee' ? null : 'assignee'))}
 													className={actionCompactFilterButtonClass(openActionFilter === 'assignee')}
 												>
-													<span className="flex min-w-0 flex-col items-start gap-0.5">
+													<span className="flex min-w-0 flex-col items-start gap-1.5">
 														<span className="text-[11px] font-semibold leading-none text-[#5A6F8A]">담당자</span>
 														<span className="truncate text-sm font-semibold leading-tight">{actionAssigneeFilter}</span>
 													</span>
@@ -921,7 +1356,7 @@ export default function ProjectMeetings() {
 													onClick={() => setOpenActionFilter((prev) => (prev === 'status' ? null : 'status'))}
 													className={actionCompactFilterButtonClass(openActionFilter === 'status')}
 												>
-													<span className="flex min-w-0 flex-col items-start gap-0.5">
+													<span className="flex min-w-0 flex-col items-start gap-1.5">
 														<span className="text-[11px] font-semibold leading-none text-[#5A6F8A]">상태</span>
 														<span className="truncate text-sm font-semibold leading-tight">{actionStatusFilter}</span>
 													</span>
@@ -946,7 +1381,7 @@ export default function ProjectMeetings() {
 													onClick={() => setOpenActionFilter((prev) => (prev === 'source' ? null : 'source'))}
 													className={actionCompactFilterButtonClass(openActionFilter === 'source')}
 												>
-													<span className="flex min-w-0 flex-col items-start gap-0.5">
+													<span className="flex min-w-0 flex-col items-start gap-1.5">
 														<span className="text-[11px] font-semibold leading-none text-[#5A6F8A]">회의록 출처</span>
 														<span className="truncate text-sm font-semibold leading-tight">{actionSourceFilter}</span>
 													</span>
@@ -1050,7 +1485,7 @@ export default function ProjectMeetings() {
 
 															{/* 마감일 */}
 															<div className="flex items-center min-h-[44px]">
-																<span className="text-sm text-[#0D1B2A]">{item.due}</span>
+																<span className="text-sm text-[#0D1B2A]">{formatDueDateDisplay(item.due)}</span>
 															</div>
 
 															{/* 관리 메뉴 */}
@@ -1112,7 +1547,7 @@ export default function ProjectMeetings() {
 																<div className="flex items-center gap-2 min-w-0 flex-1 text-xs text-[#5A6F8A]">
 																	<span className="font-medium text-[#0D1B2A] truncate max-w-[110px]">{item.assignee}</span>
 																	<span className="text-[#CBD5E1]">·</span>
-																	<span className="shrink-0">{item.due}</span>
+																	<span className="shrink-0">{formatDueDateDisplay(item.due)}</span>
 																</div>
 																{/* 상태 배지 (수동 변경 금지) */}
 																<div className="shrink-0">
@@ -1139,11 +1574,35 @@ export default function ProjectMeetings() {
 			</main>
 
 			{isActionDrawerOpen && actionDraft && (
-				<div className="fixed inset-0 z-[72]" aria-modal="true" role="dialog">
-					<div className="absolute inset-0 bg-[#0D1B2A]/45" onClick={closeActionDrawer} />
-					<aside className="absolute inset-y-0 right-0 w-full sm:w-[520px] bg-white border-l border-[rgba(0,100,180,0.14)] shadow-2xl flex flex-col">
+				<div
+					className={`overlay-enter fixed inset-0 z-[130] flex ${isMobile ? 'items-end justify-center' : 'justify-end'}`}
+					style={{ backgroundColor: 'rgba(13,27,42,0.35)', backdropFilter: 'blur(2px)' }}
+					onClick={closeActionDrawer}
+					aria-modal="true"
+					role="dialog"
+				>
+					<aside
+						className={`${isMobile ? 'panel-enter-bottom rounded-t-3xl border-t border-x border-[rgba(0,100,180,0.14)] h-auto max-h-[88vh] w-full max-w-none' : 'panel-enter h-full w-full max-w-[480px] border-l border-[rgba(0,100,180,0.14)]'} relative flex flex-col bg-white shadow-2xl overflow-hidden`}
+						onClick={(e) => e.stopPropagation()}
+					>
+						{isMobile && (
+							<div className="shrink-0 pt-2 pb-1 flex justify-center" aria-hidden="true">
+								<span className="block w-10 h-1 rounded-full bg-[#C9D6E3]" />
+							</div>
+						)}
 						<div className="px-4 sm:px-5 py-4 border-b border-[rgba(0,100,180,0.1)] flex items-center justify-between gap-3">
-							{(() => {
+							{actionDrawerView === 'integrate' ? (
+								<button
+									type="button"
+									onClick={() => { setActionDrawerView('detail'); setPendingIntegrationTarget(''); }}
+									className="inline-flex items-center gap-1 text-sm font-semibold text-[#5A6F8A] hover:text-[#0D1B2A] transition-colors -ml-1 px-1"
+								>
+									<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+										<polyline points="15 18 9 12 15 6" />
+									</svg>
+									뒤로
+								</button>
+							) : (() => {
 								const statusStyle = actionStatusStyle(actionDraft.status);
 								return (
 									<span className="inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-semibold border" style={{ backgroundColor: statusStyle.bg, color: statusStyle.color, borderColor: `${statusStyle.border}40` }}>
@@ -1154,17 +1613,19 @@ export default function ProjectMeetings() {
 							<button type="button" onClick={closeActionDrawer} className="w-8 h-8 rounded-lg text-[#5A6F8A] hover:bg-[#F8FAFF] hover:text-[#0D1B2A]" aria-label="드로어 닫기">✕</button>
 						</div>
 
-						<div className="flex-1 overflow-y-auto px-4 sm:px-5 py-4 space-y-4">
+						<div className="flex-1 overflow-y-auto">
+							{actionDrawerView === 'detail' ? (
+								<div className="view-enter-left p-5 space-y-5">
 							<div className="rounded-2xl border border-[rgba(0,100,180,0.12)] bg-[#F8FAFF] p-3.5">
 								<div className="flex flex-wrap items-center gap-2 mb-2">
 									<span className="px-2 py-0.5 rounded-full bg-[#EEF3FF] text-[#0099CC] text-xs font-semibold">#{project.name}</span>
-									<span className="px-2 py-0.5 rounded-full bg-white border border-[rgba(0,100,180,0.12)] text-[#5A6F8A] text-xs">출처: {actionDraft.source || '-'}</span>
+									<span className="max-w-full sm:max-w-[280px] truncate px-2 py-0.5 rounded-full bg-white border border-[rgba(0,100,180,0.12)] text-[#5A6F8A] text-xs font-semibold">출처: {actionDraft.source || '-'}</span>
 								</div>
 								<p className="text-xs text-[#5A6F8A]">타임스탬프: {actionDraft.updatedAt || getKSTTimestampLabel()}</p>
 							</div>
 
 							<div className="space-y-1.5">
-								<label className="text-xs font-semibold text-[#5A6F8A]">제목</label>
+								<label className="text-xs font-bold text-[#0D1B2A]">제목</label>
 								<input
 									type="text"
 									value={actionDraft.text}
@@ -1175,7 +1636,7 @@ export default function ProjectMeetings() {
 							</div>
 
 							<div className="space-y-1.5">
-								<label className="text-xs font-semibold text-[#5A6F8A]">설명</label>
+								<label className="text-xs font-bold text-[#0D1B2A]">설명</label>
 								<textarea
 									ref={actionDescriptionRef}
 									value={actionDraft.description || ''}
@@ -1187,27 +1648,43 @@ export default function ProjectMeetings() {
 							</div>
 
 							<div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-								<div className="space-y-1.5">
-									<label className="text-xs font-semibold text-[#5A6F8A]">마감 기한</label>
-									<input
-										type="date"
-										value={toDateInputValue(actionDraft.due)}
-										onChange={(e) => setActionDraft((prev) => ({ ...prev, due: fromDateInputValue(e.target.value) }))}
-										className="w-full px-3.5 py-2.5 text-sm rounded-xl border border-[rgba(0,100,180,0.14)] bg-white focus:outline-none focus:border-[#0099CC]"
-									/>
-								</div>
-								<div className="space-y-1.5 relative" ref={drawerAssigneeRef} data-drawer-assignee-root>
-									<label className="text-xs font-semibold text-[#5A6F8A]">담당자</label>
+								<div className="space-y-1.5 relative" ref={dueDateDropdownRef}>
+									<label className="text-xs font-bold text-[#0D1B2A]">마감 기한</label>
 									<button
 										type="button"
-										onClick={() => setIsDrawerAssigneeOpen((prev) => !prev)}
+										onClick={() => {
+											setIsDrawerAssigneeOpen(false);
+											setIsDueDateOpen((prev) => !prev);
+										}}
+										className={`w-full px-3.5 py-2.5 text-sm rounded-xl border transition flex items-center justify-between ${isDueDateOpen ? 'bg-[#EEF3FF] border-[#0099CC]/40 shadow-[0_0_0_3px_rgba(0,153,204,0.12)]' : 'bg-white border-[rgba(0,100,180,0.12)] hover:border-[rgba(0,153,204,0.4)]'}`}
+									>
+										<span className={`${actionDraft.due && actionDraft.due !== '-' ? 'text-[#0D1B2A]' : 'text-[#9AA7B8]'}`}>{actionDraft.due && actionDraft.due !== '-' ? formatDueDateDisplay(actionDraft.due) : '날짜 선택'}</span>
+										<CalendarIcon className="text-[#5A6F8A]" />
+									</button>
+									{isDueDateOpen && (
+										<CustomDatePicker
+											value={toDateInputValue(actionDraft.due)}
+											onSelect={(dateStr) => setActionDraft((prev) => ({ ...prev, due: fromDateInputValue(dateStr) }))}
+											onClose={() => setIsDueDateOpen(false)}
+											anchorRef={dueDateDropdownRef}
+										/>
+									)}
+								</div>
+								<div className="space-y-1.5 relative" ref={drawerAssigneeRef} data-drawer-assignee-root>
+									<label className="text-xs font-bold text-[#0D1B2A]">담당자</label>
+									<button
+										type="button"
+										onClick={() => {
+											setIsDueDateOpen(false);
+											setIsDrawerAssigneeOpen((prev) => !prev);
+										}}
 										className={`w-full px-3.5 py-2.5 text-sm rounded-xl border transition flex items-center justify-between gap-2 ${isDrawerAssigneeOpen ? 'bg-[#EEF3FF] border-[#0099CC]/40 shadow-[0_0_0_3px_rgba(0,153,204,0.12)] text-[#0D1B2A]' : 'bg-white border-[rgba(0,100,180,0.14)] text-[#0D1B2A] hover:border-[rgba(0,153,204,0.4)]'}`}
 									>
 										<span className="truncate text-left">{actionDraft.assignee || '담당자 선택'}</span>
 										<ChevronDownIcon className={`shrink-0 text-[#5A6F8A] transition-transform ${isDrawerAssigneeOpen ? 'rotate-180' : ''}`} />
 									</button>
 									{isDrawerAssigneeOpen && (
-										<div className="absolute left-0 right-0 z-30 mt-2 overflow-hidden rounded-2xl border border-[rgba(0,100,180,0.14)] bg-white shadow-[0_12px_30px_rgba(0,100,180,0.16)]">
+										<div className="absolute left-0 right-0 z-30 bottom-full mb-2 overflow-hidden rounded-2xl border border-[rgba(0,100,180,0.14)] bg-white shadow-[0_12px_30px_rgba(0,100,180,0.16)]">
 											<div className="max-h-64 overflow-auto py-1">
 												{drawerAssigneeOptions.map((member) => (
 													<button
@@ -1229,120 +1706,203 @@ export default function ProjectMeetings() {
 								</div>
 							</div>
 
-							{normalizeActionStatus(actionDraft.status) === '연동완료' && (
-								<div className="rounded-2xl border border-[rgba(0,153,204,0.28)] bg-[#EEF8FF] px-3.5 py-3">
-									<p className="text-sm font-semibold text-[#0D1B2A]">연동완료 | 외부 툴 링크 바로가기</p>
-									{actionDraft.externalLink ? (
-										<a href={actionDraft.externalLink} target="_blank" rel="noreferrer" className="text-xs text-[#0099CC] underline mt-1 inline-block">{actionDraft.externalLink}</a>
-									) : (
-										<p className="text-xs text-[#5A6F8A] mt-1">연동 링크가 아직 없습니다.</p>
-									)}
+							{normalizeActionStatus(actionDraft.status) === '연동완료' && actionDraft.externalLink && (
+								<div className="rounded-xl border border-[#10B981]/30 bg-[#E6F4EA] p-4 flex items-center justify-between gap-3">
+									<div className="flex items-center gap-2 min-w-0">
+										<span className="shrink-0 w-7 h-7 rounded-lg bg-[#10B981]/15 text-[#10B981] flex items-center justify-center">
+											<CheckCircleIcon className="text-[#10B981]" />
+										</span>
+										<div className="min-w-0">
+											<p className="text-[12px] font-bold text-[#0E8F69]">연동 완료</p>
+											<p className="text-[11px] text-[#5A6F8A] truncate">{actionDraft.externalLink}</p>
+										</div>
+									</div>
+									<a
+										href={actionDraft.externalLink}
+										target="_blank"
+										rel="noreferrer"
+										className="shrink-0 inline-flex items-center gap-1 text-[12px] font-semibold text-[#0099CC] hover:underline"
+									>
+										{actionDraft.integrationTool === 'Notion' ? 'Notion' : 'Jira'} 확인
+										<ArrowUpRightIcon />
+									</a>
 								</div>
 							)}
 
 							{normalizeActionStatus(actionDraft.status) === '완료히스토리' && (
 								<div className="rounded-2xl border border-[rgba(16,185,129,0.28)] bg-[#F3FBF7] px-3.5 py-3">
-									<p className="text-sm font-semibold text-[#0D1B2A]">완료 히스토리 상태입니다.</p>
-									<p className="text-xs text-[#5A6F8A] mt-1">내부 기록으로 보관 중이며 필요 시 변경 사항만 저장할 수 있습니다.</p>
+									<p className="text-sm font-semibold text-[#0D1B2A]">완료히스토리 상태입니다.</p>
+									<p className="text-xs text-[#5A6F8A] mt-1">내부 기록으로 보관 중이며 필요 시 수정저장을 할 수 있습니다.</p>
+								</div>
+							)}
+								</div>
+							) : (
+								<div className="view-enter-right p-5 space-y-4">
+									<div>
+										<h3 className="text-base font-bold text-[#0D1B2A]">연동 도구 선택</h3>
+										<p className="text-sm text-[#5A6F8A] mt-1">이 액션 아이템을 어떤 툴로 내보낼까요?</p>
+									</div>
+
+									{pendingIntegrationTarget ? (
+										<div className="rounded-2xl border border-[rgba(0,100,180,0.12)] bg-[#F8FAFF] p-8 flex flex-col items-center justify-center gap-3">
+											<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="spin-slow text-[#0099CC]">
+												<line x1="12" y1="2" x2="12" y2="6" />
+												<line x1="12" y1="18" x2="12" y2="22" />
+												<line x1="4.93" y1="4.93" x2="7.76" y2="7.76" />
+												<line x1="16.24" y1="16.24" x2="19.07" y2="19.07" />
+												<line x1="2" y1="12" x2="6" y2="12" />
+												<line x1="18" y1="12" x2="22" y2="12" />
+												<line x1="4.93" y1="19.07" x2="7.76" y2="16.24" />
+												<line x1="16.24" y1="7.76" x2="19.07" y2="4.93" />
+											</svg>
+											<p className="text-sm font-semibold text-[#5A6F8A]">연동 중입니다…</p>
+										</div>
+									) : (
+										<div className="flex flex-col gap-3">
+											<button
+												type="button"
+												onClick={() => startActionIntegration('jira')}
+												className="group w-full flex items-center gap-4 p-4 rounded-2xl border-2 border-[#0099CC]/30 bg-white hover:border-[#0099CC] hover:bg-[#EEF3FF] hover:shadow-md transition-all text-left"
+											>
+												<span className="shrink-0 w-12 h-12 rounded-xl bg-[#EEF3FF] group-hover:bg-[#0099CC]/15 text-[#0099CC] flex items-center justify-center transition-colors">
+													<svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+														<path d="M11.53 2 4 9.53a1.5 1.5 0 0 0 0 2.12l3.18 3.18 4.35-4.35 4.35 4.35 3.18-3.18a1.5 1.5 0 0 0 0-2.12L11.53 2Z" fill="currentColor" opacity="0.55"/>
+														<path d="M11.53 9.18 4 16.71a1.5 1.5 0 0 0 0 2.12L7.18 22l4.35-4.35-4.35-4.35Z" fill="currentColor"/>
+														<path d="M15.88 9.18 11.53 13.53l4.35 4.35L19.06 14.7a1.5 1.5 0 0 0 0-2.12l-3.18-3.4Z" fill="currentColor" opacity="0.85"/>
+													</svg>
+												</span>
+												<div className="min-w-0">
+													<p className="text-sm font-bold text-[#0D1B2A]">Jira로 연동</p>
+													<p className="text-[12px] text-[#5A6F8A] mt-0.5">Jira API를 통해 이슈 티켓을 자동 생성합니다.</p>
+												</div>
+												<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-[#C0CFDC] group-hover:text-[#0099CC] ml-auto transition-colors">
+													<polyline points="9 18 15 12 9 6" />
+												</svg>
+											</button>
+
+											<button
+												type="button"
+												onClick={() => startActionIntegration('notion')}
+												className="group w-full flex items-center gap-4 p-4 rounded-2xl border-2 border-[#7C3AED]/20 bg-white hover:border-[#7C3AED] hover:bg-[#F6F0FF] hover:shadow-md transition-all text-left"
+											>
+												<span className="shrink-0 w-12 h-12 rounded-xl bg-[#7C3AED]/10 group-hover:bg-[#7C3AED]/20 text-[#7C3AED] flex items-center justify-center transition-colors">
+													<svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
+														<path d="M4.459 4.208c.746.606 1.026.56 2.428.466l13.215-.793c.28 0 .047-.28-.046-.326L17.86 1.968c-.42-.326-.981-.7-2.055-.607L3.01 2.295c-.466.046-.56.28-.374.466zm.793 3.08v13.904c0 .747.373 1.027 1.214.98l14.523-.84c.841-.046.935-.56.935-1.167V6.354c0-.606-.233-.933-.748-.887l-15.177.887c-.56.047-.747.327-.747.933zm14.337.745c.093.42 0 .84-.42.888l-.7.14v10.264c-.608.327-1.168.514-1.635.514-.748 0-.935-.234-1.495-.933l-4.577-7.186v6.952L12.21 19s0 .84-1.168.84l-3.222.186c-.093-.186 0-.653.327-.746l.84-.233V9.854L7.822 9.76c-.094-.42.14-1.026.793-1.073l3.456-.233 4.764 7.279v-6.44l-1.215-.139c-.093-.514.28-.887.747-.933zM1.936 1.035l13.31-.98c1.634-.14 2.055-.047 3.082.7l4.249 2.986c.7.513.934.653.934 1.213v16.378c0 1.026-.373 1.634-1.68 1.726l-15.458.934c-.98.047-1.448-.093-1.962-.747l-3.129-4.06c-.56-.747-.793-1.306-.793-1.96V2.667c0-.839.374-1.54 1.447-1.632z"/>
+													</svg>
+												</span>
+												<div className="min-w-0">
+													<p className="text-sm font-bold text-[#0D1B2A]">Notion으로 연동</p>
+													<p className="text-[12px] text-[#5A6F8A] mt-0.5">Notion 페이지에 태스크로 자동 추가합니다.</p>
+												</div>
+												<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-[#C0CFDC] group-hover:text-[#7C3AED] ml-auto transition-colors">
+													<polyline points="9 18 15 12 9 6" />
+												</svg>
+											</button>
+										</div>
+									)}
 								</div>
 							)}
 						</div>
 
-						<div className="border-t border-[rgba(0,100,180,0.1)] px-4 sm:px-5 py-4 space-y-2.5 bg-white">
-							{normalizeActionStatus(actionDraft.status) === '검토대기' && (
-								<button
-									type="button"
-									onClick={() => {
-										const ok = saveActionDraft({ nextStatus: '검토완료', closeAfterSave: true });
-										if (ok) showToast('확인 완료 처리되어 검토 완료로 전환되었습니다.', 'success');
-									}}
-									className="w-full px-4 py-2.5 rounded-xl bg-[#0D1B2A] text-white text-sm font-semibold hover:opacity-95 transition"
-								>
-									완료
-								</button>
-							)}
+						{actionDrawerView === 'detail' && (
+							<div className="shrink-0 px-5 py-4 border-t border-gray-100 bg-[#F8FAFF] overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+							<div className="flex items-center justify-between gap-3 min-w-max">
+							<button
+								type="button"
+								onClick={() => requestDeleteActionItem(actionDraft.id)}
+								className="px-3.5 py-2 text-xs font-semibold text-[#EF4444] hover:bg-red-50 rounded-lg transition-colors flex items-center gap-1.5"
+							>
+								<TrashIcon />
+								삭제
+							</button>
 
-							{normalizeActionStatus(actionDraft.status) === '검토완료' && (
-								<div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-									<button
-										type="button"
-										disabled={pendingIntegrationTarget === 'Jira'}
-										onClick={() => {
-											setPendingIntegrationTarget('Jira');
-											const ok = saveActionDraft({ nextStatus: '연동완료', integrationTool: 'Jira', closeAfterSave: true });
-											setPendingIntegrationTarget('');
-											if (ok) showToast('Jira 연동이 완료되어 연동 완료로 전환되었습니다.', 'success');
-										}}
-										className="w-full px-3 py-2.5 rounded-xl bg-[#0052CC] text-white text-sm font-semibold hover:bg-[#0047B3] transition disabled:opacity-70"
-									>
-										Jira연동하기
-									</button>
-									<button
-										type="button"
-										disabled={pendingIntegrationTarget === 'Notion'}
-										onClick={() => {
-											setPendingIntegrationTarget('Notion');
-											const ok = saveActionDraft({ nextStatus: '연동완료', integrationTool: 'Notion', closeAfterSave: true });
-											setPendingIntegrationTarget('');
-											if (ok) showToast('Notion 연동이 완료되어 연동 완료로 전환되었습니다.', 'success');
-										}}
-										className="w-full px-3 py-2.5 rounded-xl bg-[#111827] text-white text-sm font-semibold hover:bg-black transition disabled:opacity-70"
-									>
-										Notion연동하기
-									</button>
-									<button
-										type="button"
-										onClick={() => {
-											const ok = saveActionDraft({ nextStatus: '완료히스토리', closeAfterSave: true });
-											if (ok) showToast('완료 히스토리에 저장되었습니다.', 'success');
-										}}
-										className="w-full px-3 py-2.5 rounded-xl border border-[rgba(0,100,180,0.2)] text-[#0D1B2A] text-sm font-semibold hover:bg-[#F8FAFF] transition"
-									>
-											완료히스토리저장
-									</button>
-								</div>
-							)}
+							<div className="flex items-center gap-2">
+								{normalizeActionStatus(actionDraft.status) === '검토대기' && (
+									<>
+										<button
+											type="button"
+											onClick={() => {
+												const ok = saveActionDraft({ nextStatus: '검토완료', closeAfterSave: true });
+												if (ok) showToast('확인 완료 처리되어 검토 완료로 전환되었습니다.', 'success');
+											}}
+												className="px-5 py-2.5 text-sm font-bold text-white bg-[#0099CC] hover:bg-[#0086b3] rounded-xl shadow-md shadow-cyan-500/20 transition-all flex items-center gap-1.5"
+										>
+												<CheckCircleIcon />
+											검토완료
+										</button>
+										<button
+											type="button"
+											onClick={() => {
+												const ok = saveActionDraft({ closeAfterSave: true });
+												if (ok) showToast('변경 사항이 저장되었습니다.', 'success');
+											}}
+											className="px-4 py-2.5 text-sm font-semibold text-[#5A6F8A] bg-white border border-gray-200 hover:border-gray-300 hover:bg-gray-50 rounded-xl transition-all"
+										>
+											수정저장
+										</button>
+									</>
+								)}
 
-							{normalizeActionStatus(actionDraft.status) === '연동완료' && (
-								<div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+								{normalizeActionStatus(actionDraft.status) === '검토완료' && (
+									<>
+										<button
+											type="button"
+											onClick={() => {
+												saveActionToHistory(actionDraft.id, { closeAfterSave: true });
+											}}
+											className="px-5 py-2.5 text-sm font-bold text-[#7C3AED] bg-white border border-[#7C3AED]/60 hover:bg-[#F6F0FF] rounded-xl shadow-sm transition-all"
+										>
+											히스토리저장
+										</button>
+										<button
+											type="button"
+											onClick={() => setActionDrawerView('integrate')}
+											className="px-5 py-2.5 text-sm font-bold text-white bg-[linear-gradient(135deg,#10B981,#0D9488)] hover:brightness-105 rounded-xl shadow-md shadow-emerald-500/25 transition-all flex items-center gap-1.5 disabled:opacity-70"
+										>
+											<ZapIcon className="text-white" />
+											연동하기
+										</button>
+									</>
+								)}
+
+								{normalizeActionStatus(actionDraft.status) === '연동완료' && (
+									<>
+										<button
+											type="button"
+											onClick={() => {
+												const ok = saveActionDraft({ closeAfterSave: true });
+												if (ok) showToast('변경 사항이 저장되었습니다.', 'success');
+											}}
+											className="px-4 py-2.5 text-sm font-semibold text-[#5A6F8A] bg-white border border-gray-200 hover:border-gray-300 hover:bg-gray-50 rounded-xl transition-all"
+										>
+											수정저장
+										</button>
+										<button
+											type="button"
+											onClick={() => saveActionToHistory(actionDraft.id, { closeAfterSave: true })}
+											className="px-4 py-2.5 text-sm font-bold text-white bg-[linear-gradient(135deg,#10B981,#0D9488)] hover:brightness-105 rounded-xl shadow-md shadow-emerald-500/25 transition-all"
+										>
+											히스토리저장
+										</button>
+									</>
+								)}
+
+								{normalizeActionStatus(actionDraft.status) === '완료히스토리' && (
 									<button
 										type="button"
 										onClick={() => {
 											const ok = saveActionDraft({ closeAfterSave: true });
 											if (ok) showToast('변경 사항이 저장되었습니다.', 'success');
 										}}
-										className="w-full px-4 py-2.5 rounded-xl bg-[#0D1B2A] text-white text-sm font-semibold hover:opacity-95 transition"
+										className="px-4 py-2.5 text-sm font-semibold text-[#5A6F8A] bg-white border border-gray-200 hover:border-gray-300 hover:bg-gray-50 rounded-xl transition-all"
 									>
-											변경사항저장
+										수정저장
 									</button>
-									<button
-										type="button"
-										onClick={() => {
-											const ok = saveActionDraft({ nextStatus: '완료히스토리', closeAfterSave: true });
-											if (ok) showToast('연동 완료 항목을 완료 히스토리로 저장했습니다.', 'success');
-										}}
-										className="w-full px-4 py-2.5 rounded-xl border border-[rgba(0,100,180,0.2)] text-[#0D1B2A] text-sm font-semibold hover:bg-[#F8FAFF] transition"
-									>
-											완료히스토리저장
-									</button>
-								</div>
-							)}
-
-							{normalizeActionStatus(actionDraft.status) === '완료히스토리' && (
-								<button
-									type="button"
-									onClick={() => {
-										const ok = saveActionDraft({ closeAfterSave: true });
-										if (ok) showToast('변경 사항이 저장되었습니다.', 'success');
-									}}
-									className="w-full px-4 py-2.5 rounded-xl bg-[#0D1B2A] text-white text-sm font-semibold hover:opacity-95 transition"
-								>
-									변경사항저장
-								</button>
-							)}
-
-							<button type="button" onClick={() => requestDeleteActionItem(actionDraft.id)} className="w-full px-4 py-2.5 rounded-xl border border-[#EF4444]/30 text-[#EF4444] text-sm font-semibold hover:bg-[#FCE8E6] transition">삭제</button>
-						</div>
+								)}
+							</div>
+							</div>
+							</div>
+						)}
 					</aside>
 				</div>
 			)}

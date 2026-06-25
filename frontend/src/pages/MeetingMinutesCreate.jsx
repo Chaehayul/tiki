@@ -280,7 +280,7 @@ export default function MeetingMinutesCreate() {
             onClick={() => (projectId ? navigate(`/project/${projectId}/meetings`) : navigate('/project-list'))}
             className="text-sm text-[#5A6F8A] hover:text-[#0D1B2A]"
           >
-            돌아가기
+            ← 돌아가기
           </button>
 
           <section className="mt-4 rounded-2xl border border-[rgba(0,100,180,0.12)] bg-white p-5 md:p-6">
@@ -327,7 +327,17 @@ export default function MeetingMinutesCreate() {
                       }`}
                     >
                       <span className="font-medium">{form.type}</span>
-                      <span className={`text-xs text-[#5A6F8A] transition-transform ${isTypeOpen ? 'rotate-180' : ''}`}>⌄</span>
+                      <svg
+                        width="13"
+                        height="13"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        xmlns="http://www.w3.org/2000/svg"
+                        className={`shrink-0 text-[#A0AFBF] transition-transform ${isTypeOpen ? 'rotate-180' : ''}`}
+                        aria-hidden="true"
+                      >
+                        <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
                     </button>
 
                     {isTypeOpen && (
@@ -341,11 +351,23 @@ export default function MeetingMinutesCreate() {
                               setIsTypeOpen(false);
                             }}
                             className={`w-full px-3.5 py-2.5 text-sm text-left flex items-center justify-between transition-colors ${
-                              form.type === option ? 'bg-[#EEF3FF] text-[#0099CC] font-semibold' : 'text-[#0D1B2A] hover:bg-[#F8FAFF]'
+                              form.type === option ? 'bg-[#F5F7FB] text-[#0099CC] font-semibold' : 'text-[#0D1B2A] hover:bg-[#F5F7FB]'
                             }`}
                           >
                             <span>{option}</span>
-                            {form.type === option && <span className="text-[#0099CC]">✓</span>}
+                            {form.type === option && (
+                              <svg
+                                width="13"
+                                height="13"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                xmlns="http://www.w3.org/2000/svg"
+                                className="shrink-0 text-[#0099CC]"
+                                aria-hidden="true"
+                              >
+                                <path d="M20 6L9 17l-5-5" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" />
+                              </svg>
+                            )}
                           </button>
                         ))}
                       </div>

@@ -8,6 +8,9 @@ import { createProject } from '../api/apiClient';
 const icons = {
   folder: ["M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"],
   users: ["M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2","M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z","M23 21v-2a4 4 0 0 0-3-3.87","M16 3.13a4 4 0 0 1 0 7.75"],
+  user: ["M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2","M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8"],
+  lock: ["M19 11H5a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7a2 2 0 0 0-2-2z","M7 11V7a5 5 0 0 1 10 0v4"],
+  globe: ["M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20","M2 12h20","M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"],
   arrowRight: ["M5 12h14","M12 5l7 7-7 7"],
   arrowLeft: ["M19 12H5","M12 19l-7-7 7-7"],
   check: ["M20 6L9 17l-5-5"],
@@ -19,7 +22,8 @@ const icons = {
   trash: ["M3 6h18","M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"],
   loader: ["M12 2v4","M12 18v4","M4.93 4.93l2.83 2.83","M16.24 16.24l2.83 2.83","M2 12h4","M18 12h4","M4.93 19.07l2.83-2.83","M16.24 7.76l2.83-2.83"],
   mail: ["M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z","M22 6l-10 7L2 6"],
-  eye: ["M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z","M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"]
+  eye: ["M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z","M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"],
+  clock: ["M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20","M12 6v6l4 2"]
 };
 
 function LIcon({ name, size = 18, color = "currentColor", sw = 2, className = "" }) {
@@ -57,6 +61,7 @@ export default function CreateProject() {
   const [step, setStep] = useState(1);
   const [projectName, setProjectName] = useState('');
   const [description, setDescription] = useState('');
+  const [visibility, setVisibility] = useState('members');
   const [copyTemplate, setCopyTemplate] = useState('none');
   const [isTemplateOpen, setIsTemplateOpen] = useState(false);
   const [email, setEmail] = useState('');
@@ -80,6 +85,16 @@ export default function CreateProject() {
     { value: 'design-system', label: '디자인 시스템 설정', description: '컴포넌트 규칙', icon: 'eye' },
     { value: 'strategy-planning', label: '기획 / 전략 설정', description: '로드맵 규칙', icon: 'mail' }
   ];
+
+  const visibilityOptions = [
+    { value: 'private', label: '개인', icon: 'lock' },
+    { value: 'members', label: '구성원만', icon: 'user' },
+    { value: 'org', label: '전체보기', icon: 'globe' },
+  ];
+
+  const visibilityLabelMap = { private: '개인', members: '구성원만', org: '전체보기' };
+  const visibilityIconMap = { private: 'lock', members: 'user', org: 'globe' };
+  const createdDateText = new Date().toISOString().slice(0, 10);
 
   const selectedTemplate = templateOptions.find((o) => o.value === copyTemplate) || templateOptions[0];
 
@@ -207,9 +222,18 @@ export default function CreateProject() {
             <div
               className="group w-full rounded-2xl border border-[rgba(0,100,180,0.10)] bg-white p-5 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:border-[#0099CC]/30 hover:shadow-md flex flex-col"
             >
+              <div className="mb-2 flex items-center">
+                <span className="inline-flex items-center gap-1 rounded-full bg-[#F5F7FB] px-1.5 py-0.5 text-[10.5px] font-medium text-[#7A8FA6]">
+                  <span className="inline-flex h-3.5 w-3.5 items-center justify-center text-[#8FA0B3]">
+                    <LIcon name={visibilityIconMap[visibility] || 'user'} size={10} />
+                  </span>
+                  {visibilityLabelMap[visibility] || '구성원만'}
+                </span>
+              </div>
+
               <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <h3 className="text-[15px] font-bold leading-snug text-[#0D1B2A] transition-colors group-hover:text-[#0099CC]">
+                <div className="min-w-0 flex-1">
+                  <h3 className="line-clamp-1 text-[15px] font-bold leading-snug text-[#0D1B2A] transition-colors group-hover:text-[#0099CC]">
                     {projectName.trim() ? projectName : '프로젝트 이름을 입력해 주세요'}
                   </h3>
                 </div>
@@ -233,7 +257,7 @@ export default function CreateProject() {
                 </div>
                 <div className="flex shrink-0 items-center gap-1.5 text-[#0D1B2A]/55">
                   <LIcon name="clock" size={14} className="shrink-0" />
-                  <span className="text-xs">방금 전</span>
+                  <span className="text-xs">생성 {createdDateText}</span>
                 </div>
               </div>
             </div>
@@ -287,6 +311,30 @@ export default function CreateProject() {
                   </label>
                   <textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="프로젝트의 주요 목표나 맥락을 간단히 작성하여 팀원들과 공유하세요." rows="3"
                     className="w-full px-4 py-3 bg-[#F8FAFF] border border-[rgba(0,100,180,0.12)] rounded-xl text-sm text-[#0D1B2A] focus:outline-none focus:border-[#0099CC] transition resize-none leading-relaxed" />
+                </div>
+
+                <div>
+                  <label className="block text-xs sm:text-sm font-semibold text-[#0D1B2A] mb-2">프로젝트 공개 범위</label>
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                    {visibilityOptions.map((option) => {
+                      const selected = visibility === option.value;
+                      return (
+                        <button
+                          key={option.value}
+                          type="button"
+                          onClick={() => setVisibility(option.value)}
+                          className={`flex items-center justify-center gap-2 rounded-xl border px-3 py-2.5 text-xs font-semibold transition ${
+                            selected
+                              ? 'border-[#0099CC] bg-[#EEF3FF] text-[#0099CC] shadow-[0_0_0_2px_rgba(0,153,204,0.10)]'
+                              : 'border-[rgba(0,100,180,0.12)] bg-white text-[#5A6F8A] hover:border-[rgba(0,153,204,0.35)]'
+                          }`}
+                        >
+                          <LIcon name={option.icon} size={13} />
+                          <span>{option.label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
 
                 <div className="rounded-xl border border-[rgba(0,100,180,0.08)] bg-[#F8FAFF] p-4">

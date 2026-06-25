@@ -286,7 +286,7 @@ function MobileSideMenu({ open, onClose, isLoggedIn, isSubscribed, onLogout }) {
     );
 }
 
-export default function Header({ isMobile, isLoggedIn, phase, stateLabels, user, isSubscribed, onLogout }) {
+export default function Header({ isMobile, isLoggedIn, phase, stateLabels, user, isSubscribed, onLogout, hideMobileMenu = false }) {
     const { pathname } = useLocation();
     const navigate = useNavigate();
     const [mobileOpen, setMobileOpen] = useState(false);
@@ -391,7 +391,7 @@ export default function Header({ isMobile, isLoggedIn, phase, stateLabels, user,
                     )}
 
                     {/* Mobile: hamburger */}
-                    {isMobile && (
+                    {isMobile && !hideMobileMenu && (
                         <>
                             <button
                                 onClick={() => setMobileOpen(true)}
@@ -406,7 +406,7 @@ export default function Header({ isMobile, isLoggedIn, phase, stateLabels, user,
             </header>
 
             {/* Mobile drawer */}
-            {isMobile && (
+            {isMobile && !hideMobileMenu && (
                 <MobileSideMenu
                     open={mobileOpen}
                     onClose={() => setMobileOpen(false)}

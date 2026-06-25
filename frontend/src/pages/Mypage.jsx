@@ -30,6 +30,10 @@ const ICON_PATHS = {
   linkOff: ["M18.84 12.25l1.72-1.71a5 5 0 0 0-7.07-7.07l-1.72 1.71","M5.17 11.75l-1.72 1.71a5 5 0 0 0 7.07 7.07l1.71-1.71","M1 1l22 22"],
   arrowLeft: ["M19 12H5","M12 19l-7-7 7-7"],
   briefcase: ["M20 7h-4V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2z","M16 7V5H8v2"],
+  creditCard: ["M22 10V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v4","M2 10h20","M6 14h2","M10 14h6","M4 18h16a2 2 0 0 0 2-2v-2H2v2a2 2 0 0 0 2 2z"],
+  sparkles: ["M12 3l1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5L12 3z","M5 17l.8 2.2L8 20l-2.2.8L5 23l-.8-2.2L2 20l2.2-.8L5 17z","M19 15l.7 1.9L21.5 17.6l-1.9.7-.7 1.9-.7-1.9-1.9-.7 1.9-.7.7-1.9z"],
+  home: ["M3 9.5L12 3l9 6.5","M5 10v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V10","M9 21v-6h6v6"],
+  pencil: ["M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z","M15 5l4 4"],
 };
 
 function Icon({ name, size = 16, color = "currentColor", sw = 1.8 }) {
@@ -48,9 +52,11 @@ const cn = (...c) => c.filter(Boolean).join(" ");
 
 // ── Data ──────────────────────────────────────────────────────────────────
 const NAV_ITEMS = [
+  { id: "home",        label: "홈",             icon: "home" },
   { id: "profile",     label: "프로필",         icon: "user" },
   { id: "security",    label: "보안",           icon: "lock" },
   { id: "integrations",label: "연동",           icon: "link" },
+  { id: "subscription",label: "구독권 관리",     icon: "creditCard" },
   { id: "sessions",    label: "세션 관리",       icon: "monitor" },
   { id: "data",        label: "데이터",          icon: "download" },
 ];
@@ -302,9 +308,145 @@ function PwStrengthBar({ password }) {
   );
 }
 
+// ── Greeting helper ─────────────────────────────────────────────────────────
+function getGreeting() {
+  const h = new Date().getHours();
+  if (h < 6) return "늦은 시간까지 고생 많으세요";
+  if (h < 12) return "좋은 아침이에요";
+  if (h < 18) return "오늘도 좋은 하루 보내고 계신가요";
+  return "오늘 하루도 고생 많으셨어요";
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Sections
 // ═══════════════════════════════════════════════════════════════════════════
+
+// ── Home (마이페이지 홈 대시보드) ───────────────────────────────────────────
+function StatBlock({ value, label, accent }) {
+  return (
+    <div>
+      <p className={cn("text-[26px] font-black tracking-[-1px]", accent ? "text-[#0099CC]" : "text-[#0D1B2A]")}>{value}</p>
+      <p className="mt-0.5 text-[12px] text-[#5A6F8A]">{label}</p>
+    </div>
+  );
+}
+
+function UsageBar({ label, value, max, unit = "" }) {
+  const pct = Math.min(100, Math.round((value / max) * 100));
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between text-[12px]">
+        <span className="text-[#5A6F8A]">{label}</span>
+        <span className="font-bold text-[#0D1B2A]">{value}{unit} / {max}{unit}</span>
+      </div>
+      <div className="h-1.5 w-full overflow-hidden rounded-full bg-[rgba(0,100,180,.08)]">
+        <div className="h-full rounded-full bg-[linear-gradient(135deg,#0099CC,#7C3AED)] transition-all"
+          style={{ width: `${pct}%` }} />
+      </div>
+    </div>
+  );
+}
+
+const RECENT_MEETINGS = [
+  { id: 1, title: "TIKI 앱 개발 - 스프린트 12 리뷰", date: "6월 24일", actionItems: 5, done: 3 },
+  { id: 2, title: "Q3 로드맵 정렬 회의",              date: "6월 22일", actionItems: 3, done: 3 },
+  { id: 3, title: "디자인 시스템 토큰 점검",           date: "6월 19일", actionItems: 4, done: 1 },
+];
+
+function HomeSection({ goTo, name, email, department }) {
+  const totalActionItems = RECENT_MEETINGS.reduce((s, m) => s + m.actionItems, 0);
+  const doneActionItems = RECENT_MEETINGS.reduce((s, m) => s + m.done, 0);
+
+  return (
+    <div className="space-y-7">
+      {/* 인사말 */}
+      <div>
+        <p className="flex items-center gap-1.5 text-[12px] font-semibold text-[#0099CC]">
+          <Icon name="sparkles" size={13} color="#0099CC" />
+          {getGreeting()}
+        </p>
+        <h1 className="mt-1 text-[22px] font-black tracking-[-0.4px] text-[#0D1B2A]">
+          {name}<span className="text-[#5A6F8A] font-bold">님,</span> 오늘의 TIKI 현황입니다
+        </h1>
+      </div>
+
+      {/* 이번 달 활동 요약 - 메인 스트립 */}
+      <div className="rounded-2xl border border-[rgba(0,100,180,.1)] bg-[linear-gradient(135deg,rgba(0,153,204,.06),rgba(124,58,237,.05))] p-5 sm:p-6">
+        <p className="mb-4 text-[12px] font-bold text-[#5A6F8A]">이번 달 활동</p>
+        <div className="grid grid-cols-3 gap-4">
+          <StatBlock value="47건" label="총 회의" />
+          <StatBlock value={`${doneActionItems}/${totalActionItems}`} label="처리현황" accent />
+          <StatBlock value="132개" label="Jira 티켓 생성" />
+        </div>
+      </div>
+
+      <div className="grid gap-5 lg:grid-cols-[1fr_280px]">
+        {/* 좌측: 최근 회의 */}
+        <div className="rounded-2xl border border-[rgba(0,100,180,.1)] bg-white p-5">
+          <div className="mb-4 flex items-center justify-between">
+            <h3 className="text-[14px] font-bold text-[#0D1B2A]">최근 회의</h3>
+            <span className="text-[12px] text-[#9BAABE]">최근 3건</span>
+          </div>
+          <div className="space-y-1">
+            {RECENT_MEETINGS.map((m, i) => (
+              <div key={m.id}
+                className={cn(
+                  "flex items-center gap-3 py-3",
+                  i !== RECENT_MEETINGS.length - 1 && "border-b border-[rgba(0,100,180,.07)]"
+                )}>
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[rgba(0,153,204,.08)]">
+                  <Icon name="checkCircle" size={15} color={m.done === m.actionItems ? "#10B981" : "#0099CC"} />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-[13px] font-semibold text-[#0D1B2A]">{m.title}</p>
+                  <p className="mt-0.5 text-[11px] text-[#9BAABE]">{m.date} · 액션 아이템 {m.done}/{m.actionItems} 완료</p>
+                </div>
+                <Icon name="chevronRight" size={14} color="#9BAABE" />
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* 우측: 프로필 + 구독권 */}
+        <div className="space-y-5">
+          <div className="rounded-2xl border border-[rgba(0,100,180,.1)] bg-white p-5">
+            <div className="flex items-center gap-3">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-[linear-gradient(135deg,#0099CC,#7C3AED)] text-[15px] font-black text-white select-none">
+                {(name || "사")[0]}
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-[13px] font-bold text-[#0D1B2A]">{name}</p>
+                <p className="truncate text-[11px] text-[#9BAABE]">{email}</p>
+              </div>
+              <button onClick={() => goTo("profile")}
+                className="shrink-0 flex h-7 w-7 items-center justify-center rounded-lg border border-[rgba(0,100,180,.15)] bg-[#F8FAFF] transition-colors hover:border-[rgba(0,153,204,.4)]">
+                <Icon name="pencil" size={12} color="#5A6F8A" />
+              </button>
+            </div>
+            <div className="mt-3">
+              <Badge label={department || "부서 미설정"} />
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-[rgba(0,100,180,.1)] bg-white p-5">
+            <div className="mb-3 flex items-center justify-between">
+              <div className="flex items-center gap-1.5">
+                <p className="text-[14px] font-black text-[#0D1B2A]">TIKI Pro</p>
+                <Badge label="이용중" variant="cyan" />
+              </div>
+              <button onClick={() => goTo("subscription")}
+                className="text-[11px] font-semibold text-[#5A6F8A] hover:text-[#0099CC]">관리</button>
+            </div>
+            <div className="space-y-2.5">
+              <UsageBar label="월간 업로드" value={42} max={100} unit="건" />
+              <UsageBar label="저장 용량" value={2.3} max={10} unit="GB" />
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function ProfileSection({ showToast, initialName, initialEmail, initialDepartment }) {
   const fileRef = useRef(null);
@@ -732,11 +874,68 @@ function DataSection({ showToast }) {
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+function SubscriptionSection({ showToast }) {
+  const [upgrading, setUpgrading] = useState(false);
+
+  const handleUpgrade = () => {
+    setUpgrading(true);
+    setTimeout(() => {
+      setUpgrading(false);
+      showToast("구독권 업그레이드 신청이 접수됐습니다.");
+    }, 900);
+  };
+
+  return (
+    <div className="space-y-8">
+      <div>
+        <h2 className="text-[18px] font-bold tracking-[-0.3px] text-[#0D1B2A]">구독권 관리</h2>
+        <p className="mt-1 text-[13px] text-[#5A6F8A]">현재 이용 중인 플랜과 결제 정보를 확인합니다.</p>
+      </div>
+
+      <div className="rounded-2xl border border-[rgba(0,100,180,.12)] bg-[linear-gradient(135deg,rgba(0,153,204,.08),rgba(124,58,237,.07))] p-5">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <div className="mb-2 flex items-center gap-2">
+              <Badge label="현재 플랜" variant="cyan" />
+              <p className="text-[16px] font-black text-[#0D1B2A]">TIKI Pro</p>
+            </div>
+            <p className="text-[13px] text-[#4A5D78]">월 29,000원 · 다음 결제일 2026-07-01</p>
+          </div>
+          <button
+            type="button"
+            onClick={handleUpgrade}
+            disabled={upgrading}
+            className="shrink-0 rounded-xl bg-[linear-gradient(135deg,#0099CC,#0077AA)] px-4 py-2 text-[12px] font-bold text-white shadow-[0_2px_10px_rgba(0,153,204,.25)] disabled:opacity-60"
+          >
+            {upgrading ? "처리 중..." : "업그레이드"}
+          </button>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <div className="rounded-2xl border border-[rgba(0,100,180,.1)] bg-white p-4">
+          <p className="text-[12px] text-[#5A6F8A]">월간 업로드</p>
+          <p className="mt-1 text-[18px] font-black text-[#0D1B2A]">42 / 100</p>
+        </div>
+        <div className="rounded-2xl border border-[rgba(0,100,180,.1)] bg-white p-4">
+          <p className="text-[12px] text-[#5A6F8A]">저장 용량</p>
+          <p className="mt-1 text-[18px] font-black text-[#0D1B2A]">2.3GB / 10GB</p>
+        </div>
+        <div className="rounded-2xl border border-[rgba(0,100,180,.1)] bg-white p-4">
+          <p className="text-[12px] text-[#5A6F8A]">팀 좌석 수</p>
+          <p className="mt-1 text-[18px] font-black text-[#0D1B2A]">8 / 10</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Root
 // ═══════════════════════════════════════════════════════════════════════════
 export default function MyPage() {
-  const [activeTab, setActiveTab] = useState("profile");
+  const [activeTab, setActiveTab] = useState("home");
   const [toast, setToast] = useState(null);
   const [modal, setModal] = useState(null);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 640);
@@ -847,81 +1046,76 @@ export default function MyPage() {
         stateLabels={stateLabels}
         user={{ name: profileName, email: profileEmail }}
         onLogout={handleLogout}
+        hideMobileMenu={true}
       />
 
-      <div className="relative z-[1] mx-auto flex max-w-[960px] gap-0 px-4 pt-24 pb-28 sm:gap-8 sm:px-6 sm:pb-16">
+      <div className="relative z-[1] mx-auto max-w-[960px] px-4 pt-24 pb-28 sm:px-6 sm:pb-16">
 
-        {/* ── Sidebar ── */}
-        <aside className="hidden w-[188px] shrink-0 sm:block">
+        <div className="flex gap-0 sm:gap-8">
 
-          <nav className="space-y-0.5">
-            {NAV_ITEMS.map(item => {
-              const active = activeTab === item.id;
-              return (
-                <button key={item.id}
-                  onClick={() => setActiveTab(item.id)}
-                  className={cn(
-                    "flex w-full items-center gap-3 rounded-xl px-3.5 py-2.5 text-[13px] font-semibold transition-all text-left",
-                    active
-                      ? "bg-[rgba(0,153,204,.1)] text-[#0099CC]"
-                      : "text-[#5A6F8A] hover:bg-[rgba(0,60,150,.05)] hover:text-[#0D1B2A]"
-                  )}>
-                  <Icon name={item.icon} size={15} color={active ? "#0099CC" : "currentColor"} sw={active ? 2 : 1.8} />
-                  {item.label}
-                  {active && <div className="ml-auto h-1.5 w-1.5 rounded-full bg-[#0099CC]" />}
-                </button>
-              );
-            })}
-          </nav>
+          {/* ── Sidebar ── */}
+          <aside className="hidden w-[188px] shrink-0 sm:block">
 
-          {/* User card at bottom */}
-          <div className="mt-6 hidden rounded-2xl border border-[rgba(0,100,180,.1)] bg-[rgba(0,60,150,.03)] p-3.5 sm:block">
-            <div className="flex items-center gap-2.5">
-              <div className="h-8 w-8 rounded-xl bg-[linear-gradient(135deg,#0099CC,#7C3AED)] flex items-center justify-center text-[13px] font-black text-white select-none shrink-0">{(profileName || "사")[0]}</div>
-              <div className="min-w-0">
-                <p className="truncate text-[12px] font-bold text-[#0D1B2A]">{profileName}</p>
-                <p className="truncate text-[11px] text-[#9BAABE]">{profileEmail}</p>
-              </div>
+            <nav className="space-y-0.5">
+              {NAV_ITEMS.map(item => {
+                const active = activeTab === item.id;
+                return (
+                  <button key={item.id}
+                    onClick={() => setActiveTab(item.id)}
+                    className={cn(
+                      "flex w-full items-center gap-3 rounded-xl px-3.5 py-2.5 text-[13px] font-semibold transition-all text-left",
+                      active
+                        ? "bg-[rgba(0,153,204,.1)] text-[#0099CC]"
+                        : "text-[#5A6F8A] hover:bg-[rgba(0,60,150,.05)] hover:text-[#0D1B2A]"
+                    )}>
+                    <Icon name={item.icon} size={15} color={active ? "#0099CC" : "currentColor"} sw={active ? 2 : 1.8} />
+                    {item.label}
+                    {active && <div className="ml-auto h-1.5 w-1.5 rounded-full bg-[#0099CC]" />}
+                  </button>
+                );
+              })}
+            </nav>
+          </aside>
+
+          {/* ── Content ── */}
+          <main className="min-w-0 flex-1 pt-2 sm:pt-0">
+            <div className="mb-4 flex items-center gap-2 sm:hidden">
+              <span className="text-[12px] text-[#9BAABE]">설정</span>
+              <Icon name="chevronRight" size={12} color="#9BAABE" />
+              <span className="text-[12px] font-semibold text-[#0D1B2A]">{activeNav?.label}</span>
             </div>
-          </div>
-        </aside>
 
-        {/* ── Content ── */}
-        <main className="min-w-0 flex-1 pt-2 sm:pt-0">
-          <div className="mb-4 flex items-center gap-2 sm:hidden">
-            <span className="text-[12px] text-[#9BAABE]">설정</span>
-            <Icon name="chevronRight" size={12} color="#9BAABE" />
-            <span className="text-[12px] font-semibold text-[#0D1B2A]">{activeNav?.label}</span>
-          </div>
+            <div className="mb-4 flex gap-2 overflow-x-auto pb-1 sm:hidden">
+              {NAV_ITEMS.map(item => {
+                const active = activeTab === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    onClick={() => setActiveTab(item.id)}
+                    className={cn(
+                      "whitespace-nowrap rounded-full border px-3 py-1.5 text-[12px] font-semibold transition-colors",
+                      active
+                        ? "border-[rgba(0,153,204,.35)] bg-[rgba(0,153,204,.1)] text-[#0099CC]"
+                        : "border-[rgba(0,100,180,.12)] bg-white text-[#5A6F8A]"
+                    )}
+                  >
+                    {item.label}
+                  </button>
+                );
+              })}
+            </div>
 
-          <div className="mb-4 flex gap-2 overflow-x-auto pb-1 sm:hidden">
-            {NAV_ITEMS.map(item => {
-              const active = activeTab === item.id;
-              return (
-                <button
-                  key={item.id}
-                  onClick={() => setActiveTab(item.id)}
-                  className={cn(
-                    "whitespace-nowrap rounded-full border px-3 py-1.5 text-[12px] font-semibold transition-colors",
-                    active
-                      ? "border-[rgba(0,153,204,.35)] bg-[rgba(0,153,204,.1)] text-[#0099CC]"
-                      : "border-[rgba(0,100,180,.12)] bg-white text-[#5A6F8A]"
-                  )}
-                >
-                  {item.label}
-                </button>
-              );
-            })}
-          </div>
-
-          <div className="rounded-2xl border border-[rgba(0,100,180,.1)] bg-white p-5 shadow-[0_2px_16px_rgba(0,60,150,.05)] sm:p-7">
-            {activeTab === "profile"      && <ProfileSection showToast={showToast} initialName={profileName} initialEmail={profileEmail} initialDepartment={profileDepartment} />}
-            {activeTab === "security"     && <SecuritySection showToast={showToast} setModal={handleModal} />}
-            {activeTab === "integrations" && <IntegrationsSection showToast={showToast} />}
-            {activeTab === "sessions"     && <SessionsSection showToast={showToast} setModal={handleModal} />}
-            {activeTab === "data"         && <DataSection showToast={showToast} />}
-          </div>
-        </main>
+            <div className="rounded-2xl border border-[rgba(0,100,180,.1)] bg-white p-5 shadow-[0_2px_16px_rgba(0,60,150,.05)] sm:p-7">
+              {activeTab === "home"          && <HomeSection goTo={setActiveTab} name={profileName} email={profileEmail} department={profileDepartment} />}
+              {activeTab === "profile"      && <ProfileSection showToast={showToast} initialName={profileName} initialEmail={profileEmail} initialDepartment={profileDepartment} />}
+              {activeTab === "security"     && <SecuritySection showToast={showToast} setModal={handleModal} />}
+              {activeTab === "integrations" && <IntegrationsSection showToast={showToast} />}
+              {activeTab === "subscription" && <SubscriptionSection showToast={showToast} />}
+              {activeTab === "sessions"     && <SessionsSection showToast={showToast} setModal={handleModal} />}
+              {activeTab === "data"         && <DataSection showToast={showToast} />}
+            </div>
+          </main>
+        </div>
       </div>
 
       {/* Modal */}

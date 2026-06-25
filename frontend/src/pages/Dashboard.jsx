@@ -291,6 +291,11 @@ function LucideIcon({ name, size = 16, className = "" }) {
         <path d="M7 11V7a5 5 0 0 1 10 0v4" />
       </svg>
     ),
+    pencil: (
+      <svg className={className} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="m16.5 3.5 4 4L7 21l-4 1 1-4L16.5 3.5z" />
+      </svg>
+    ),
     jira: (
       <svg className={className} width={size} height={size} viewBox="0 0 24 24" fill="none">
         <path d="M11.53 2 4 9.53a1.5 1.5 0 0 0 0 2.12l3.18 3.18 4.35-4.35 4.35 4.35 3.18-3.18a1.5 1.5 0 0 0 0-2.12L11.53 2Z" fill="currentColor" opacity="0.55"/>
@@ -741,6 +746,7 @@ export default function App() {
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [integratingId, setIntegratingId] = useState(null);
   const [justCompletedId, setJustCompletedId] = useState(null);
+  const [isPanelEditable, setIsPanelEditable] = useState(false);
 
   const dueDateDropdownRef = useRef(null);
   const dueDateButtonRef = useRef(null);
@@ -830,6 +836,7 @@ export default function App() {
   const openPanel = (item) => {
     setSelectedItem(item);
     setPanelView("detail");
+    setIsPanelEditable(false);
     setIsAssigneeOpen(false);
     setIsDueDateOpen(false);
     setEditForm({
@@ -843,9 +850,21 @@ export default function App() {
   const closePanel = () => {
     setSelectedItem(null);
     setPanelView("detail");
+    setIsPanelEditable(false);
     setDeleteConfirmOpen(false);
     setIsAssigneeOpen(false);
     setIsDueDateOpen(false);
+  };
+
+  const handleTogglePanelEdit = () => {
+    setIsPanelEditable((prev) => {
+      const next = !prev;
+      if (!next) {
+        setIsAssigneeOpen(false);
+        setIsDueDateOpen(false);
+      }
+      return next;
+    });
   };
   // ───────────────────────────────────────────────────────────────────────────
 
@@ -861,7 +880,7 @@ export default function App() {
     triggerToast(
       shouldComplete
         ? "수행 완료 처리되어 연동 완료 상태로 전환되었습니다."
-        : "액션 아이템이 성공적으로 수정(사용자 변경)되었습니다.",
+        : "해야 할 일이 성공적으로 수정(사용자 변경)되었습니다.",
       "success"
     );
   };
@@ -872,7 +891,7 @@ export default function App() {
     )));
     // 패널 내 selectedItem도 동기화
     setSelectedItem(prev => prev?.id === itemId ? { ...prev, status: "진행중" } : prev);
-    triggerToast("액션 아이템이 검증되어 검토 완료 상태로 전환되었습니다.", "success");
+    triggerToast("해야 할 일이 검증되어 검토 완료 상태로 전환되었습니다.", "success");
   };
 
   const handleQuickVerify = (e, itemId) => {
@@ -922,7 +941,7 @@ export default function App() {
     const id = selectedItem.id;
     setActionItems(prev => prev.filter(item => item.id !== id));
     closePanel();
-    triggerToast("액션 아이템이 삭제되었습니다.", "warning");
+    triggerToast("해야 할 일이 삭제되었습니다.", "warning");
   };
 
   const handleFileUploadSimulate = (e) => {
@@ -966,7 +985,7 @@ export default function App() {
         };
         setActionItems(prev => [newAction, ...prev]);
         setUploadPhase("COMPLETED");
-        triggerToast("AI 분석 및 액션 아이템 추출이 완료되어 목록에 추가되었습니다!", "ai");
+        triggerToast("AI 분석 및 해야 할 일 추출이 완료되어 목록에 추가되었습니다!", "ai");
       }, 2500);
     }
     return () => {
@@ -1056,7 +1075,7 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen flex flex-col bg-[#F8FAFF] text-[#0D1B2A] font-sans antialiased pt-20 pb-20 md:pb-0 [font-family:'Pretendard',-apple-system,sans-serif]">
+    <div className="min-h-screen flex flex-col bg-[#F8FAFF] text-[#0D1B2A] antialiased pt-20 pb-20 md:pb-0">
       <style>
         {`
           @keyframes rowSettle { 0% { opacity: 0; transform: translateY(-6px); } 100% { opacity: 1; transform: translateY(0); } }
@@ -1108,7 +1127,7 @@ export default function App() {
                 <div>
                   <h1 className="text-2xl font-bold text-[#0D1B2A]">안녕하세요, {firstName}님</h1>
                   <p className="text-[#5A6F8A] mt-1">
-                    오늘 처리할 내 액션 아이템이 <span className="font-bold text-[#0099CC]">{myPendingCount}개</span> 있어요
+                    오늘 처리해야 할 일이 <span className="font-bold text-[#0099CC]">{myPendingCount}개</span> 있어요
                   </p>
                 </div>
                 <button
@@ -1233,10 +1252,10 @@ export default function App() {
               </div>
             </div>
 
-            {/* 전체 액션 아이템 */}
+            {/* 전체 해야 할 일 */}
             <section className="flex flex-col gap-4">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <h2 className="text-lg font-bold text-[#0D1B2A]">전체 액션 아이템</h2>
+                <h2 className="text-lg font-bold text-[#0D1B2A]">전체 해야 할 일</h2>
 
                 <div className="flex flex-wrap items-center justify-end gap-2">
                   <div className="relative w-full sm:w-72 lg:w-80">
@@ -1263,7 +1282,7 @@ export default function App() {
                       onClick={() => setIsStatusSortOpen((prev) => !prev)}
                       className={`flex w-full items-center justify-between gap-1.5 rounded-xl border py-2 pl-3 pr-2.5 text-sm transition ${isStatusSortOpen ? "border-[#0099CC]/40 bg-white shadow-[0_0_0_3px_rgba(0,153,204,0.10)]" : "border-[rgba(0,0,0,0.09)] bg-white text-[#0D1B2A] hover:border-[rgba(0,153,204,0.35)]"}`}
                     >
-                      <span className="truncate font-normal text-[#0D1B2A] subpixel-antialiased">{statusFilter === "전체" ? "전체" : getStatusLabel(statusFilter)}</span>
+                      <span className="truncate font-medium text-[#0D1B2A]">{statusFilter === "전체" ? "전체" : getStatusLabel(statusFilter)}</span>
                       <LucideIcon name="chevronDown" size={13} className={`shrink-0 text-[#A0AFBF] transition-transform ${isStatusSortOpen ? "rotate-180" : ""}`} />
                     </button>
                     {isStatusSortOpen && (
@@ -1294,7 +1313,7 @@ export default function App() {
                     >
                       <span className="inline-flex items-center gap-2 min-w-0">
                         {projectFilter !== "전체" && <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: PROJECTS[projectFilter].color }}></span>}
-                        <span className="truncate font-normal text-[#0D1B2A] subpixel-antialiased">{projectFilter === "전체" ? "프로젝트: 전체" : PROJECTS[projectFilter].name}</span>
+                        <span className="truncate font-medium text-[#0D1B2A]">{projectFilter === "전체" ? "프로젝트: 전체" : PROJECTS[projectFilter].name}</span>
                       </span>
                       <LucideIcon name="chevronDown" size={13} className={`shrink-0 text-[#A0AFBF] transition-transform ${isProjectFilterOpen ? "rotate-180" : ""}`} />
                     </button>
@@ -1328,9 +1347,9 @@ export default function App() {
                   <div className="w-12 h-12 rounded-full bg-[#EEF3FF] flex items-center justify-center mb-4 mx-auto">
                     <LucideIcon name="inbox" size={22} className="text-[#0099CC]" />
                   </div>
-                  <p className="text-[#0D1B2A] font-semibold">처리할 액션 아이템이 없어요</p>
+                  <p className="text-[#0D1B2A] font-semibold">처리할 해야 할 일이 없어요</p>
                   <p className="text-sm text-[#5A6F8A] mt-1">
-                    {isAnyFilterActive ? "다른 필터를 선택해보세요." : "새 회의록을 업로드하면 AI가 액션 아이템을 추출해 드려요."}
+                    {isAnyFilterActive ? "다른 필터를 선택해보세요." : "새 회의록을 업로드하면 AI가 해야 할 일을 추출해 드려요."}
                   </p>
                 </div>
               )}
@@ -1382,8 +1401,6 @@ export default function App() {
                               <div className="mt-1.5 flex items-center gap-1.5 flex-wrap text-[11px] text-[#8A9AB0]">
                                 <span>{item.meetingDate} 회의</span>
                                 <span className="text-[#D7DEE8]">·</span>
-                                <span>{item.contextTime} 발화</span>
-                                <span className="text-[#D7DEE8]">·</span>
                                 <span className="inline-flex items-center gap-1">
                                   <LucideIcon name={assigneeList.length > 1 ? "users" : "user"} size={11} className="text-[#9AA7B8]" />
                                   {formatAssignees(item.assignees, item.assignee)}
@@ -1423,7 +1440,7 @@ export default function App() {
                                 <button type="button" onClick={(e) => { e.stopPropagation(); openPanel(item); }}
                                   className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-[#0099CC] border border-[#0099CC]/40 hover:bg-[#0099CC] hover:text-white hover:border-[#0099CC] hover:shadow-[0_4px_12px_rgba(0,153,204,0.25)] px-2.5 py-1.5 rounded-lg transition-all duration-150"
                                 >
-                                  <LucideIcon name="checkCircle" size={12} />검토 완료
+                                  <LucideIcon name="checkCircle" size={12} />검토하기
                                 </button>
                               ) : (
                                 <button type="button" onClick={(e) => { e.stopPropagation(); openPanel(item); }}
@@ -1512,6 +1529,21 @@ export default function App() {
               </div>
 
               <div className="flex items-center gap-2">
+                {panelView === "detail" && (
+                  <button
+                    type="button"
+                    onClick={handleTogglePanelEdit}
+                    className={`w-8 h-8 rounded-lg border transition-colors cursor-pointer inline-flex items-center justify-center ${
+                      isPanelEditable
+                        ? "bg-[#EEF3FF] text-[#0099CC] border-[#0099CC]/40 hover:bg-[#E3EEFF]"
+                        : "bg-white text-[#5A6F8A] border-[rgba(0,0,0,0.1)] hover:text-[#0D1B2A] hover:bg-[#F8FAFF]"
+                    }`}
+                    aria-label={isPanelEditable ? "수정 잠금" : "수정하기"}
+                    title={isPanelEditable ? "수정 잠금" : "수정하기"}
+                  >
+                    <LucideIcon name="pencil" size={14} />
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={closePanel}
@@ -1553,7 +1585,10 @@ export default function App() {
                       type="text"
                       value={editForm.title}
                       onChange={(e) => setEditForm({ ...editForm, title: e.target.value })}
-                      className="w-full px-3.5 py-2.5 border border-[rgba(0,100,180,0.14)] rounded-xl text-sm bg-white focus:border-[#0099CC] focus:outline-none"
+                      readOnly={!isPanelEditable}
+                      className={`w-full px-3.5 py-2.5 border border-[rgba(0,100,180,0.14)] rounded-xl text-sm focus:border-[#0099CC] focus:outline-none ${
+                        isPanelEditable ? "bg-white" : "bg-[#F8FAFF] text-[#5A6F8A]"
+                      }`}
                     />
                   </div>
 
@@ -1564,7 +1599,10 @@ export default function App() {
                       rows={4}
                       value={editForm.description}
                       onChange={(e) => setEditForm({ ...editForm, description: e.target.value })}
-                      className="w-full px-3.5 py-2.5 border border-[rgba(0,100,180,0.14)] rounded-xl text-sm bg-white focus:border-[#0099CC] focus:outline-none resize-none"
+                      readOnly={!isPanelEditable}
+                      className={`w-full px-3.5 py-2.5 border border-[rgba(0,100,180,0.14)] rounded-xl text-sm focus:border-[#0099CC] focus:outline-none resize-none ${
+                        isPanelEditable ? "bg-white" : "bg-[#F8FAFF] text-[#5A6F8A]"
+                      }`}
                     />
                   </div>
 
@@ -1576,15 +1614,21 @@ export default function App() {
                         ref={dueDateButtonRef}
                         type="button"
                         onClick={() => {
+                          if (!isPanelEditable) return;
                           setIsAssigneeOpen(false);
                           setIsDueDateOpen((prev) => !prev);
                         }}
-                        className={`w-full px-3.5 py-2.5 text-sm rounded-xl border transition flex items-center justify-between cursor-pointer ${
-                          isDueDateOpen ? "bg-[#EEF3FF] border-[#0099CC]/40 shadow-[0_0_0_3px_rgba(0,153,204,0.12)]" : "bg-white border-[rgba(0,100,180,0.14)] hover:border-[rgba(0,153,204,0.4)]"
+                        className={`flex w-full items-center justify-between gap-1.5 rounded-xl border py-2 pl-3 pr-2.5 text-sm transition ${
+                          isDueDateOpen
+                            ? "border-[#0099CC]/40 bg-white shadow-[0_0_0_3px_rgba(0,153,204,0.10)]"
+                            : isPanelEditable
+                            ? "border-[rgba(0,0,0,0.09)] bg-white text-[#0D1B2A] hover:border-[rgba(0,153,204,0.35)] cursor-pointer"
+                            : "border-[rgba(0,0,0,0.09)] bg-[#F8FAFF] text-[#5A6F8A] cursor-not-allowed"
                         }`}
+                        aria-disabled={!isPanelEditable}
                       >
-                        <span className={`font-medium ${editForm.dueDate ? "text-[#0D1B2A]" : "text-[#9AA7B8]"}`}>{editForm.dueDate || "날짜 선택"}</span>
-                        <LucideIcon name="calendar" size={14} className="text-[#5A6F8A]" />
+                        <span className={`truncate ${editForm.dueDate ? "text-[#0D1B2A]" : "text-[#9AA7B8]"}`}>{editForm.dueDate || "날짜 선택"}</span>
+                        <LucideIcon name="calendar" size={13} className="shrink-0 text-[#A0AFBF]" />
                       </button>
                       {isDueDateOpen && (
                         <CustomDatePicker
@@ -1602,25 +1646,33 @@ export default function App() {
                       <label className={`block ${PANEL_FIELD_LABEL_CLASS}`}>담당자</label>
                       <button
                         type="button"
-                        onClick={() => setIsAssigneeOpen((prev) => !prev)}
-                        className={`w-full px-3.5 py-2.5 text-sm rounded-xl border transition flex items-center justify-between cursor-pointer ${
-                          isAssigneeOpen ? "bg-[#EEF3FF] border-[#0099CC]/40 shadow-[0_0_0_3px_rgba(0,153,204,0.12)]" : "bg-white border-[rgba(0,100,180,0.14)] hover:border-[rgba(0,153,204,0.4)]"
+                        onClick={() => {
+                          if (!isPanelEditable) return;
+                          setIsAssigneeOpen((prev) => !prev);
+                        }}
+                        className={`flex w-full items-center justify-between gap-1.5 rounded-xl border py-2 pl-3 pr-2.5 text-sm transition ${
+                          isAssigneeOpen
+                            ? "border-[#0099CC]/40 bg-white shadow-[0_0_0_3px_rgba(0,153,204,0.10)]"
+                            : isPanelEditable
+                            ? "border-[rgba(0,0,0,0.09)] bg-white text-[#0D1B2A] hover:border-[rgba(0,153,204,0.35)] cursor-pointer"
+                            : "border-[rgba(0,0,0,0.09)] bg-[#F8FAFF] text-[#5A6F8A] cursor-not-allowed"
                         }`}
+                        aria-disabled={!isPanelEditable}
                       >
-                        <span className="font-medium">{editForm.assignee}</span>
-                        <LucideIcon name="chevronDown" size={14} className={`text-[#5A6F8A] transition-transform ${isAssigneeOpen ? "rotate-180" : ""}`} />
+                        <span className="truncate text-[#0D1B2A]">{editForm.assignee}</span>
+                        <LucideIcon name="chevronDown" size={13} className={`shrink-0 text-[#A0AFBF] transition-transform ${isAssigneeOpen ? "rotate-180" : ""}`} />
                       </button>
                       {isAssigneeOpen && (
-                        <div className="absolute z-30 bottom-full mb-2 w-full overflow-hidden rounded-lg border border-[rgba(0,100,180,0.14)] bg-white shadow-[0_10px_28px_rgba(0,100,180,0.16)]">
+                        <div className="absolute left-0 right-0 z-20 mt-1.5 overflow-hidden rounded-xl border border-[rgba(0,0,0,0.08)] bg-white shadow-[0_12px_32px_rgba(0,0,0,0.12)]">
                           {TEAM_MEMBERS.map((m) => {
                             const isSelected = editForm.assignee === m.name;
                             return (
                               <button key={m.name} type="button"
                                 onClick={() => { setEditForm({ ...editForm, assignee: m.name }); setIsAssigneeOpen(false); }}
-                                className={`w-full px-3 py-2 text-sm text-left flex items-center justify-between transition-colors cursor-pointer ${isSelected ? "bg-[#EEF3FF] text-[#0099CC] font-semibold" : "text-[#0D1B2A] hover:bg-[#F8FAFF]"}`}
+                                className={`flex w-full items-center justify-between px-3.5 py-2.5 text-sm transition-colors cursor-pointer ${isSelected ? "bg-[#F5F7FB] font-semibold text-[#0099CC]" : "text-[#0D1B2A] hover:bg-[#F5F7FB]"}`}
                               >
                                 <span>{m.name}</span>
-                                {isSelected && <LucideIcon name="check" size={14} className="text-[#0099CC]" />}
+                                {isSelected && <LucideIcon name="check" size={13} className="text-[#0099CC]" />}
                               </button>
                             );
                           })}
@@ -1660,7 +1712,7 @@ export default function App() {
                 <div className="view-enter-right px-4 sm:px-5 py-4 space-y-4">
                   <div>
                     <h3 className="text-base font-bold text-[#0D1B2A]">연동 도구 선택</h3>
-                    <p className="text-sm text-[#5A6F8A] mt-1">이 액션 아이템을 어떤 툴로 내보낼까요?</p>
+                    <p className="text-sm text-[#5A6F8A] mt-1">이 해야 할 일을 어떤 툴로 내보낼까요?</p>
                   </div>
 
                   {isIntegratingSelected ? (

@@ -2,6 +2,9 @@ export default {
   content: ['./index.html', './src/**/*.{js,jsx,ts,tsx}'],
   theme: {
     extend: {
+      fontFamily: {
+        sans: ['Pretendard Variable', 'Pretendard', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'sans-serif'],
+      },
       keyframes: {
         tikiBounce: {
           '0%, 60%, 100%': { transform: 'translateY(0)' },

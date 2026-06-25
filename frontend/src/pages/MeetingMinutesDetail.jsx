@@ -249,19 +249,17 @@ function AgendaCompletionSection({ actions, onToggleAction }) {
             이번 회의, 할 일을 다 끝냈을까?
           </p>
         </div>
-        <div className="flex items-center gap-1.5">
-          <button
-            type="button"
-            onClick={() => setIsCollapsed((prev) => !prev)}
-            className="text-xs font-bold px-3 py-1.5 rounded-full flex items-center gap-1.5 cursor-pointer"
+        <div className="flex items-center gap-1">
+          <div
+            className="text-xs leading-none font-semibold px-2 py-[1px] rounded-full flex items-center justify-center text-center gap-[2px]"
             style={{
               color: achieved ? "#10B981" : "#0099CC",
               background: achieved ? "rgba(16,185,129,0.12)" : "rgba(0,153,204,0.1)",
             }}
           >
-            {achieved && <LucideIcon name="check-circle" size={12} color="#10B981" />}
+            {achieved && <LucideIcon name="check-circle" size={8} color="#10B981" />}
             {achieved ? "목표 달성" : `${remaining}건 남음`}
-          </button>
+          </div>
 
           <button
             type="button"
@@ -324,7 +322,7 @@ function AgendaCompletionSection({ actions, onToggleAction }) {
         {/* 우측 — 액션 아이템 카드 리스트 */}
         <div className="min-w-0 w-full md:max-w-2xl">
           <div className="flex items-center justify-between mb-2.5">
-            <p className="text-xs font-semibold text-slate-400">Action Item 상세</p>
+            <p className="text-xs font-semibold text-slate-400">해야 할 일 상세</p>
             <p className="text-xs text-slate-300">{done}/{total}</p>
           </div>
           <div className="flex flex-col gap-1.5">
@@ -641,7 +639,7 @@ function ServiceDetailModal({ open, onClose, svc, auditLog }) {
             <div key={i} className="flex items-center gap-2 text-xs">
               <span className="text-emerald-500 flex-shrink-0"><LucideIcon name="arrow-up" size={12} /></span>
               <span className="text-slate-600 flex-1 truncate">{log.label}</span>
-              <span className="text-slate-400 flex-shrink-0 font-mono">{log.time}</span>
+              <span className="text-slate-400 flex-shrink-0">{log.time}</span>
               <span className="text-slate-400 flex-shrink-0">{log.user}</span>
             </div>
           ))}
@@ -892,7 +890,7 @@ function IssueModal({ open, onClose, onIssued, services }) {
 
           <div>
             <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-2.5">
-              발행할 Action Items 선택
+              발행할 해야 할 일 선택
               {checkedItems.size > 0 && (
                 <span className="ml-2 text-cyan-500 normal-case">({checkedItems.size}개 선택됨)</span>
               )}
@@ -1102,7 +1100,7 @@ function RegenModal({ open, onClose, onRegen }) {
   const [len, setLen] = useState("보통");
   const FOCUSES = [
     { label: "기술 이슈",    val: "기술적 제약 사항 위주" },
-    { label: "액션 아이템", val: "Action Item과 담당자 위주" },
+    { label: "해야 할 일", val: "해야 할 일과 담당자 위주" },
     { label: "일정",        val: "일정 및 마일스톤 위주" },
     { label: "의사결정",    val: "의사결정 사항 위주" },
   ];
@@ -1194,7 +1192,7 @@ function TxCard({ item, isActive, isBookmarked, onSeek, onToggleBm, collapsed, o
       }`}
     >
       <div className="flex items-center gap-3 px-4 py-3 cursor-pointer" onClick={() => onSeek(item.ts)}>
-        <span className={`text-xs font-semibold font-mono w-10 flex-shrink-0 ${isActive ? "text-cyan-500" : "text-slate-400"}`}>
+        <span className={`text-xs font-semibold w-10 flex-shrink-0 ${isActive ? "text-cyan-500" : "text-slate-400"}`}>
           {item.time}
         </span>
         <div
@@ -1563,7 +1561,7 @@ function SummaryPanel({ summaryData, onOpenRegen, onSaveSummaryEdit, onOpenIssue
               </div>
 
               <div>
-                <p className="text-xs font-semibold text-slate-400 mb-1.5">Action Items (한 줄당: 내용 | 담당자 | 마감일 | 상태(todo/done))</p>
+                <p className="text-xs font-semibold text-slate-400 mb-1.5">해야 할 일 (한 줄당: 내용 | 담당자 | 마감일 | 상태(todo/done))</p>
                 <textarea
                   rows={5}
                   value={actionsText}
@@ -1630,7 +1628,7 @@ function SummaryPanel({ summaryData, onOpenRegen, onSaveSummaryEdit, onOpenIssue
               </div>
 
               <div>
-                <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-3">Action Items</p>
+                <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-3">해야 할 일</p>
                 <div className="space-y-2">
                   {actions.map((a, i) => (
                     <ActionItem
@@ -1833,7 +1831,7 @@ function SummaryEditModal({ open, onClose, summaryData, onSave }) {
         </div>
 
         <div>
-          <p className="text-xs font-semibold text-slate-400 mb-1.5">Action Items (한 줄당: 내용 | 담당자 | 마감일 | 상태(todo/done))</p>
+          <p className="text-xs font-semibold text-slate-400 mb-1.5">해야 할 일 (한 줄당: 내용 | 담당자 | 마감일 | 상태(todo/done))</p>
           <textarea
             rows={5}
             value={actionsText}
@@ -1885,7 +1883,7 @@ function AudioPlayer({ curTime, playing, spdIdx, onSeek, onTogglePlay, onCycleSp
         >
           {playing ? <LucideIcon name="pause" size={14} color="#fff" /> : <LucideIcon name="play" size={14} color="#fff" />}
         </button>
-        <span className="text-xs font-semibold font-mono text-slate-400 flex-shrink-0 hidden sm:block">
+        <span className="text-xs font-semibold text-slate-400 flex-shrink-0 hidden sm:block">
           {fmtTime(curTime)} / <span className="text-slate-300">1:15:32</span>
         </span>
         <div className="flex-1 relative h-3 flex items-center">
@@ -2212,7 +2210,11 @@ export default function TikiSprint12() {
   return (
     <div
       className="min-h-screen"
-      style={{ background: "#F8FAFF", fontFamily: "'Pretendard','Apple SD Gothic Neo',sans-serif", color: "#0D1B2A" }}
+      style={{
+        background: "#F8FAFF",
+        fontFamily: '"Pretendard Variable","Pretendard",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif',
+        color: "#0D1B2A",
+      }}
     >
       <Header
         isMobile={isMobile}
@@ -2447,7 +2449,7 @@ export default function TikiSprint12() {
             const focusSummaryMap = {
               "기술적 제약 사항 위주":
                 "이번 회의는 STT 처리 속도와 화자 분리 정확도 이슈를 중심으로 정리했습니다. 성능 목표 달성을 위해 최적화 우선순위와 추가 데이터 확보 필요성을 확인했습니다.",
-              "Action Item과 담당자 위주":
+              "해야 할 일과 담당자 위주":
                 "이번 회의의 핵심은 실행 항목 정렬이었습니다. 담당자와 마감일을 기준으로 우선순위를 재확인하고, 지연 가능 항목을 선제적으로 관리하기로 했습니다.",
               "일정 및 마일스톤 위주":
                 "개발 완료, QA, 배포 마일스톤을 중심으로 일정을 재점검했습니다. 현재 변수는 정확도 개선 작업이며, 일정 리스크를 줄이기 위한 선행 점검이 필요합니다.",
@@ -2457,7 +2459,7 @@ export default function TikiSprint12() {
 
             const focusKeywordMap = {
               "기술적 제약 사항 위주": ["성능 최적화", "정확도 개선", "기술 리스크"],
-              "Action Item과 담당자 위주": ["실행 계획", "담당자", "마감 관리"],
+              "해야 할 일과 담당자 위주": ["실행 계획", "담당자", "마감 관리"],
               "일정 및 마일스톤 위주": ["마일스톤", "일정 관리", "배포 계획"],
               "의사결정 사항 위주": ["핵심 결정", "정책 확정", "우선순위"],
             };
@@ -2511,7 +2513,7 @@ export default function TikiSprint12() {
 
             const focusAnchorMap = {
               "기술적 제약 사항 위주": "기술 이슈",
-              "Action Item과 담당자 위주": "액션 아이템",
+              "해야 할 일과 담당자 위주": "해야 할 일",
               "일정 및 마일스톤 위주": "일정/마일스톤",
               "의사결정 사항 위주": "의사결정",
             };

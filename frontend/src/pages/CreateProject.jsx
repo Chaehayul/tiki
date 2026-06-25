@@ -73,9 +73,11 @@ export default function CreateProject() {
   const [buildStepText, setBuildStepText] = useState('');
   const [buildSuccess, setBuildSuccess] = useState(false);
   const [toastMessage, setToastMessage] = useState('');
+  const [toastIcon, setToastIcon] = useState('info');
 
-  const triggerToast = (msg) => {
+  const triggerToast = (msg, icon = 'info') => {
     setToastMessage(msg);
+    setToastIcon(icon);
     setTimeout(() => setToastMessage(''), 3000);
   };
 
@@ -100,24 +102,24 @@ export default function CreateProject() {
 
   const handleGoToNext = (e) => {
     e.preventDefault();
-    if (!projectName.trim()) { triggerToast('⚠️ 프로젝트 이름을 입력해 주세요.'); return; }
+    if (!projectName.trim()) { triggerToast('프로젝트 이름을 입력해 주세요.', 'info'); return; }
     setStep(2);
   };
 
   const handleAddMember = () => {
-    if (!email.trim() || !email.includes('@')) { triggerToast('⚠️ 올바른 형식의 이메일 주소를 입력해 주세요.'); return; }
+    if (!email.trim() || !email.includes('@')) { triggerToast('올바른 형식의 이메일 주소를 입력해 주세요.', 'info'); return; }
     setIsInviting(true);
     setTimeout(() => {
       setInvitedMembers([...invitedMembers, { id: Date.now(), email: email.trim(), role: role === 'admin' ? '관리자' : '일반 멤버', status: '초대장 발송 완료' }]);
       setEmail('');
       setIsInviting(false);
-      triggerToast('📩 초대장이 메일로 성공적으로 발송되었습니다.');
+      triggerToast('초대장이 메일로 성공적으로 발송되었습니다.', 'mail');
     }, 1200);
   };
 
   const handleRemoveMember = (id) => {
     setInvitedMembers(invitedMembers.filter(m => m.id !== id));
-    triggerToast('🗑️ 초대가 취소되었습니다.');
+    triggerToast('초대가 취소되었습니다.', 'trash');
   };
 
   const startWorkspaceBuild = async (isSkipped = false) => {
@@ -142,7 +144,7 @@ export default function CreateProject() {
       setBuildSuccess(true);
     } catch (err) {
       setIsBuilding(false);
-      triggerToast(`⚠️ 프로젝트 생성 실패: ${err.message}`);
+      triggerToast(`프로젝트 생성 실패: ${err.message}`, 'info');
     }
   };
 
@@ -201,6 +203,7 @@ export default function CreateProject() {
       {/* 토스트 */}
       {toastMessage && (
         <div className="fixed bottom-6 right-6 z-50 bg-[#0D1B2A] text-white text-xs sm:text-sm font-semibold py-3.5 px-5 rounded-2xl shadow-xl flex items-center space-x-2 border border-white/10 animate-fadeIn">
+          <LIcon name={toastIcon} size={14} color="#ffffff" className="shrink-0" />
           <span>{toastMessage}</span>
         </div>
       )}

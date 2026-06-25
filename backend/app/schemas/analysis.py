@@ -13,6 +13,8 @@ class AnalysisResultResponse(BaseModel):
     # 분석 결과 (파이프라인 미완료 시 None)
     summary: str | None
     action_items: list[dict[str, Any]] | None
+    segments: list[dict[str, Any]] | None
+    tx: list[dict[str, Any]] | None
     model_name: str | None
     prompt_version: str | None
 

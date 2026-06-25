@@ -36,27 +36,146 @@ def _format_mmss(seconds: Any) -> str | None:
     return f"{minutes:02d}:{remainder:02d}"
 
 
+def _build_script_segment(
+    *,
+    index: int,
+    text: Any = "",
+    masked_text: Any | None = None,
+    speaker: Any | None = None,
+    speaker_id: Any | None = None,
+    speaker_label: Any | None = None,
+    participant_name: Any | None = None,
+    speaker_display_name: Any | None = None,
+    speaker_kind: Any | None = None,
+    is_mapped: Any | None = None,
+    start_seconds: Any | None = None,
+    end_seconds: Any | None = None,
+    duration_seconds: Any | None = None,
+    confidence: Any | None = None,
+    chunk_index: Any | None = None,
+    chunk_local_index: Any | None = None,
+    model_name: Any | None = None,
+    chunk_difficulty: Any | None = None,
+    source: str = "text",
+    segment_label: Any | None = None,
+    file_index: Any | None = None,
+    file_path: Any | None = None,
+    file_name: Any | None = None,
+) -> dict[str, Any]:
+    speaker_fields = _build_speaker_fields(
+        speaker,
+        speaker_id,
+        speaker_label,
+        participant_name=participant_name,
+        speaker_display_name=speaker_display_name,
+        speaker_kind=speaker_kind,
+        is_mapped=is_mapped,
+    )
+    normalized_text = _normalize_segment_text(text)
+    normalized_masked_text = _normalize_segment_text(masked_text if masked_text is not None else normalized_text)
+    return {
+        "index": index,
+        "file_index": file_index,
+        "file_path": file_path,
+        "file_name": file_name,
+        "segment_label": segment_label,
+        "chunk_index": chunk_index,
+        "chunk_local_index": chunk_local_index,
+        "speaker": speaker_fields["speaker"],
+        "speaker_id": speaker_fields["speaker_id"],
+        "speaker_label": speaker_fields["speaker_label"],
+        "participant_name": speaker_fields["participant_name"],
+        "speaker_display_name": speaker_fields["speaker_display_name"],
+        "speaker_kind": speaker_fields["speaker_kind"],
+        "is_mapped": speaker_fields["is_mapped"],
+        "start_seconds": start_seconds,
+        "end_seconds": end_seconds,
+        "duration_seconds": duration_seconds,
+        "confidence": confidence,
+        "text": normalized_text,
+        "masked_text": normalized_masked_text,
+        "model_name": model_name,
+        "chunk_difficulty": chunk_difficulty,
+        "source": source,
+    }
+
+
 def _build_tx_rows(segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for index, segment in enumerate(segments):
-        start_seconds = segment.get("start_seconds")
-        text = segment.get("masked_text") or segment.get("text") or ""
-        speaker_fields = _build_speaker_fields(
-            segment.get("speaker"),
-            segment.get("speaker_id"),
-            segment.get("speaker_label"),
+        normalized = _build_script_segment(
+            index=segment.get("index", index),
+            text=segment.get("text", ""),
+            masked_text=segment.get("masked_text"),
+            speaker=segment.get("speaker"),
+            speaker_id=segment.get("speaker_id"),
+            speaker_label=segment.get("speaker_label"),
+            participant_name=segment.get("participant_name"),
+            speaker_display_name=segment.get("speaker_display_name"),
+            speaker_kind=segment.get("speaker_kind"),
+            is_mapped=segment.get("is_mapped"),
+            start_seconds=segment.get("start_seconds"),
+            confidence=segment.get("confidence"),
+            source=segment.get("source", "text"),
+            segment_label=segment.get("segment_label"),
+            chunk_index=segment.get("chunk_index"),
+            chunk_local_index=segment.get("chunk_local_index"),
+            model_name=segment.get("model_name"),
+            chunk_difficulty=segment.get("chunk_difficulty"),
+            file_index=segment.get("file_index"),
+            file_path=segment.get("file_path"),
+            file_name=segment.get("file_name"),
         )
         rows.append(
             {
-                "time": _format_mmss(start_seconds),
-                "ts": int(round(float(start_seconds))) if start_seconds is not None else None,
-                "spk": speaker_fields["speaker"],
-                "speaker_id": speaker_fields["speaker_id"],
-                "speaker_label": speaker_fields["speaker_label"],
-                "txt": text,
-                "confidence": segment.get("confidence"),
-                "index": segment.get("index", index),
+                "time": _format_mmss(normalized["start_seconds"]),
+                "ts": int(round(float(normalized["start_seconds"]))) if normalized["start_seconds"] is not None else None,
+                "spk": normalized["speaker"],
+                "speaker_id": normalized["speaker_id"],
+                "speaker_label": normalized["speaker_label"],
+                "participant_name": normalized["participant_name"],
+                "speaker_display_name": normalized["speaker_display_name"],
+                "speaker_kind": normalized["speaker_kind"],
+                "is_mapped": normalized["is_mapped"],
+                "segment_label": normalized["segment_label"],
+                "txt": normalized["masked_text"] or normalized["text"] or "",
+                "confidence": normalized["confidence"],
+                "source": normalized["source"],
+                "index": normalized["index"],
             }
+        )
+    return rows
+
+
+def _build_script_segments(segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for index, segment in enumerate(segments):
+        rows.append(
+            _build_script_segment(
+                index=segment.get("index", index),
+                text=segment.get("text", ""),
+                masked_text=segment.get("masked_text", segment.get("text", "")),
+                speaker=segment.get("speaker"),
+                speaker_id=segment.get("speaker_id"),
+                speaker_label=segment.get("speaker_label"),
+                participant_name=segment.get("participant_name"),
+                speaker_display_name=segment.get("speaker_display_name"),
+                speaker_kind=segment.get("speaker_kind"),
+                is_mapped=segment.get("is_mapped"),
+                start_seconds=segment.get("start_seconds"),
+                end_seconds=segment.get("end_seconds"),
+                duration_seconds=segment.get("duration_seconds"),
+                confidence=segment.get("confidence"),
+                chunk_index=segment.get("chunk_index"),
+                chunk_local_index=segment.get("chunk_local_index"),
+                model_name=segment.get("model_name"),
+                chunk_difficulty=segment.get("chunk_difficulty"),
+                source=segment.get("source", "audio_chunk"),
+                segment_label=segment.get("segment_label"),
+                file_index=segment.get("file_index"),
+                file_path=segment.get("file_path"),
+                file_name=segment.get("file_name"),
+            )
         )
     return rows
 
@@ -65,10 +184,17 @@ def _build_speaker_fields(
     speaker: Any,
     speaker_id: Any | None = None,
     speaker_label: Any | None = None,
+    participant_name: Any | None = None,
+    speaker_display_name: Any | None = None,
+    speaker_kind: Any | None = None,
+    is_mapped: Any | None = None,
 ) -> dict[str, Any]:
     normalized_speaker = _normalize_segment_text(speaker)
     normalized_speaker_id = _normalize_segment_text(speaker_id)
     normalized_speaker_label = _normalize_segment_text(speaker_label)
+    normalized_participant_name = _normalize_segment_text(participant_name)
+    normalized_speaker_display_name = _normalize_segment_text(speaker_display_name)
+    normalized_speaker_kind = _normalize_segment_text(speaker_kind)
 
     if normalized_speaker.lower() in {"none", "null", "unknown"}:
         normalized_speaker = ""
@@ -76,15 +202,40 @@ def _build_speaker_fields(
         normalized_speaker_id = ""
     if normalized_speaker_label.lower() in {"none", "null", "unknown"}:
         normalized_speaker_label = ""
+    if normalized_participant_name.lower() in {"none", "null", "unknown"}:
+        normalized_participant_name = ""
+    if normalized_speaker_display_name.lower() in {"none", "null", "unknown"}:
+        normalized_speaker_display_name = ""
 
     canonical_speaker = normalized_speaker or normalized_speaker_id or normalized_speaker_label or None
     if canonical_speaker is None:
-        return {"speaker": None, "speaker_id": None, "speaker_label": None}
+        return {
+            "speaker": None,
+            "speaker_id": None,
+            "speaker_label": None,
+            "participant_name": None,
+            "speaker_display_name": None,
+            "speaker_kind": normalized_speaker_kind or "unknown",
+            "is_mapped": bool(is_mapped) if is_mapped is not None else False,
+        }
+
+    display_name = (
+        normalized_participant_name
+        or normalized_speaker_display_name
+        or normalized_speaker_label
+        or canonical_speaker
+    )
+    resolved_kind = normalized_speaker_kind or ("participant" if normalized_participant_name else "generic")
+    mapped = bool(is_mapped) if is_mapped is not None else bool(normalized_participant_name)
 
     return {
         "speaker": canonical_speaker,
         "speaker_id": normalized_speaker_id or canonical_speaker,
         "speaker_label": normalized_speaker_label or canonical_speaker,
+        "participant_name": normalized_participant_name or None,
+        "speaker_display_name": display_name or None,
+        "speaker_kind": resolved_kind,
+        "is_mapped": mapped,
     }
 
 
@@ -308,20 +459,14 @@ def _build_sentence_segments(text: str) -> list[dict[str, Any]]:
     sentences = _split_sentences(text)
     segments: list[dict[str, Any]] = []
     for index, sentence in enumerate(sentences):
-        speaker_fields = _build_speaker_fields(None)
         segments.append(
-            {
-                "index": index,
-                "speaker": speaker_fields["speaker"],
-                "speaker_id": speaker_fields["speaker_id"],
-                "speaker_label": speaker_fields["speaker_label"],
-                "start_seconds": None,
-                "end_seconds": None,
-                "confidence": None,
-                "text": sentence,
-                "masked_text": sentence,
-                "source": "text",
-            }
+            _build_script_segment(
+                index=index,
+                text=sentence,
+                masked_text=sentence,
+                source="text",
+                segment_label=f"[SEGMENT {index + 1}]",
+            )
         )
     return segments
 
@@ -403,6 +548,10 @@ def _build_meeting_search_document(
             segment.get("speaker"),
             segment.get("speaker_id"),
             segment.get("speaker_label"),
+            participant_name=segment.get("participant_name"),
+            speaker_display_name=segment.get("speaker_display_name"),
+            speaker_kind=segment.get("speaker_kind"),
+            is_mapped=segment.get("is_mapped"),
         )
         chunk_text = _normalize_segment_text(segment.get("masked_text") or segment.get("text"))
         if not chunk_text:
@@ -413,6 +562,10 @@ def _build_meeting_search_document(
             speaker=speaker_fields["speaker"],
             speaker_id=speaker_fields["speaker_id"],
             speaker_label=speaker_fields["speaker_label"],
+            participant_name=speaker_fields["participant_name"],
+            speaker_display_name=speaker_fields["speaker_display_name"],
+            speaker_kind=speaker_fields["speaker_kind"],
+            is_mapped=speaker_fields["is_mapped"],
             start_seconds=segment.get("start_seconds"),
             end_seconds=segment.get("end_seconds"),
             duration_seconds=segment.get("duration_seconds"),
@@ -421,7 +574,7 @@ def _build_meeting_search_document(
             text=_normalize_segment_text(segment.get("text")),
             masked_text=chunk_text,
             search_text=_join_search_parts(
-                speaker_fields["speaker_label"] or speaker_fields["speaker_id"] or speaker_fields["speaker"],
+                speaker_fields["speaker_display_name"] or speaker_fields["speaker_label"] or speaker_fields["speaker_id"] or speaker_fields["speaker"],
                 chunk_text,
             ),
         )
@@ -750,6 +903,9 @@ class AIEngine:
         context_snapshot = _build_context_snapshot(rag_context)
         evidence = _build_evidence_items(masked_text, analysis_data, segments, context_snapshot=context_snapshot)
         analysis = _build_analysis_payload(analysis_data, evidence=evidence)
+        script_segments = _build_script_segments(segments)
+        analysis.extra_data["script_segments"] = script_segments
+        analysis.extra_data["tx"] = _build_tx_rows(script_segments)
         analysis.extra_data["search_document"] = _build_meeting_search_document(
             transcript=text,
             masked_transcript=masked_text,
@@ -765,9 +921,11 @@ class AIEngine:
         )
 
     def process_audio(self, file_path: str, rag_context: Any | None = None) -> AIProcessingResult:
+        context_snapshot = _build_context_snapshot(rag_context)
+        participant_names = list(context_snapshot.get("participants") or []) if context_snapshot else []
         transcriber = getattr(self.stt_service, "transcribe_with_segments", None)
         if callable(transcriber):
-            transcript, raw_segments = transcriber(file_path)
+            transcript, raw_segments = transcriber(file_path, participant_names=participant_names)
         else:
             transcript = self.transcribe_audio(file_path)
             raw_segments = []
@@ -779,30 +937,31 @@ class AIEngine:
             preprocessing = get_last_preprocessing()
         analysis_context = _augment_context_with_audio_quality(rag_context, preprocessing)
         segments = [
-            {
-                "index": segment.get("index", index),
-                "chunk_index": segment.get("chunk_index"),
-                "chunk_local_index": segment.get("chunk_local_index"),
-                **_build_speaker_fields(
-                    segment.get("speaker"),
-                    segment.get("speaker_id"),
-                    segment.get("speaker_label"),
-                ),
-                "start_seconds": segment.get("start_seconds"),
-                "end_seconds": segment.get("end_seconds"),
-                "duration_seconds": segment.get("duration_seconds"),
-                "confidence": segment.get("confidence"),
-                "text": segment.get("text", ""),
-                "masked_text": mask_personal_information(segment.get("text", "")),
-                "source": "audio_chunk",
-                "model_name": segment.get("model_name"),
-                "chunk_difficulty": segment.get("chunk_difficulty"),
-            }
+            _build_script_segment(
+                index=segment.get("index", index),
+                text=segment.get("text", ""),
+                masked_text=mask_personal_information(segment.get("text", "")),
+                speaker=segment.get("speaker"),
+                speaker_id=segment.get("speaker_id"),
+                speaker_label=segment.get("speaker_label"),
+                participant_name=segment.get("participant_name"),
+                speaker_display_name=segment.get("speaker_display_name"),
+                speaker_kind=segment.get("speaker_kind"),
+                is_mapped=segment.get("is_mapped"),
+                start_seconds=segment.get("start_seconds"),
+                end_seconds=segment.get("end_seconds"),
+                duration_seconds=segment.get("duration_seconds"),
+                confidence=segment.get("confidence"),
+                chunk_index=segment.get("chunk_index"),
+                chunk_local_index=segment.get("chunk_local_index"),
+                model_name=segment.get("model_name"),
+                chunk_difficulty=segment.get("chunk_difficulty"),
+                source="audio_chunk",
+            )
             for index, segment in enumerate(raw_segments)
         ] or _build_sentence_segments(masked_transcript)
 
         analysis_data = self.llm_service.summarize_and_extract_tickets(masked_transcript, context=analysis_context)
-        context_snapshot = _build_context_snapshot(rag_context)
         evidence = _build_evidence_items(masked_transcript, analysis_data, segments, context_snapshot=context_snapshot)
         analysis = _build_analysis_payload(analysis_data, evidence=evidence)
         if preprocessing:
@@ -815,6 +974,9 @@ class AIEngine:
         stt_routing = _summarize_stt_routing(segments)
         if stt_routing:
             analysis.extra_data["stt_routing"] = stt_routing
+        script_segments = _build_script_segments(segments)
+        analysis.extra_data["script_segments"] = script_segments
+        analysis.extra_data["tx"] = _build_tx_rows(script_segments)
         analysis.extra_data["search_document"] = _build_meeting_search_document(
             transcript=transcript,
             masked_transcript=masked_transcript,
@@ -892,6 +1054,8 @@ class AIEngine:
         if not file_paths:
             raise ValueError("At least one audio file path is required.")
 
+        context_snapshot = _build_context_snapshot(rag_context)
+        participant_names = list(context_snapshot.get("participants") or []) if context_snapshot else []
         file_results: list[AIFileProcessingResult] = []
         transcript_segments: list[str] = []
         masked_segments: list[str] = []
@@ -902,7 +1066,7 @@ class AIEngine:
         for index, file_path in enumerate(file_paths):
             transcriber = getattr(self.stt_service, "transcribe_with_segments", None)
             if callable(transcriber):
-                transcript, raw_segments = transcriber(file_path)
+                transcript, raw_segments = transcriber(file_path, participant_names=participant_names)
             else:
                 transcript = self.transcribe_audio(file_path)
                 raw_segments = []
@@ -934,48 +1098,49 @@ class AIEngine:
             )
 
             file_segments = [
-                {
-                    "index": segment.get("index", segment_index),
-                    "file_index": index,
-                    "file_path": file_path,
-                    "file_name": Path(file_path).name,
-                    "segment_label": segment_label,
-                    "chunk_index": segment.get("chunk_index"),
-                    "chunk_local_index": segment.get("chunk_local_index"),
-                    **_build_speaker_fields(
-                        segment.get("speaker"),
-                        segment.get("speaker_id"),
-                        segment.get("speaker_label"),
-                    ),
-                    "start_seconds": segment.get("start_seconds"),
-                    "end_seconds": segment.get("end_seconds"),
-                    "duration_seconds": segment.get("duration_seconds"),
-                    "confidence": segment.get("confidence"),
-                    "text": segment.get("text", ""),
-                    "masked_text": mask_personal_information(segment.get("text", "")),
-                    "source": "audio_chunk",
-                    "model_name": segment.get("model_name"),
-                    "chunk_difficulty": segment.get("chunk_difficulty"),
-                }
+                _build_script_segment(
+                    index=segment.get("index", segment_index),
+                    text=segment.get("text", ""),
+                    masked_text=mask_personal_information(segment.get("text", "")),
+                    speaker=segment.get("speaker"),
+                    speaker_id=segment.get("speaker_id"),
+                    speaker_label=segment.get("speaker_label"),
+                    participant_name=segment.get("participant_name"),
+                    speaker_display_name=segment.get("speaker_display_name"),
+                    speaker_kind=segment.get("speaker_kind"),
+                    is_mapped=segment.get("is_mapped"),
+                    start_seconds=segment.get("start_seconds"),
+                    end_seconds=segment.get("end_seconds"),
+                    duration_seconds=segment.get("duration_seconds"),
+                    confidence=segment.get("confidence"),
+                    chunk_index=segment.get("chunk_index"),
+                    chunk_local_index=segment.get("chunk_local_index"),
+                    model_name=segment.get("model_name"),
+                    chunk_difficulty=segment.get("chunk_difficulty"),
+                    source="audio_chunk",
+                    segment_label=segment_label,
+                    file_index=index,
+                    file_path=file_path,
+                    file_name=Path(file_path).name,
+                )
                 for segment_index, segment in enumerate(raw_segments)
             ]
             if not file_segments:
                 file_segments = [
-                    {
-                        "index": 0,
-                        "file_index": index,
-                        "file_path": file_path,
-                        "file_name": Path(file_path).name,
-                        "segment_label": segment_label,
-                        **_build_speaker_fields(None),
-                        "start_seconds": None,
-                        "end_seconds": None,
-                        "duration_seconds": None,
-                        "confidence": None,
-                        "text": transcript.strip(),
-                        "masked_text": masked_transcript.strip(),
-                        "source": "text_fallback",
-                    }
+                    _build_script_segment(
+                        index=0,
+                        text=transcript.strip(),
+                        masked_text=masked_transcript.strip(),
+                        participant_name=None,
+                        speaker_display_name=None,
+                        speaker_kind="unknown",
+                        is_mapped=False,
+                        source="text_fallback",
+                        segment_label=segment_label,
+                        file_index=index,
+                        file_path=file_path,
+                        file_name=Path(file_path).name,
+                    )
                 ] if transcript.strip() else []
 
             timeline_segments.extend(file_segments)
@@ -1003,7 +1168,6 @@ class AIEngine:
             },
         )
         analysis_data = self.llm_service.summarize_and_extract_tickets(combined_masked_transcript, context=batch_context)
-        context_snapshot = _build_context_snapshot(rag_context)
         evidence = _build_evidence_items(
             combined_masked_transcript,
             analysis_data,
@@ -1018,6 +1182,9 @@ class AIEngine:
         stt_routing = _summarize_stt_routing(timeline_segments)
         if stt_routing:
             analysis.extra_data["stt_routing"] = stt_routing
+        script_segments = _build_script_segments(timeline_segments)
+        analysis.extra_data["script_segments"] = script_segments
+        analysis.extra_data["tx"] = _build_tx_rows(script_segments)
         analysis.extra_data["search_document"] = _build_meeting_search_document(
             transcript=combined_transcript,
             masked_transcript=combined_masked_transcript,

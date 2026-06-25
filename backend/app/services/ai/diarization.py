@@ -3,24 +3,98 @@
 from __future__ import annotations
 
 import logging
+import re
 from abc import ABC, abstractmethod
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
+try:  # pragma: no cover - torch is optional in lightweight dev/test envs
+    import torch
+except ImportError:  # pragma: no cover - optional dependency
+    torch = None
+
 from app.core.config import settings
+from app.services.ai.audio_preprocessing import WhisperAudioPreprocessor
 
 logger = logging.getLogger(__name__)
+DIARIZATION_MERGE_GAP_SECONDS = 0.35
+
+
+def _clean_label(value: Any) -> str:
+    return re.sub(r"\s+", " ", str(value or "")).strip()
+
+
+def _normalize_diarization_turns(turns: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    parsed_turns: list[dict[str, Any]] = []
+    for order, turn in enumerate(turns):
+        try:
+            start_seconds = float(turn.get("start_seconds") or 0.0)
+            end_seconds = float(turn.get("end_seconds") or 0.0)
+        except (TypeError, ValueError):
+            continue
+
+        if end_seconds <= start_seconds:
+            continue
+
+        speaker_id = _clean_label(turn.get("speaker_id") or turn.get("speaker_label") or turn.get("speaker") or f"speaker_{order + 1}")
+        if not speaker_id:
+            continue
+
+        speaker_label = _clean_label(turn.get("speaker_label") or turn.get("speaker") or speaker_id) or speaker_id
+        parsed_turns.append(
+            {
+                "turn_index": order,
+                "start_seconds": round(start_seconds, 3),
+                "end_seconds": round(end_seconds, 3),
+                "speaker_id": speaker_id,
+                "speaker_label": speaker_label,
+                "speaker": speaker_label,
+            }
+        )
+
+    parsed_turns.sort(key=lambda row: (row["start_seconds"], row["end_seconds"], row["turn_index"]))
+
+    normalized: list[dict[str, Any]] = []
+    for turn in parsed_turns:
+        if normalized:
+            previous = normalized[-1]
+            same_speaker = previous["speaker_id"] == turn["speaker_id"]
+            close_gap = float(turn["start_seconds"]) - float(previous["end_seconds"]) <= DIARIZATION_MERGE_GAP_SECONDS
+            if same_speaker and close_gap:
+                previous["end_seconds"] = round(max(float(previous["end_seconds"]), float(turn["end_seconds"])), 3)
+                continue
+
+        normalized.append(turn)
+
+    for index, turn in enumerate(normalized):
+        turn["turn_index"] = index
+
+    return normalized
 
 
 class SpeakerDiarizationService(ABC):
     @abstractmethod
-    def diarize(self, audio_path: str) -> list[dict[str, Any]]:
+    def diarize(
+        self,
+        audio_path: str,
+        *,
+        samples: Any | None = None,
+        sample_rate: int | None = None,
+    ) -> list[dict[str, Any]]:
         raise NotImplementedError
 
 
 class NoopSpeakerDiarizationService(SpeakerDiarizationService):
-    def diarize(self, audio_path: str) -> list[dict[str, Any]]:
+    def diarize(
+        self,
+        audio_path: str,
+        *,
+        samples: Any | None = None,
+        sample_rate: int | None = None,
+    ) -> list[dict[str, Any]]:
         return []
 
 
@@ -56,19 +130,36 @@ class PyannoteSpeakerDiarizationService(SpeakerDiarizationService):
         except TypeError:
             return Pipeline.from_pretrained(model_name, use_auth_token=token)
 
-    def diarize(self, audio_path: str) -> list[dict[str, Any]]:
+    def diarize(
+        self,
+        audio_path: str,
+        *,
+        samples: Any | None = None,
+        sample_rate: int | None = None,
+    ) -> list[dict[str, Any]]:
         if not self.enabled:
             return []
+        if torch is None:
+            raise RuntimeError("torch is required for pyannote diarization but is not installed.")
 
         path = Path(audio_path)
         if not path.exists():
             raise FileNotFoundError(f"Audio file not found: {audio_path}")
 
+        if samples is None or sample_rate is None:
+            preprocessor = WhisperAudioPreprocessor()
+            samples = preprocessor.load_audio(path)
+            sample_rate = preprocessor.sample_rate
+
+        waveform = torch.from_numpy(np.asarray(samples, dtype=np.float32)).unsqueeze(0)
         pipeline = self._load_pipeline(self.model_name, self.token)
         try:
-            diarization = pipeline(str(path))
+            diarization = pipeline({"waveform": waveform, "sample_rate": sample_rate})
         except Exception as exc:
-            raise RuntimeError(f"Failed to diarize audio with {self.model_name}: {exc}") from exc
+            try:
+                diarization = pipeline(str(path))
+            except Exception as path_exc:
+                raise RuntimeError(f"Failed to diarize audio with {self.model_name}: {exc}") from path_exc
 
         annotation = getattr(diarization, "speaker_diarization", diarization)
         if not hasattr(annotation, "itertracks"):
@@ -84,10 +175,8 @@ class PyannoteSpeakerDiarizationService(SpeakerDiarizationService):
                 }
             )
 
-        return turns
+        return _normalize_diarization_turns(turns)
 
 
 def build_speaker_diarization_service() -> SpeakerDiarizationService:
-    if not settings.diarization_enabled:
-        return NoopSpeakerDiarizationService()
     return PyannoteSpeakerDiarizationService()

@@ -50,6 +50,7 @@ class AudioPreprocessingResult:
     duration_seconds: float
     strategy: str
     chunking_enabled: bool
+    samples: Any | None = None
     chunks: list[AudioChunk] = field(default_factory=list)
     load_metadata: dict[str, Any] = field(default_factory=dict)
     quality_flags: list[str] = field(default_factory=list)
@@ -92,6 +93,7 @@ class WhisperAudioPreprocessor:
         min_silence_seconds: float = 1.2,
         min_chunk_seconds: float = 45.0,
         max_chunk_seconds: float = 180.0,
+        transcription_overlap_seconds: float = 0.85,
         noisy_split_threshold_seconds: float = 90.0,
         noisy_fixed_window_seconds: float = 60.0,
         noisy_chunk_overlap_seconds: float = 3.0,
@@ -103,6 +105,7 @@ class WhisperAudioPreprocessor:
         self.min_silence_seconds = min_silence_seconds
         self.min_chunk_seconds = min_chunk_seconds
         self.max_chunk_seconds = max_chunk_seconds
+        self.transcription_overlap_seconds = transcription_overlap_seconds
         self.noisy_split_threshold_seconds = noisy_split_threshold_seconds
         self.noisy_fixed_window_seconds = noisy_fixed_window_seconds
         self.noisy_chunk_overlap_seconds = noisy_chunk_overlap_seconds
@@ -257,6 +260,7 @@ class WhisperAudioPreprocessor:
                 duration_seconds=0.0,
                 strategy="empty",
                 chunking_enabled=False,
+                samples=samples,
                 chunks=[chunk],
                 load_metadata=dict(load_meta),
                 quality_flags=quality_flags,
@@ -277,6 +281,7 @@ class WhisperAudioPreprocessor:
                 duration_seconds=duration_seconds,
                 strategy="ffmpeg_denoised_single_chunk",
                 chunking_enabled=False,
+                samples=samples,
                 chunks=[chunk],
                 load_metadata=dict(load_meta),
                 quality_flags=quality_flags,
@@ -301,6 +306,7 @@ class WhisperAudioPreprocessor:
                 duration_seconds=duration_seconds,
                 strategy="single_chunk",
                 chunking_enabled=False,
+                samples=samples,
                 chunks=[chunk],
                 load_metadata={**load_meta, "noisy_recording": noisy_recording},
                 quality_flags=quality_flags,
@@ -309,7 +315,11 @@ class WhisperAudioPreprocessor:
         if noisy_recording:
             intervals = self._build_fixed_windows(duration_seconds)
             strategy = "noisy_fixed_window_split"
-            chunk_specs = self._apply_noisy_overlap_to_intervals(intervals, duration_seconds)
+            chunk_specs = self._apply_overlap_to_intervals(
+                intervals,
+                duration_seconds,
+                overlap_seconds=self.noisy_chunk_overlap_seconds,
+            )
         else:
             intervals = self._detect_speech_intervals(samples, duration_seconds)
             if not intervals:
@@ -317,15 +327,22 @@ class WhisperAudioPreprocessor:
                 strategy = "fixed_window_split"
             else:
                 strategy = "silence_split" if len(intervals) > 1 else "single_chunk"
-            chunk_specs = self._intervals_to_specs(intervals)
 
         intervals = self._merge_close_intervals(intervals)
         intervals = self._pad_intervals(intervals, duration_seconds)
         intervals = self._split_long_intervals(intervals)
         if noisy_recording:
-            chunk_specs = self._apply_noisy_overlap_to_intervals(intervals, duration_seconds)
+            chunk_specs = self._apply_overlap_to_intervals(
+                intervals,
+                duration_seconds,
+                overlap_seconds=self.noisy_chunk_overlap_seconds,
+            )
         else:
-            chunk_specs = self._intervals_to_specs(intervals)
+            chunk_specs = self._apply_overlap_to_intervals(
+                intervals,
+                duration_seconds,
+                overlap_seconds=self.transcription_overlap_seconds,
+            )
 
         chunks = self._materialize_chunks(samples, chunk_specs)
         chunks = self._merge_short_chunks(chunks)
@@ -333,7 +350,11 @@ class WhisperAudioPreprocessor:
 
         if len(chunks) == 1 and noisy_recording and duration_seconds > self.noisy_split_threshold_seconds:
             intervals = self._build_fixed_windows(duration_seconds)
-            chunk_specs = self._apply_noisy_overlap_to_intervals(intervals, duration_seconds)
+            chunk_specs = self._apply_overlap_to_intervals(
+                intervals,
+                duration_seconds,
+                overlap_seconds=self.noisy_chunk_overlap_seconds,
+            )
             chunks = self._materialize_chunks(samples, chunk_specs)
             chunks = self._merge_short_chunks(chunks)
             chunks = [self._reindex_chunk(chunk, index) for index, chunk in enumerate(chunks)]
@@ -347,6 +368,7 @@ class WhisperAudioPreprocessor:
             duration_seconds=duration_seconds,
             strategy=strategy,
             chunking_enabled=len(chunks) > 1,
+            samples=samples,
             chunks=chunks,
             load_metadata={**load_meta, "noisy_recording": noisy_recording, "strategy": strategy},
             quality_flags=quality_flags,
@@ -690,15 +712,17 @@ class WhisperAudioPreprocessor:
         for chunk in chunks:
             if merged and chunk.duration_seconds < self.min_chunk_seconds:
                 previous = merged[-1]
-                merged[-1] = AudioChunk(
-                    index=previous.index,
-                    start_seconds=previous.start_seconds,
-                    end_seconds=chunk.end_seconds,
-                    samples=np.concatenate((previous.samples, chunk.samples)),
-                    core_start_seconds=previous.core_start_seconds if previous.core_start_seconds is not None else previous.start_seconds,
-                    core_end_seconds=chunk.core_end_seconds if chunk.core_end_seconds is not None else chunk.end_seconds,
-                )
-                continue
+                merged_duration = max(0.0, chunk.end_seconds - previous.start_seconds)
+                if previous.duration_seconds < self.min_chunk_seconds or merged_duration <= self.max_chunk_seconds * 1.15:
+                    merged[-1] = AudioChunk(
+                        index=previous.index,
+                        start_seconds=previous.start_seconds,
+                        end_seconds=chunk.end_seconds,
+                        samples=np.concatenate((previous.samples, chunk.samples)),
+                        core_start_seconds=previous.core_start_seconds if previous.core_start_seconds is not None else previous.start_seconds,
+                        core_end_seconds=chunk.core_end_seconds if chunk.core_end_seconds is not None else chunk.end_seconds,
+                    )
+                    continue
             merged.append(chunk)
         return merged
 
@@ -716,15 +740,17 @@ class WhisperAudioPreprocessor:
     def _intervals_to_specs(self, intervals: list[tuple[float, float]]) -> list[tuple[float, float, float, float]]:
         return [(start, end, start, end) for start, end in intervals]
 
-    def _apply_noisy_overlap_to_intervals(
+    def _apply_overlap_to_intervals(
         self,
         intervals: list[tuple[float, float]],
         duration_seconds: float,
+        *,
+        overlap_seconds: float,
     ) -> list[tuple[float, float, float, float]]:
         if not intervals:
             return []
 
-        overlap = min(self.noisy_chunk_overlap_seconds, self.min_chunk_seconds / 2)
+        overlap = max(0.0, min(overlap_seconds, self.min_chunk_seconds / 2))
         specs: list[tuple[float, float, float, float]] = []
         for index, (core_start, core_end) in enumerate(intervals):
             actual_start = core_start

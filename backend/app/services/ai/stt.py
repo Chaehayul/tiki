@@ -11,10 +11,18 @@ from typing import Any
 
 from app.core.config import settings
 from app.services.ai.audio_preprocessing import AudioPreprocessingResult, WhisperAudioPreprocessor
-from app.services.ai.diarization import NoopSpeakerDiarizationService, build_speaker_diarization_service
+from app.services.ai.diarization import build_speaker_diarization_service
 from app.services.ai.text_normalization import normalize_meeting_terms
 
 logger = logging.getLogger(__name__)
+GENERIC_SPEAKER_LABEL_PREFIX = "팀원"
+MIN_MINOR_SPEAKER_TURN_SECONDS = 4.0
+MIN_MINOR_SPEAKER_RATIO = 0.02
+MIN_MINOR_SPEAKER_COUNT_TRIGGER = 5
+
+
+def _build_generic_speaker_label(index: int) -> str:
+    return f"{GENERIC_SPEAKER_LABEL_PREFIX} {index}"
 
 
 class SpeechToTextService(ABC):
@@ -22,7 +30,12 @@ class SpeechToTextService(ABC):
     def transcribe(self, audio_path: str) -> str:
         raise NotImplementedError
 
-    def transcribe_with_segments(self, audio_path: str) -> tuple[str, list[dict[str, Any]]]:
+    def transcribe_with_segments(
+        self,
+        audio_path: str,
+        *,
+        participant_names: list[str] | None = None,
+    ) -> tuple[str, list[dict[str, Any]]]:
         """Optional richer transcription output with chunk metadata."""
         return self.transcribe(audio_path), []
 
@@ -31,6 +44,10 @@ def _normalize_speaker_fields(
     speaker: Any,
     speaker_id: Any | None = None,
     speaker_label: Any | None = None,
+    participant_name: Any | None = None,
+    speaker_display_name: Any | None = None,
+    speaker_kind: Any | None = None,
+    is_mapped: Any | None = None,
 ) -> dict[str, Any]:
     def clean(value: Any) -> str:
         return re.sub(r"\s+", " ", str(value or "")).strip()
@@ -38,6 +55,9 @@ def _normalize_speaker_fields(
     normalized_speaker = clean(speaker)
     normalized_speaker_id = clean(speaker_id)
     normalized_speaker_label = clean(speaker_label)
+    normalized_participant_name = clean(participant_name)
+    normalized_speaker_display_name = clean(speaker_display_name)
+    normalized_speaker_kind = clean(speaker_kind)
 
     if normalized_speaker.lower() in {"none", "null", "unknown"}:
         normalized_speaker = ""
@@ -45,16 +65,66 @@ def _normalize_speaker_fields(
         normalized_speaker_id = ""
     if normalized_speaker_label.lower() in {"none", "null", "unknown"}:
         normalized_speaker_label = ""
+    if normalized_participant_name.lower() in {"none", "null", "unknown"}:
+        normalized_participant_name = ""
+    if normalized_speaker_display_name.lower() in {"none", "null", "unknown"}:
+        normalized_speaker_display_name = ""
 
     canonical_speaker = normalized_speaker or normalized_speaker_id or normalized_speaker_label or None
     if canonical_speaker is None:
-        return {"speaker": None, "speaker_id": None, "speaker_label": None}
+        return {
+            "speaker": None,
+            "speaker_id": None,
+            "speaker_label": None,
+            "participant_name": None,
+            "speaker_display_name": None,
+            "speaker_kind": normalized_speaker_kind or "unknown",
+            "is_mapped": bool(is_mapped) if is_mapped is not None else False,
+        }
+
+    display_name = (
+        normalized_participant_name
+        or normalized_speaker_display_name
+        or normalized_speaker_label
+        or canonical_speaker
+    )
+    resolved_kind = normalized_speaker_kind or ("participant" if normalized_participant_name else "generic")
+    mapped = bool(is_mapped) if is_mapped is not None else bool(normalized_participant_name)
 
     return {
         "speaker": canonical_speaker,
         "speaker_id": normalized_speaker_id or canonical_speaker,
         "speaker_label": normalized_speaker_label or canonical_speaker,
+        "participant_name": normalized_participant_name or None,
+        "speaker_display_name": display_name or None,
+        "speaker_kind": resolved_kind,
+        "is_mapped": mapped,
     }
+
+
+def _is_minor_speaker_bucket(
+    bucket: dict[str, Any],
+    *,
+    total_speech_seconds: float,
+    speaker_count: int,
+) -> bool:
+    if speaker_count < MIN_MINOR_SPEAKER_COUNT_TRIGGER:
+        return False
+
+    try:
+        speech_seconds = float(bucket.get("speech_seconds") or 0.0)
+        turn_count = int(bucket.get("turn_count") or 0)
+    except (TypeError, ValueError):
+        return False
+
+    if turn_count > 1:
+        return False
+    if speech_seconds > MIN_MINOR_SPEAKER_TURN_SECONDS:
+        return False
+    if total_speech_seconds <= 0:
+        return False
+
+    return (speech_seconds / total_speech_seconds) <= MIN_MINOR_SPEAKER_RATIO
 
 
 def _speaker_overlap_seconds(
@@ -66,9 +136,27 @@ def _speaker_overlap_seconds(
     return max(0.0, min(segment_end, turn_end) - max(segment_start, turn_start))
 
 
+def _normalize_participant_names(participant_names: list[str] | None) -> list[str]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for name in participant_names or []:
+        cleaned = re.sub(r"\s+", " ", str(name or "")).strip()
+        if not cleaned:
+            continue
+        signature = cleaned.lower()
+        if signature in seen:
+            continue
+        seen.add(signature)
+        normalized.append(cleaned)
+    return normalized
+
+
 def _attach_speaker_labels(
     segments: list[dict[str, Any]],
     speaker_turns: list[dict[str, Any]],
+    *,
+    meeting_duration_seconds: float | None = None,
+    participant_names: list[str] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     if not segments:
         return [], {"enabled": bool(speaker_turns), "status": "empty", "speaker_count": 0, "turn_count": len(speaker_turns)}
@@ -82,10 +170,102 @@ def _attach_speaker_labels(
                 segment.get("speaker_label"),
             )
             normalized_segments.append({**segment, **speaker_fields})
-        return normalized_segments, {"enabled": False, "status": "disabled", "speaker_count": 0, "turn_count": 0}
+        return normalized_segments, {}
 
+    ordered_speaker_ids: list[str] = []
     speaker_aliases: dict[str, str] = {}
+    speaker_stats: dict[str, dict[str, Any]] = {}
     annotated_segments: list[dict[str, Any]] = []
+    speaker_order: dict[str, int] = {}
+
+    ordered_turns = sorted(
+        speaker_turns,
+        key=lambda turn: (
+            float(turn.get("start_seconds") or 0.0),
+            float(turn.get("end_seconds") or 0.0),
+        ),
+    )
+
+    for turn in ordered_turns:
+        speaker_id = str(turn.get("speaker_id") or turn.get("speaker") or turn.get("speaker_label") or "").strip()
+        if not speaker_id:
+            continue
+        speaker_label = speaker_aliases.setdefault(speaker_id, _build_generic_speaker_label(len(speaker_aliases) + 1))
+        speaker_order.setdefault(speaker_id, len(speaker_order))
+        if speaker_id not in ordered_speaker_ids:
+            ordered_speaker_ids.append(speaker_id)
+
+        try:
+            turn_start = float(turn.get("start_seconds") or 0.0)
+            turn_end = float(turn.get("end_seconds") or 0.0)
+        except (TypeError, ValueError):
+            turn_start = turn_end = 0.0
+        turn_duration = max(0.0, turn_end - turn_start)
+        bucket = speaker_stats.setdefault(
+            speaker_id,
+            {
+                "speaker_id": speaker_id,
+                "speaker_label": speaker_label,
+                "speech_seconds": 0.0,
+                "turn_count": 0,
+                "first_start_seconds": turn_start,
+                "last_end_seconds": turn_end,
+            },
+        )
+        bucket["speaker_label"] = speaker_label
+        bucket["speech_seconds"] += turn_duration
+        bucket["turn_count"] += 1
+        bucket["first_start_seconds"] = min(bucket["first_start_seconds"], turn_start)
+        bucket["last_end_seconds"] = max(bucket["last_end_seconds"], turn_end)
+
+    total_speech_seconds = sum(float(bucket.get("speech_seconds") or 0.0) for bucket in speaker_stats.values())
+    raw_speaker_count = len(speaker_stats)
+    minor_speaker_ids = {
+        speaker_id
+        for speaker_id, bucket in speaker_stats.items()
+        if _is_minor_speaker_bucket(bucket, total_speech_seconds=total_speech_seconds, speaker_count=raw_speaker_count)
+    }
+    active_speaker_ids = [speaker_id for speaker_id in ordered_speaker_ids if speaker_id not in minor_speaker_ids]
+    if not active_speaker_ids and speaker_stats:
+        minor_speaker_ids = set()
+        active_speaker_ids = list(ordered_speaker_ids)
+
+    participant_names_normalized = _normalize_participant_names(participant_names)
+    active_speaker_stats: dict[str, dict[str, Any]] = {
+        speaker_id: speaker_stats[speaker_id] for speaker_id in active_speaker_ids if speaker_id in speaker_stats
+    }
+    speaker_display_names: dict[str, str] = {speaker_id: speaker_aliases[speaker_id] for speaker_id in active_speaker_ids}
+    speaker_participant_mapping: list[dict[str, Any]] = []
+    if participant_names_normalized and active_speaker_stats:
+        ranked_speakers = sorted(
+            active_speaker_stats.values(),
+            key=lambda bucket: (
+                -float(bucket.get("speech_seconds") or 0.0),
+                float(bucket.get("first_start_seconds") or 0.0),
+                speaker_order.get(str(bucket.get("speaker_id") or ""), 10_000),
+            ),
+        )
+        for index, bucket in enumerate(ranked_speakers):
+            if index >= len(participant_names_normalized):
+                break
+            speaker_id = str(bucket.get("speaker_id") or "").strip()
+            participant_name = participant_names_normalized[index]
+            if not speaker_id:
+                continue
+            generic_label = speaker_aliases.get(speaker_id, _build_generic_speaker_label(len(speaker_aliases) + 1))
+            speaker_display_names[speaker_id] = participant_name
+            bucket["participant_name"] = participant_name
+            bucket["speaker_alias"] = generic_label
+            speaker_participant_mapping.append(
+                {
+                    "speaker_id": speaker_id,
+                    "speaker_alias": generic_label,
+                    "speaker_display_name": participant_name,
+                    "speaker_kind": "participant",
+                    "is_mapped": True,
+                    "participant_name": participant_name,
+                }
+            )
 
     for segment in segments:
         speaker_fields = _normalize_speaker_fields(
@@ -125,21 +305,84 @@ def _attach_speaker_labels(
         if best_turn is not None and best_overlap > 0:
             speaker_id = str(best_turn.get("speaker_id") or best_turn.get("speaker") or best_turn.get("speaker_label") or "")
             if speaker_id:
-                speaker_label = speaker_aliases.setdefault(speaker_id, f"화자 {len(speaker_aliases) + 1}")
-                speaker_fields = {
-                    "speaker": speaker_label,
-                    "speaker_id": speaker_id,
-                    "speaker_label": speaker_label,
-                }
+                if speaker_id in minor_speaker_ids:
+                    speaker_fields = {
+                        "speaker": "기타",
+                        "speaker_id": speaker_id,
+                        "speaker_label": "기타",
+                        "participant_name": None,
+                        "speaker_display_name": "기타",
+                        "speaker_kind": "minor",
+                        "is_mapped": False,
+                    }
+                else:
+                    speaker_label = speaker_display_names.get(
+                        speaker_id,
+                        speaker_aliases.setdefault(speaker_id, _build_generic_speaker_label(len(speaker_aliases) + 1)),
+                    )
+                    participant_name = None
+                    bucket = active_speaker_stats.get(speaker_id)
+                    if bucket:
+                        participant_name = bucket.get("participant_name")
+                    speaker_kind = "participant" if participant_name else "generic"
+                    speaker_fields = {
+                        "speaker": speaker_label,
+                        "speaker_id": speaker_id,
+                        "speaker_label": speaker_label,
+                        "participant_name": participant_name,
+                        "speaker_display_name": participant_name or speaker_label,
+                        "speaker_kind": speaker_kind,
+                        "is_mapped": bool(participant_name),
+                    }
 
         annotated_segments.append({**segment, **speaker_fields})
+
+    if meeting_duration_seconds is None:
+        meeting_duration_seconds = max(
+            [float(turn.get("end_seconds") or 0.0) for turn in ordered_turns] or [0.0]
+        )
+
+    speaker_statistics: list[dict[str, Any]] = []
+    active_turn_count = 0
+    for speaker_id in active_speaker_ids:
+        bucket = speaker_stats.get(speaker_id)
+        if not bucket:
+            continue
+        speech_seconds = float(bucket.get("speech_seconds") or 0.0)
+        active_turn_count += int(bucket.get("turn_count") or 0)
+        speaker_statistics.append(
+            {
+                "speaker_id": speaker_id,
+                "speaker_label": speaker_display_names.get(speaker_id, bucket.get("speaker_label")),
+                "speaker_alias": bucket.get("speaker_label"),
+                "participant_name": bucket.get("participant_name"),
+                "speaker_display_name": bucket.get("participant_name") or speaker_display_names.get(speaker_id, bucket.get("speaker_label")),
+                "speaker_kind": "participant" if bucket.get("participant_name") else "generic",
+                "is_mapped": bool(bucket.get("participant_name")),
+                "speech_seconds": round(speech_seconds, 3),
+                "speech_ratio": round((speech_seconds / total_speech_seconds), 4) if total_speech_seconds > 0 else 0.0,
+                "meeting_ratio": round((speech_seconds / meeting_duration_seconds), 4) if meeting_duration_seconds and meeting_duration_seconds > 0 else 0.0,
+                "turn_count": bucket.get("turn_count", 0),
+                "first_start_seconds": round(float(bucket.get("first_start_seconds") or 0.0), 3),
+                "last_end_seconds": round(float(bucket.get("last_end_seconds") or 0.0), 3),
+            }
+        )
 
     summary = {
         "enabled": True,
         "status": "applied",
-        "speaker_count": len(speaker_aliases),
-        "turn_count": len(speaker_turns),
-        "speakers": list(speaker_aliases.values()),
+        "speaker_count": len(active_speaker_ids),
+        "turn_count": active_turn_count,
+        "raw_speaker_count": len(speaker_stats),
+        "raw_turn_count": len(speaker_turns),
+        "discarded_speaker_count": len(minor_speaker_ids),
+        "discarded_turn_count": len(speaker_turns) - active_turn_count,
+        "ignored_speaker_ids": sorted(minor_speaker_ids),
+        "speakers": [speaker_display_names.get(speaker_id, speaker_aliases[speaker_id]) for speaker_id in active_speaker_ids],
+        "speaker_participant_mapping": speaker_participant_mapping,
+        "total_speech_seconds": round(total_speech_seconds, 3),
+        "meeting_duration_seconds": round(float(meeting_duration_seconds or 0.0), 3),
+        "speaker_statistics": speaker_statistics,
     }
     return annotated_segments, summary
 
@@ -193,7 +436,12 @@ class WhisperSpeechToTextService(SpeechToTextService):
         )
         return text
 
-    def transcribe_with_segments(self, audio_path: str) -> tuple[str, list[dict[str, Any]]]:
+    def transcribe_with_segments(
+        self,
+        audio_path: str,
+        *,
+        participant_names: list[str] | None = None,
+    ) -> tuple[str, list[dict[str, Any]]]:
         path = Path(audio_path)
         if not path.exists():
             raise FileNotFoundError(f"Audio file not found: {audio_path}")
@@ -203,8 +451,13 @@ class WhisperSpeechToTextService(SpeechToTextService):
         model_name = self._select_model_name(preprocessing)
         logger.info("Starting STT with segments for %s using Whisper(%s)", path, model_name)
         text, segments = self._transcribe_preprocessed_with_segments(preprocessing)
-        speaker_turns, diarization_summary = self._diarize_audio(path)
-        segments, attachment_summary = _attach_speaker_labels(segments, speaker_turns)
+        speaker_turns, diarization_summary = self._diarize_audio(path, preprocessing=preprocessing)
+        segments, attachment_summary = _attach_speaker_labels(
+            segments,
+            speaker_turns,
+            meeting_duration_seconds=preprocessing.duration_seconds,
+            participant_names=participant_names,
+        )
         diarization_summary.update(attachment_summary)
         self._last_diarization_summary = diarization_summary
 
@@ -217,12 +470,18 @@ class WhisperSpeechToTextService(SpeechToTextService):
         )
         return text, segments
 
-    def _diarize_audio(self, audio_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-        if not settings.diarization_enabled:
-            return [], {"enabled": False, "status": "disabled", "speaker_count": 0, "turn_count": 0}
-
+    def _diarize_audio(
+        self,
+        audio_path: Path,
+        *,
+        preprocessing: AudioPreprocessingResult | None = None,
+    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         try:
-            speaker_turns = self.diarization_service.diarize(str(audio_path))
+            speaker_turns = self.diarization_service.diarize(
+                str(audio_path),
+                samples=getattr(preprocessing, "samples", None),
+                sample_rate=getattr(preprocessing, "sample_rate", None),
+            )
         except Exception as exc:
             logger.warning("Speaker diarization skipped for %s: %s", audio_path.name, exc)
             return [], {

@@ -12,10 +12,13 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 from app.services.ai.audio_preprocessing import WhisperAudioPreprocessor
+from app.services.ai.diarization import _normalize_diarization_turns
 from app.services.ai.stt import _attach_speaker_labels
 from app.services.ai.stt import WhisperSpeechToTextService
 from app.services.ai.llm_analysis import HeuristicLLMAnalysisService
+from app.services.ai.llm_analysis import _build_issue_sentence
 from app.services.ai.text_normalization import normalize_meeting_terms
+from app.services.ai_engine import AIEngine
 from app.services.ai_engine import (
     _augment_context_with_audio_quality,
     _build_sentence_segments,
@@ -85,10 +88,29 @@ class HeuristicMeetingAnalysisTests(unittest.TestCase):
         )
 
     def test_speaker_fields_are_prepared_for_future_diarization(self) -> None:
-        self.assertEqual(_build_speaker_fields(None), {"speaker": None, "speaker_id": None, "speaker_label": None})
+        self.assertEqual(
+            _build_speaker_fields(None),
+            {
+                "speaker": None,
+                "speaker_id": None,
+                "speaker_label": None,
+                "participant_name": None,
+                "speaker_display_name": None,
+                "speaker_kind": "unknown",
+                "is_mapped": False,
+            },
+        )
         self.assertEqual(
             _build_speaker_fields("speaker_1"),
-            {"speaker": "speaker_1", "speaker_id": "speaker_1", "speaker_label": "speaker_1"},
+            {
+                "speaker": "speaker_1",
+                "speaker_id": "speaker_1",
+                "speaker_label": "speaker_1",
+                "participant_name": None,
+                "speaker_display_name": "speaker_1",
+                "speaker_kind": "generic",
+                "is_mapped": False,
+            },
         )
 
     def test_sentence_segments_include_speaker_placeholders(self) -> None:
@@ -98,6 +120,8 @@ class HeuristicMeetingAnalysisTests(unittest.TestCase):
         self.assertTrue(all(segment["speaker"] is None for segment in segments))
         self.assertTrue(all(segment["speaker_id"] is None for segment in segments))
         self.assertTrue(all(segment["speaker_label"] is None for segment in segments))
+        self.assertTrue(all(segment["speaker_display_name"] is None for segment in segments))
+        self.assertTrue(all(segment["speaker_kind"] == "unknown" for segment in segments))
 
     def test_tx_rows_keep_speaker_columns_even_without_diarization(self) -> None:
         rows = _build_tx_rows(
@@ -124,9 +148,59 @@ class HeuristicMeetingAnalysisTests(unittest.TestCase):
         self.assertEqual(rows[0]["spk"], None)
         self.assertEqual(rows[0]["speaker_id"], None)
         self.assertEqual(rows[0]["speaker_label"], None)
+        self.assertIsNone(rows[0]["speaker_display_name"])
+        self.assertIsNone(rows[0]["participant_name"])
         self.assertEqual(rows[1]["spk"], "speaker_2")
         self.assertEqual(rows[1]["speaker_id"], "speaker_2")
         self.assertEqual(rows[1]["speaker_label"], "채하율")
+        self.assertEqual(rows[1]["speaker_display_name"], "채하율")
+
+    def test_attach_speaker_labels_discards_tiny_extra_speaker(self) -> None:
+        segments = [
+            {
+                "index": 0,
+                "start_seconds": 0.0,
+                "end_seconds": 100.0,
+                "speaker": None,
+                "speaker_id": None,
+                "speaker_label": None,
+                "text": "첫 번째 발화입니다.",
+            },
+            {
+                "index": 1,
+                "start_seconds": 100.0,
+                "end_seconds": 200.0,
+                "speaker": None,
+                "speaker_id": None,
+                "speaker_label": None,
+                "text": "두 번째 발화입니다.",
+            },
+            {
+                "index": 2,
+                "start_seconds": 240.0,
+                "end_seconds": 243.0,
+                "speaker": None,
+                "speaker_id": None,
+                "speaker_label": None,
+                "text": "짧은 끼어들기입니다.",
+            },
+        ]
+        turns = [
+            {"start_seconds": 0.0, "end_seconds": 60.0, "speaker_id": "SPEAKER_00"},
+            {"start_seconds": 60.0, "end_seconds": 120.0, "speaker_id": "SPEAKER_01"},
+            {"start_seconds": 120.0, "end_seconds": 180.0, "speaker_id": "SPEAKER_02"},
+            {"start_seconds": 180.0, "end_seconds": 240.0, "speaker_id": "SPEAKER_03"},
+            {"start_seconds": 240.0, "end_seconds": 243.0, "speaker_id": "SPEAKER_04"},
+        ]
+
+        annotated, summary = _attach_speaker_labels(segments, turns, meeting_duration_seconds=243.0)
+
+        self.assertEqual(summary["speaker_count"], 4)
+        self.assertEqual(summary["raw_speaker_count"], 5)
+        self.assertEqual(summary["discarded_speaker_count"], 1)
+        self.assertIn("SPEAKER_04", summary["ignored_speaker_ids"])
+        self.assertEqual(annotated[-1]["speaker_label"], "기타")
+        self.assertEqual(annotated[-1]["speaker_kind"], "minor")
 
     def test_attach_speaker_labels_matches_overlap_and_assigns_stable_names(self) -> None:
         segments = [
@@ -163,14 +237,90 @@ class HeuristicMeetingAnalysisTests(unittest.TestCase):
             {"start_seconds": 6.0, "end_seconds": 15.0, "speaker_id": "SPEAKER_01"},
         ]
 
-        annotated, summary = _attach_speaker_labels(segments, turns)
+        annotated, summary = _attach_speaker_labels(segments, turns, meeting_duration_seconds=15.0)
 
         self.assertEqual(summary["status"], "applied")
         self.assertEqual(summary["speaker_count"], 2)
-        self.assertEqual(annotated[0]["speaker_label"], "화자 1")
+        self.assertEqual(summary["turn_count"], 2)
+        self.assertAlmostEqual(summary["total_speech_seconds"], 15.0)
+        self.assertAlmostEqual(summary["meeting_duration_seconds"], 15.0)
+        self.assertEqual(len(summary["speaker_statistics"]), 2)
+        self.assertAlmostEqual(summary["speaker_statistics"][0]["speech_seconds"], 6.0)
+        self.assertAlmostEqual(summary["speaker_statistics"][0]["speech_ratio"], 0.4)
+        self.assertAlmostEqual(summary["speaker_statistics"][0]["meeting_ratio"], 0.4)
+        self.assertAlmostEqual(summary["speaker_statistics"][1]["speech_seconds"], 9.0)
+        self.assertAlmostEqual(summary["speaker_statistics"][1]["speech_ratio"], 0.6)
+        self.assertAlmostEqual(summary["speaker_statistics"][1]["meeting_ratio"], 0.6)
+        self.assertEqual(annotated[0]["speaker_label"], "팀원 1")
         self.assertEqual(annotated[0]["speaker_id"], "SPEAKER_00")
-        self.assertEqual(annotated[1]["speaker_label"], "화자 2")
-        self.assertEqual(annotated[2]["speaker_label"], "화자 2")
+        self.assertEqual(annotated[1]["speaker_label"], "팀원 2")
+        self.assertEqual(annotated[2]["speaker_label"], "팀원 2")
+
+    def test_attach_speaker_labels_maps_speakers_to_participant_names_by_speech_rank(self) -> None:
+        segments = [
+            {
+                "index": 0,
+                "start_seconds": 0.0,
+                "end_seconds": 4.0,
+                "speaker": None,
+                "speaker_id": None,
+                "speaker_label": None,
+                "text": "회의를 시작하겠습니다.",
+            },
+            {
+                "index": 1,
+                "start_seconds": 4.1,
+                "end_seconds": 12.0,
+                "speaker": None,
+                "speaker_id": None,
+                "speaker_label": None,
+                "text": "네, 준비됐습니다.",
+            },
+        ]
+        turns = [
+            {"start_seconds": 0.0, "end_seconds": 4.0, "speaker_id": "SPEAKER_00"},
+            {"start_seconds": 4.0, "end_seconds": 12.0, "speaker_id": "SPEAKER_01"},
+        ]
+
+        annotated, summary = _attach_speaker_labels(
+            segments,
+            turns,
+            meeting_duration_seconds=12.0,
+            participant_names=["김소현", "정아름"],
+        )
+
+        self.assertEqual(summary["speaker_participant_mapping"][0]["participant_name"], "김소현")
+        self.assertEqual(summary["speaker_participant_mapping"][1]["participant_name"], "정아름")
+        self.assertEqual(annotated[0]["speaker_label"], "정아름")
+        self.assertEqual(annotated[1]["speaker_label"], "김소현")
+        self.assertEqual(summary["speaker_statistics"][0]["participant_name"], "정아름")
+        self.assertEqual(summary["speaker_statistics"][1]["participant_name"], "김소현")
+
+    def test_diarization_turn_normalization_merges_small_gaps(self) -> None:
+        turns = [
+            {"start_seconds": 0.0, "end_seconds": 3.0, "speaker_id": "SPEAKER_00"},
+            {"start_seconds": 3.2, "end_seconds": 5.0, "speaker_id": "SPEAKER_00"},
+            {"start_seconds": 6.0, "end_seconds": 8.0, "speaker_id": "SPEAKER_01"},
+        ]
+
+        normalized = _normalize_diarization_turns(turns)
+
+        self.assertEqual(len(normalized), 2)
+        self.assertEqual(normalized[0]["speaker_id"], "SPEAKER_00")
+        self.assertAlmostEqual(normalized[0]["start_seconds"], 0.0)
+        self.assertAlmostEqual(normalized[0]["end_seconds"], 5.0)
+        self.assertEqual(normalized[1]["speaker_id"], "SPEAKER_01")
+
+    def test_preprocessor_applies_boundary_overlap_to_chunks(self) -> None:
+        preprocessor = WhisperAudioPreprocessor(transcription_overlap_seconds=1.0, noisy_chunk_overlap_seconds=2.5)
+
+        clean_specs = preprocessor._apply_overlap_to_intervals([(10.0, 20.0), (20.0, 30.0)], 30.0, overlap_seconds=1.0)
+        noisy_specs = preprocessor._apply_overlap_to_intervals([(10.0, 20.0), (20.0, 30.0)], 30.0, overlap_seconds=2.5)
+
+        self.assertEqual(clean_specs[0], (10.0, 21.0, 10.0, 20.0))
+        self.assertEqual(clean_specs[1], (19.0, 30.0, 20.0, 30.0))
+        self.assertEqual(noisy_specs[0], (10.0, 22.5, 10.0, 20.0))
+        self.assertEqual(noisy_specs[1], (17.5, 30.0, 20.0, 30.0))
 
     def test_meeting_search_document_combines_title_keywords_and_body(self) -> None:
         segments = _build_sentence_segments("회의를 시작하겠습니다. 결제 기능을 우선 보겠습니다.")
@@ -207,6 +357,25 @@ class HeuristicMeetingAnalysisTests(unittest.TestCase):
         self.assertTrue(document["chunks"])
         self.assertTrue(any(chunk["search_text"] for chunk in document["chunks"]))
         self.assertIn("회의를 시작하겠습니다", document["search_text"])
+
+    def test_ai_result_contains_script_segments_and_tx_rows(self) -> None:
+        service = AIEngine(llm_service=HeuristicLLMAnalysisService())
+        result = service.process_text(
+            "정아름: 회의를 시작하겠습니다. 김소현: 네, 준비됐습니다."
+        )
+
+        script_segments = result.analysis.extra_data.get("script_segments", [])
+        tx_rows = result.analysis.extra_data.get("tx", [])
+
+        self.assertTrue(script_segments)
+        self.assertTrue(tx_rows)
+        self.assertEqual(script_segments[0]["speaker"], None)
+        self.assertEqual(script_segments[0]["segment_label"], "[SEGMENT 1]")
+        self.assertEqual(script_segments[0]["source"], "text")
+        self.assertEqual(script_segments[0]["text"], "정아름: 회의를 시작하겠습니다.")
+        self.assertEqual(tx_rows[0]["txt"], "정아름: 회의를 시작하겠습니다.")
+        self.assertEqual(tx_rows[0]["segment_label"], "[SEGMENT 1]")
+        self.assertEqual(tx_rows[0]["source"], "text")
 
     def test_meeting_term_normalization_corrects_common_whisper_misreads(self) -> None:
         text = "산의 업무 관리 시스템에서 데시보드와 결지 요청, 디자인 시한, 우성 검토, 정관리 기능과 노구인, 담당자 지적, 중간 시암을 확인합니다."
@@ -301,6 +470,7 @@ class HeuristicMeetingAnalysisTests(unittest.TestCase):
         self.assertTrue(issue_titles)
         self.assertTrue(any(title.endswith("필요하다.") or title.endswith("확인했다.") for title in issue_titles), issue_titles)
         self.assertTrue(any("결재 기능" in title or "리스크" in title for title in issue_titles), issue_titles)
+        self.assertTrue(all(len(title) <= 96 for title in issue_titles), issue_titles)
 
     def test_decisions_ignore_meeting_opening_lines(self) -> None:
         transcript = """
@@ -320,6 +490,7 @@ class HeuristicMeetingAnalysisTests(unittest.TestCase):
         result = self.service.summarize_and_extract_tickets(transcript)
 
         self.assertTrue(result["next_agenda"])
+        self.assertTrue(all(item.startswith("다음 회의에서") for item in result["next_agenda"]), result["next_agenda"])
         self.assertTrue(any(item.endswith("한다.") for item in result["next_agenda"]), result["next_agenda"])
         self.assertTrue(any("대응 방안" in item for item in result["next_agenda"]), result["next_agenda"])
         self.assertFalse(any("이야기해봅시다" in item for item in result["next_agenda"]), result["next_agenda"])
@@ -333,9 +504,23 @@ class HeuristicMeetingAnalysisTests(unittest.TestCase):
         result = self.service.summarize_and_extract_tickets(transcript)
 
         self.assertTrue(result["next_agenda"], result["next_agenda"])
+        self.assertTrue(all(item.startswith("다음 회의에서") for item in result["next_agenda"]), result["next_agenda"])
         self.assertTrue(any(item.endswith("한다.") for item in result["next_agenda"]), result["next_agenda"])
         self.assertTrue(any("다음 회의" in item for item in result["next_agenda"]), result["next_agenda"])
         self.assertFalse(any("다시 보죠" in item for item in result["next_agenda"]), result["next_agenda"])
+
+    def test_next_agenda_collapses_repeated_clauses(self) -> None:
+        transcript = """
+송지영: 다음 회의에서는 추가 기능 요청이 들어올 경우에 어떻게 대응할지 이야기해봅시다.
+"""
+
+        result = self.service.summarize_and_extract_tickets(transcript)
+
+        self.assertTrue(result["next_agenda"], result["next_agenda"])
+        self.assertTrue(all(item.startswith("다음 회의에서") for item in result["next_agenda"]), result["next_agenda"])
+        self.assertTrue(any("추가 기능 요청" in item for item in result["next_agenda"]), result["next_agenda"])
+        self.assertFalse(any(item.count("다음 회의에서") > 1 for item in result["next_agenda"]), result["next_agenda"])
+        self.assertFalse(any("대응 방안을 다음 회의에서 논의한다 대응 방안을" in item for item in result["next_agenda"]), result["next_agenda"])
 
     def test_noise_summary_rewrites_into_meeting_summary_style(self) -> None:
         transcript = """
@@ -358,6 +543,7 @@ class HeuristicMeetingAnalysisTests(unittest.TestCase):
         )
 
         self.assertLessEqual(len(result["summary"]), 320)
+        self.assertTrue(result["summary"].startswith("회의에서는"))
         self.assertNotIn("회의 시작", result["summary"])
         self.assertNotIn("다들 왔죠", result["summary"])
         self.assertIn("결제", result["summary"])
@@ -441,6 +627,14 @@ class HeuristicMeetingAnalysisTests(unittest.TestCase):
         self.assertTrue(result["issues"])
         self.assertTrue(all(len(title) <= 36 for title in issue_titles), issue_titles)
         self.assertTrue(any("협의" in title or "리스크" in title for title in issue_titles), issue_titles)
+
+    def test_issue_titles_do_not_repeat_redundant_risk_phrases(self) -> None:
+        title = _build_issue_sentence("리스크 관리")
+
+        self.assertTrue(title, title)
+        self.assertFalse("리스크 관리를 리스크를" in title, title)
+        self.assertTrue(title.endswith("."), title)
+        self.assertIn("리스크 관리", title, title)
 
     def test_assignee_is_corrected_from_context_name_candidates(self) -> None:
         transcript = """
@@ -601,6 +795,38 @@ class HeuristicMeetingAnalysisTests(unittest.TestCase):
     def test_segment_core_region_filter_uses_midpoint(self) -> None:
         self.assertTrue(WhisperSpeechToTextService._is_segment_in_core_region(29.0, 31.0, 30.0, 60.0))
         self.assertFalse(WhisperSpeechToTextService._is_segment_in_core_region(27.0, 29.0, 30.0, 60.0))
+
+    def test_diarization_reuses_preprocessed_samples_when_available(self) -> None:
+        service = WhisperSpeechToTextService(model_name="large", language="ko")
+        fake_samples = np.zeros(16_000, dtype=np.float32)
+        preprocessing = type(
+            "Preprocessing",
+            (),
+            {
+                "samples": fake_samples,
+                "sample_rate": 16_000,
+            },
+        )()
+        captured: dict[str, object] = {}
+
+        class FakeDiarizationService:
+            model_name = "fake-diarizer"
+
+            def diarize(self, audio_path: str, *, samples=None, sample_rate=None):
+                captured["audio_path"] = audio_path
+                captured["samples"] = samples
+                captured["sample_rate"] = sample_rate
+                return []
+
+        service.diarization_service = FakeDiarizationService()
+
+        with patch("app.services.ai.stt.settings.diarization_enabled", False):
+            turns, summary = service._diarize_audio(Path(__file__).resolve(), preprocessing=preprocessing)
+
+        self.assertEqual(turns, [])
+        self.assertEqual(summary["status"], "empty")
+        self.assertIs(captured["samples"], fake_samples)
+        self.assertEqual(captured["sample_rate"], 16_000)
 
 
 if __name__ == "__main__":

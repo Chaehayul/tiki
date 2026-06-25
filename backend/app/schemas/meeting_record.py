@@ -11,6 +11,10 @@ class MeetingSearchChunk(BaseModel):
     speaker: str | None = None
     speaker_id: str | None = None
     speaker_label: str | None = None
+    participant_name: str | None = None
+    speaker_display_name: str | None = None
+    speaker_kind: str | None = None
+    is_mapped: bool | None = None
     start_seconds: float | None = None
     end_seconds: float | None = None
     duration_seconds: float | None = None
@@ -34,4 +38,3 @@ class MeetingSearchDocument(BaseModel):
     next_agenda: list[str] = Field(default_factory=list)
     chunks: list[MeetingSearchChunk] = Field(default_factory=list)
     search_text: str = ""
-

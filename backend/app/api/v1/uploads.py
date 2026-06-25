@@ -243,6 +243,7 @@ def get_analysis(
 
     content = uploaded_file.extracted_content
     analysis = content.analysis_result if content else None
+    extra_data = analysis.extra_data if analysis else {}
 
     return AnalysisResultResponse(
         file_id=uploaded_file.id,
@@ -251,6 +252,8 @@ def get_analysis(
         project_id=uploaded_file.project_id,
         summary=analysis.summary if analysis else None,
         action_items=analysis.action_items if analysis else None,
+        segments=extra_data.get("script_segments"),
+        tx=extra_data.get("tx"),
         model_name=analysis.model_name if analysis else None,
         prompt_version=analysis.prompt_version if analysis else None,
         masked_transcript=content.masked_text if content else None,

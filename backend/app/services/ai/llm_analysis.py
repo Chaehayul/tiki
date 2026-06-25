@@ -552,7 +552,10 @@ def _build_issue_sentence(text: Any) -> str:
         elif kind == "재검토 필요":
             sentence = f"{topic_object} 재검토가 필요하다."
         elif kind == "리스크":
-            sentence = f"{topic_object} 리스크를 확인했다."
+            if "리스크" in topic:
+                sentence = f"{topic} 관련 이슈를 확인했다."
+            else:
+                sentence = f"{topic_object} 리스크를 확인했다."
         else:
             sentence = f"{topic} {kind}"
     elif topic:
@@ -591,22 +594,23 @@ def _build_next_agenda_sentence(text: Any) -> str:
         return ""
 
     lowered = cleaned.lower()
-    if "어떻게 대응할지" in cleaned or "대응 방안" in lowered:
+    if "개발 일정" in cleaned and "리스크" in cleaned:
+        cleaned = "다음 회의에서 개발 일정과 예상 리스크를 논의한다."
+    elif "추가 기능 요청" in cleaned or "추가 요청" in cleaned:
+        cleaned = "다음 회의에서 추가 기능 요청 대응 방안을 논의한다."
+    elif "후속" in cleaned and "안건" in cleaned:
+        cleaned = "다음 회의에서 후속 안건을 논의한다."
+    elif "어떻게 대응할지" in cleaned or "대응 방안" in lowered:
         topic = cleaned.split("어떻게 대응할지", 1)[0].strip()
         topic = re.sub(r"(?:이 부분|이건|추가 기능 요청|추가 기능|추가 요청|후속 안건|다음 안건)\s*$", "", topic).strip()
         if topic:
             cleaned = f"{topic} 대응 방안을 다음 회의에서 논의한다."
         else:
             cleaned = "다음 회의에서 대응 방안을 논의한다."
-    elif "개발 일정" in cleaned and "리스크" in cleaned:
-        cleaned = "다음 회의에서 개발 일정과 예상 리스크를 논의한다."
-    elif "추가 기능 요청" in cleaned or "추가 요청" in cleaned:
-        cleaned = "다음 회의에서 추가 기능 요청 대응 방안을 논의한다."
-    elif "후속" in cleaned and "안건" in cleaned:
-        cleaned = "다음 회의에서 후속 안건을 논의한다."
     elif not cleaned.startswith("다음 회의"):
         cleaned = f"다음 회의에서 {cleaned}"
 
+    cleaned = _collapse_repeated_phrases(cleaned)
     cleaned = WHITESPACE_PATTERN.sub(" ", cleaned).strip().rstrip(".!?。")
     if not cleaned:
         return ""
@@ -634,6 +638,17 @@ def _normalize_summary_value(summary: Any) -> str:
         return _compact_summary_text(normalized, max_chars=MAX_SUMMARY_CHARS)
 
     return _compact_summary_text(" ".join(sentences[:MAX_SUMMARY_SENTENCES]), max_chars=MAX_SUMMARY_CHARS)
+
+
+def _normalize_summary_card_value(summary: Any) -> str:
+    normalized = _normalize_summary_value(summary)
+    if not normalized:
+        return "요약할 텍스트가 없습니다."
+    if normalized == "요약할 텍스트가 없습니다.":
+        return normalized
+    if not normalized.startswith("회의에서는"):
+        normalized = f"회의에서는 {normalized}"
+    return _compact_summary_text(normalized, max_chars=MAX_SUMMARY_CHARS)
 
 
 def _normalize_title_value(value: Any) -> str:
@@ -878,7 +893,7 @@ def _normalize_next_agenda_value(items: Any, limit: int) -> list[str]:
         if signature in seen:
             continue
         seen.add(signature)
-        normalized.append(shorten(text, width=180, placeholder="..."))
+        normalized.append(_compact_next_agenda_text(text, max_chars=96))
         if len(normalized) >= limit:
             break
 
@@ -981,10 +996,32 @@ def _normalize_issues_value(issues: Any) -> list[dict[str, str]]:
         if signature in seen:
             continue
         seen.add(signature)
-        normalized.append({"level": level, "text": _build_issue_sentence(text)})
+        normalized.append({"level": level, "text": _compact_issue_text(_build_issue_sentence(text), max_chars=96)})
         if len(normalized) >= MAX_ISSUES:
             break
     return normalized
+
+
+def _compact_issue_text(text: Any, *, max_chars: int = 96) -> str:
+    cleaned = _compact_summary_text(text, max_chars=max_chars)
+    if not cleaned:
+        return ""
+    if cleaned.endswith("?"):
+        cleaned = cleaned[:-1]
+    return cleaned if cleaned.endswith(".") else f"{cleaned}."
+
+
+def _compact_next_agenda_text(text: Any, *, max_chars: int = 96) -> str:
+    cleaned = _compact_summary_text(text, max_chars=max_chars)
+    if not cleaned:
+        return ""
+    cleaned = _collapse_repeated_phrases(cleaned)
+    if cleaned.startswith("다음 회의에서"):
+        return cleaned if cleaned.endswith(".") else f"{cleaned}."
+    cleaned = cleaned.rstrip(".!?。")
+    cleaned = f"다음 회의에서 {cleaned}"
+    cleaned = WHITESPACE_PATTERN.sub(" ", cleaned).strip()
+    return cleaned if cleaned.endswith(".") else f"{cleaned}."
 
 
 class LLMAnalysisService(ABC):
@@ -1021,8 +1058,8 @@ class HeuristicLLMAnalysisService(LLMAnalysisService):
         summary = self._build_summary(sentences, analysis_text, noisy_context=noisy_audio)
         action_items = self._build_action_items(action_sentences, name_candidates=name_candidates)
         decisions = self._build_decisions(sentences)
-        issues = self._build_issues(sentences)
-        next_agenda = self._build_next_agenda(sentences)
+        issues = _normalize_issues_value(self._build_issues(sentences))
+        next_agenda = _normalize_next_agenda_value(self._build_next_agenda(sentences), MAX_NEXT_AGENDA)
         summary = self._rewrite_summary_for_noise(
             summary,
             noisy_audio=noisy_audio,
@@ -1034,6 +1071,7 @@ class HeuristicLLMAnalysisService(LLMAnalysisService):
         )
         keywords = self._build_keywords(analysis_text, summary, action_items, decisions, issues, next_agenda)
         summary, action_items = self._normalize_analysis_output(summary, action_items)
+        summary = _normalize_summary_card_value(summary)
 
         return {
             "summary": summary,
@@ -2208,7 +2246,7 @@ class OpenAIAnalysisService(LLMAnalysisService):
             response = self._create_response_with_retry(normalized, context)
 
             payload = self._parse_response_payload(response)
-            normalized_summary = _normalize_summary_value(payload.get("summary", ""))
+            normalized_summary = _normalize_summary_card_value(payload.get("summary", ""))
             normalized_action_items = _normalize_action_items_value(
                 payload.get("action_items", []),
                 name_candidates=name_candidates,
@@ -2276,6 +2314,7 @@ class OpenAIAnalysisService(LLMAnalysisService):
         instruction += (
             "작업 원칙:\n"
             "- 회의 핵심만 한국어로 2~3문장으로 짧게 요약하라. 장황한 부연 설명은 쓰지 마라.\n"
+            "- summary는 카드 헤더처럼 짧고 단정하게 써라. 가능하면 '회의에서는 ...'로 시작하라.\n"
             "- 입력에 잡음, 잔향, 끊긴 발화, 중복 음절이 섞여 있으면 의미 있는 회의 발화만 사용하고 소음성 문구는 무시하라.\n"
             "- keywords에는 회의의 핵심 주제 4~6개를 담아라. type은 cyan, purple, green, yellow 중 하나를 써라.\n"
             "- decisions에는 회의에서 확정된 주요 결정사항만 넣어라.\n"
@@ -2287,6 +2326,8 @@ class OpenAIAnalysisService(LLMAnalysisService):
             "- 하나의 문장에 여러 작업이 섞이면 작업 단위로 쪼개라.\n"
             "- 제목은 60자 내로 짧고 명확하게 써라.\n"
             "- 설명은 왜 필요한지, 무엇을 해야 하는지, 의존성이 있으면 무엇인지까지 담아라.\n"
+            "- issues는 짧은 리스크 카드처럼, next_agenda는 다음 회의 카드처럼 정리하라.\n"
+            "- issues와 next_agenda는 한 줄 카드 문장으로 짧게 유지하고, 장황한 배경 설명은 넣지 마라.\n"
             "- 우선순위는 low, medium, high, urgent 중 하나만 사용하라.\n"
             "- urgent는 명시적 긴급성, 장애, 즉시 대응, 마감 임박이 있을 때만 써라.\n"
             "- 담당자와 마감일이 명시되지 않으면 null로 둬라. 추측하지 마라.\n"

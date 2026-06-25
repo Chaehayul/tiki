@@ -156,6 +156,29 @@ function saveUserProjectActivity(user, map) {
   }
 }
 
+function parseCurrentUser() {
+  if (typeof window === 'undefined') return null;
+
+  const candidateKeys = ['currentUser', 'user', 'authUser', 'sessionUser'];
+
+  for (const key of candidateKeys) {
+    try {
+      const raw = localStorage.getItem(key);
+      if (!raw) continue;
+
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') return parsed;
+      if (typeof parsed === 'string' && parsed.trim()) return { name: parsed.trim() };
+    } catch {
+      const raw = localStorage.getItem(key);
+      if (raw && raw.trim()) return { name: raw.trim() };
+      // Ignore malformed storage entries and try the next candidate.
+    }
+  }
+
+  return null;
+}
+
 function ProjectCard({ project, onOpen, onOpenConfig, menuKey, setMenuKey, menuScope }) {
   const summary = PROJECT_SUMMARY[project.id] || '최근 회의 내용을 요약하고 있어요.';
   const currentMenuKey = `${menuScope}-${project.id}`;
@@ -375,8 +398,8 @@ export default function ProjectList() {
   const [openMenuKey, setOpenMenuKey] = useState(null);
   const [page, setPage] = useState(1);
   const [isLoading, setIsLoading] = useState(true);
-  const [currentUser] = useState(() => parseCurrentUser());
-  const [activityByProjectId, setActivityByProjectId] = useState(() => loadUserProjectActivity(parseCurrentUser()));
+  const currentUser = useMemo(() => parseCurrentUser(), []);
+  const [activityByProjectId, setActivityByProjectId] = useState(() => loadUserProjectActivity(currentUser));
   const [projects, setProjects] = useState([]);
 
   useEffect(() => {

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import Header from "../components/Header";
 import Footer from "../components/Footer";
 import MobileTab from "../components/MobileTab";
@@ -134,6 +134,226 @@ function fmtAuditTime(dateStr) {
   return dateStr;
 }
 
+const WEEKDAY_LABELS = ["일", "월", "화", "수", "목", "금", "토"];
+
+function pad2(n) {
+  return String(n).padStart(2, "0");
+}
+
+function toDateStr(year, month, day) {
+  return `${year}-${pad2(month + 1)}-${pad2(day)}`;
+}
+
+function parseDateStr(dateStr) {
+  if (!dateStr) return null;
+  const [y, m, d] = dateStr.split("-").map(Number);
+  if (!y || !m || !d) return null;
+  return { year: y, month: m - 1, day: d };
+}
+
+function buildCalendarGrid(year, month) {
+  const firstOfMonth = new Date(year, month, 1);
+  const startOffset = firstOfMonth.getDay();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const daysInPrevMonth = new Date(year, month, 0).getDate();
+
+  const cells = [];
+
+  for (let i = 0; i < startOffset; i++) {
+    const day = daysInPrevMonth - startOffset + 1 + i;
+    const prevMonth = month === 0 ? 11 : month - 1;
+    const prevYear = month === 0 ? year - 1 : year;
+    cells.push({ day, inMonth: false, dateStr: toDateStr(prevYear, prevMonth, day) });
+  }
+
+  for (let day = 1; day <= daysInMonth; day++) {
+    cells.push({ day, inMonth: true, dateStr: toDateStr(year, month, day) });
+  }
+
+  const nextMonth = month === 11 ? 0 : month + 1;
+  const nextYear = month === 11 ? year + 1 : year;
+  let nextDay = 1;
+  while (cells.length < 42) {
+    cells.push({ day: nextDay, inMonth: false, dateStr: toDateStr(nextYear, nextMonth, nextDay) });
+    nextDay++;
+  }
+
+  return cells;
+}
+
+function parseDueToDateStr(due) {
+  if (!due) return null;
+  const raw = `${due}`.trim();
+
+  const koreanMatched = raw.match(/^(\d{4})년\s*(\d{1,2})월\s*(\d{1,2})일$/);
+  if (koreanMatched) {
+    const year = Number(koreanMatched[1]);
+    const month = Number(koreanMatched[2]);
+    const day = Number(koreanMatched[3]);
+    if (year >= 1900 && month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+      return toDateStr(year, month - 1, day);
+    }
+  }
+
+  const legacyMatched = raw.match(/^(\d{1,2})\/(\d{1,2})$/);
+  if (legacyMatched) {
+    const month = Number(legacyMatched[1]);
+    const day = Number(legacyMatched[2]);
+    if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+      const now = new Date();
+      return toDateStr(now.getFullYear(), month - 1, day);
+    }
+  }
+
+  return null;
+}
+
+function formatDueFromDateStr(dateStr) {
+  const parsed = parseDateStr(dateStr);
+  if (!parsed) return null;
+  return `${parsed.year}년 ${parsed.month + 1}월 ${parsed.day}일`;
+}
+
+function normalizeDueLabel(due) {
+  if (!due) return due;
+  const dateStr = parseDueToDateStr(due);
+  if (!dateStr) return due;
+  return formatDueFromDateStr(dateStr);
+}
+
+function parseNextAgendaItem(rawItem) {
+  const raw = `${rawItem || ""}`.trim();
+  if (!raw) return { topic: "" };
+
+  const withTrailingAssignee = raw.match(/^(.*)\(([^()]+)\)\s*$/);
+  if (withTrailingAssignee) {
+    return {
+      topic: (withTrailingAssignee[1] || "").trim(),
+    };
+  }
+
+  const withLeadingAssignee = raw.match(/^([^:]+)\s*:\s*(.+)$/);
+  if (withLeadingAssignee) {
+    return {
+      topic: (withLeadingAssignee[2] || "").trim(),
+    };
+  }
+
+  return { topic: raw };
+}
+
+function formatNextAgendaItem(item) {
+  const topic = (item?.topic || "").trim();
+  if (!topic) return "";
+  return topic;
+}
+
+function DueDateCalendar({ value, onSelect, onClose }) {
+  const today = new Date();
+  const todayStr = toDateStr(today.getFullYear(), today.getMonth(), today.getDate());
+  const parsedValue = parseDateStr(value) || parseDateStr(todayStr);
+  const [viewYear, setViewYear] = useState(parsedValue.year);
+  const [viewMonth, setViewMonth] = useState(parsedValue.month);
+
+  useEffect(() => {
+    const parsed = parseDateStr(value);
+    if (!parsed) return;
+    setViewYear(parsed.year);
+    setViewMonth(parsed.month);
+  }, [value]);
+
+  const cells = useMemo(() => buildCalendarGrid(viewYear, viewMonth), [viewYear, viewMonth]);
+
+  return (
+    <div
+      className="absolute z-20 top-full mt-2 left-0 w-[280px] max-w-[88vw] box-border overflow-hidden rounded-xl border border-[rgba(0,100,180,0.14)] bg-white shadow-[0_10px_28px_rgba(0,100,180,0.16)] p-3.5"
+      onClick={(e) => e.stopPropagation()}
+    >
+      <div className="flex items-center justify-between mb-2.5">
+        <button
+          type="button"
+          onClick={() => {
+            if (viewMonth === 0) {
+              setViewMonth(11);
+              setViewYear((y) => y - 1);
+            } else {
+              setViewMonth((m) => m - 1);
+            }
+          }}
+          className="p-1.5 rounded-lg text-[#5A6F8A] hover:bg-[#F1F4F8] hover:text-[#0D1B2A] transition-colors cursor-pointer"
+          aria-label="이전 달"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="15 18 9 12 15 6" />
+          </svg>
+        </button>
+        <span className="text-sm font-bold text-[#0D1B2A]">{viewYear}년 {viewMonth + 1}월</span>
+        <button
+          type="button"
+          onClick={() => {
+            if (viewMonth === 11) {
+              setViewMonth(0);
+              setViewYear((y) => y + 1);
+            } else {
+              setViewMonth((m) => m + 1);
+            }
+          }}
+          className="p-1.5 rounded-lg text-[#5A6F8A] hover:bg-[#F1F4F8] hover:text-[#0D1B2A] transition-colors cursor-pointer"
+          aria-label="다음 달"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="9 18 15 12 9 6" />
+          </svg>
+        </button>
+      </div>
+
+      <div className="grid grid-cols-7 gap-y-1.5 w-full">
+        {WEEKDAY_LABELS.map((label, idx) => (
+          <div
+            key={label}
+            className={`text-center text-[11px] font-semibold py-1 ${
+              idx === 0 ? "text-[#EF4444]" : idx === 6 ? "text-[#0099CC]" : "text-[#9AA7B8]"
+            }`}
+          >
+            {label}
+          </div>
+        ))}
+
+        {cells.map((cell, idx) => {
+          const isSelected = cell.dateStr === value;
+          const isToday = cell.dateStr === todayStr;
+          const weekdayIdx = idx % 7;
+          return (
+            <button
+              key={`${cell.dateStr}-${idx}`}
+              type="button"
+              onClick={() => {
+                onSelect(cell.dateStr);
+                onClose();
+              }}
+              className={`aspect-square w-full flex items-center justify-center text-[13px] rounded-lg transition-colors cursor-pointer ${
+                isSelected
+                  ? "bg-[#0099CC] text-white font-bold"
+                  : !cell.inMonth
+                  ? "text-[#C7D1DC] hover:bg-[#F8FAFF]"
+                  : isToday
+                  ? "text-[#0099CC] font-bold border border-[#0099CC]/40 hover:bg-[#EEF3FF]"
+                  : weekdayIdx === 0
+                  ? "text-[#EF4444] hover:bg-[#F8FAFF]"
+                  : weekdayIdx === 6
+                  ? "text-[#0099CC] hover:bg-[#F8FAFF]"
+                  : "text-[#0D1B2A] hover:bg-[#F8FAFF]"
+              }`}
+            >
+              {cell.day}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function LucideIcon({ name, size = 14, color = "currentColor", strokeWidth = 2, className = "" }) {
   const common = {
     width: size,
@@ -196,6 +416,18 @@ const ISSUE_CFG = {
   low:    { bg: "bg-slate-50",  border: "border-slate-200",  icon: "info",           badge: "bg-slate-100 text-slate-500", label: "낮음" },
 };
 
+const ISSUE_LEVEL_TO_LABEL = {
+  high: "높음",
+  medium: "보통",
+  low: "낮음",
+};
+
+const ISSUE_LABEL_TO_LEVEL = {
+  높음: "high",
+  보통: "medium",
+  낮음: "low",
+};
+
 const SVC_ISSUE_BTN = {
   jira:   "linear-gradient(135deg,#10B981,#059669)",
   notion: "linear-gradient(135deg,#0D1B2A,#374151)",
@@ -217,6 +449,31 @@ function Spinner({ size = 14, color = "#fff" }) {
       <path d="M12 2a10 10 0 0 1 10 10" stroke={color} strokeWidth="3" strokeLinecap="round" />
       <style>{`@keyframes tiki-spin { to { transform: rotate(360deg); } }`}</style>
     </svg>
+  );
+}
+
+/* ─── 접기/펼치기 섹션 헤더 (AI 요약 내 공통 사용) ───── */
+function CollapsibleSectionHeader({ label, collapsed, onToggle, badge }) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      className="w-full flex items-center justify-between gap-2 mb-3 cursor-pointer group"
+      aria-expanded={!collapsed}
+    >
+      <span className="text-xs font-semibold text-slate-400 uppercase tracking-widest group-hover:text-slate-600 transition-colors">
+        {label}
+      </span>
+      <span className="flex items-center gap-2">
+        {badge}
+        <span
+          className="flex-shrink-0 transition-transform"
+          style={{ transform: collapsed ? "rotate(-90deg)" : "rotate(0deg)" }}
+        >
+          <LucideIcon name="chevron-down" size={13} color={PROJECTLIST_CHEVRON_COLOR} strokeWidth={2} />
+        </span>
+      </span>
+    </button>
   );
 }
 
@@ -251,7 +508,7 @@ function AgendaCompletionSection({ actions, onToggleAction }) {
         </div>
         <div className="flex items-center gap-1">
           <div
-            className="text-xs leading-none font-semibold px-2 py-[1px] rounded-full flex items-center justify-center text-center gap-[2px]"
+            className="text-[11px] leading-none font-semibold px-2.5 py-0.5 rounded-full flex items-center justify-center text-center gap-[2px]"
             style={{
               color: achieved ? "#10B981" : "#0099CC",
               background: achieved ? "rgba(16,185,129,0.12)" : "rgba(0,153,204,0.1)",
@@ -356,7 +613,7 @@ function AgendaCompletionSection({ actions, onToggleAction }) {
                   </span>
                   <div className="flex items-center gap-1.5 flex-shrink-0">
                     <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-500">
-                      {action.due || "미정"}
+                      {normalizeDueLabel(action.due) || "미정"}
                     </span>
                     <span
                       className="text-xs font-semibold px-2 py-0.5 rounded-full"
@@ -393,7 +650,7 @@ function Toast({ msg, color }) {
 }
 
 /* ─── Modal Wrapper ──────────────────────────────────── */
-function Modal({ open, onClose, title, children, footer, maxWidth = 448 }) {
+function Modal({ open, onClose, title, children, footer, maxWidth = 448, bodyOverflowY = "auto" }) {
   if (!open) return null;
   return (
     <div
@@ -421,7 +678,9 @@ function Modal({ open, onClose, title, children, footer, maxWidth = 448 }) {
             <LucideIcon name="x" size={18} />
           </button>
         </div>
-        <div className="px-6 py-5 overflow-y-auto flex-1">{children}</div>
+        <div className="px-6 py-5 flex-1" style={{ overflowY: bodyOverflowY }}>
+          {children}
+        </div>
         {footer && (
           <div className="px-6 pb-5 pt-2 flex justify-end gap-2 border-t border-slate-100 flex-shrink-0">
             {footer}
@@ -439,6 +698,7 @@ function CustomDropdown({
   placeholder,
   disabled = false,
   hasError = false,
+  triggerStyle,
 }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef(null);
@@ -466,6 +726,7 @@ function CustomDropdown({
           background: "#F8FAFF",
           color: value ? "#0D1B2A" : "#9CA3AF",
           fontFamily: "inherit",
+          ...(triggerStyle || {}),
         }}
       >
         <span className="truncate">{value || placeholder}</span>
@@ -670,7 +931,7 @@ function IndividualTicketRow({ item, index }) {
         <span className="text-xs text-slate-400 flex-shrink-0">{item.due}</span>
       </div>
       <div>
-        <label className="text-xs font-semibold text-slate-400 block mb-1">티켓 제목</label>
+        <label className="text-xs font-semibold text-slate-400 block mb-1">업무 제목</label>
         <input
           value={title}
           onChange={e => setTitle(e.target.value)}
@@ -700,7 +961,7 @@ function IssueModal({ open, onClose, onIssued, services }) {
   const [checkedItems, setCheckedItems] = useState(new Set());
   const [issueMode, setIssueMode] = useState("merged");
   const [desc, setDesc] = useState("회의에서 논의된 항목입니다. 내용을 확인하고 처리해주세요.");
-  const [priority, setPriority] = useState("Medium");
+  const [priority, setPriority] = useState("보통");
   const [title, setTitle] = useState("");
   const [assignee, setAssignee] = useState("");
 
@@ -716,7 +977,7 @@ function IssueModal({ open, onClose, onIssued, services }) {
     setCheckedItems(new Set());
     setIssueMode("merged");
     setDesc("회의에서 논의된 항목입니다. 내용을 확인하고 처리해주세요.");
-    setPriority("Medium");
+    setPriority("보통");
     setTitle("");
     setAssignee("");
     setIssuing(false);
@@ -777,33 +1038,13 @@ function IssueModal({ open, onClose, onIssued, services }) {
   const selectedSvcObj = services.find(s => s.id === selectedSvc);
   const selectedItemsList = [...checkedItems].map(i => ACTION_ITEMS_FOR_ISSUE[i]);
 
-  const StepDot = ({ n }) => {
-    const isDone = step > n;
-    const isActive = step === n;
-    return (
-      <div className="flex items-center gap-1.5">
-        <div
-          className="w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 transition-all"
-          style={{
-            background: isDone ? "#10B981" : isActive ? "#0099CC" : "rgba(0,100,180,0.12)",
-            color: isDone || isActive ? "#fff" : "#5A6F8A",
-          }}
-        >
-          {isDone ? <LucideIcon name="check" size={12} color="#fff" /> : n}
-        </div>
-        <span className="text-xs font-semibold" style={{ color: isActive ? "#0099CC" : "#5A6F8A" }}>
-          {n === 1 ? "서비스 & 항목 선택" : "양식 확인 & 전송"}
-        </span>
-      </div>
-    );
-  };
-
   return (
     <Modal
       open={open}
       onClose={issuing ? undefined : handleClose}
-      title="항목 발행하기"
+      title="업무 보내기"
       maxWidth={500}
+      bodyOverflowY={step === 1 ? "hidden" : "auto"}
       footer={
         step === 1 ? (
           <>
@@ -831,7 +1072,7 @@ function IssueModal({ open, onClose, onIssued, services }) {
             <button
               onClick={handleIssue}
               disabled={issuing || !canIssue}
-              className="text-sm font-bold px-5 py-2 rounded-xl text-white transition-all hover:-translate-y-0.5 disabled:opacity-70 disabled:cursor-not-allowed disabled:translate-y-0 flex items-center gap-2 cursor-pointer"
+              className="text-sm font-bold px-5 py-2 rounded-xl text-white transition-all hover:-translate-y-0.5 disabled:opacity-70 disabled:cursor-not-allowed disabled:translate-y-0 flex items-center justify-center gap-2 cursor-pointer"
               style={{ background: selectedSvc ? SVC_ISSUE_BTN[selectedSvc] : "#10B981", minWidth: 130 }}
             >
               {issuing ? (
@@ -840,23 +1081,28 @@ function IssueModal({ open, onClose, onIssued, services }) {
                   <span>발행 중...</span>
                 </>
               ) : (
-                `${selectedSvcObj?.name}에 최종 발행`
+                `${selectedSvcObj?.name} 에 생성`
               )}
             </button>
           </>
         )
       }
     >
-      <div className="flex items-center gap-2 mb-5">
-        <StepDot n={1} />
-        <div className="flex-1 h-px transition-all" style={{ background: step > 1 ? "#10B981" : "rgba(0,100,180,0.12)" }} />
-        <StepDot n={2} />
-      </div>
+      {step === 1 && (
+        <div
+          className="mb-5 rounded-xl px-3 py-2.5"
+          style={{ background: "rgba(0,153,204,0.05)", border: "1px solid rgba(0,153,204,0.14)" }}
+        >
+          <p className="text-xs font-semibold text-slate-600 leading-relaxed">
+            회의에서 추출된 업무를 Jira 또는 Notion에 등록할 수 있습니다.
+          </p>
+        </div>
+      )}
 
       {step === 1 && (
         <div className="space-y-5">
           <div>
-            <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-2.5">보낼 서비스</p>
+            <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-2.5">어디에 등록할까요?</p>
             <div
               className="grid gap-2"
               style={{ gridTemplateColumns: `repeat(${Math.max(1, Math.min(services.length, 2))}, minmax(0, 1fr))` }}
@@ -890,7 +1136,7 @@ function IssueModal({ open, onClose, onIssued, services }) {
 
           <div>
             <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-2.5">
-              발행할 해야 할 일 선택
+              보낼 업무 선택
               {checkedItems.size > 0 && (
                 <span className="ml-2 text-cyan-500 normal-case">({checkedItems.size}개 선택됨)</span>
               )}
@@ -966,7 +1212,7 @@ function IssueModal({ open, onClose, onIssued, services }) {
               }}
             >
               <LucideIcon name="clipboard-list" size={13} />
-              통합 티켓으로 발행
+              하나의 업무로 등록
             </button>
             <button
               onClick={() => setIssueMode("individual")}
@@ -978,7 +1224,7 @@ function IssueModal({ open, onClose, onIssued, services }) {
               }}
             >
               <LucideIcon name="rows-3" size={13} />
-              개별 티켓으로 발행
+              각각 등록
               {checkedItems.size > 1 && (
                 <span
                   className="ml-1 px-1.5 py-0.5 rounded-full text-white font-bold"
@@ -1002,7 +1248,7 @@ function IssueModal({ open, onClose, onIssued, services }) {
                 {selectedSvcObj?.iconLabel}
               </span>
               <span className="text-xs font-bold" style={{ color: "#0099CC" }}>
-                {selectedSvcObj?.name} 발행 예정 · {checkedItems.size}건
+                {selectedSvcObj?.name} 생성 예정 · {checkedItems.size}건
                 {issueMode === "individual" && (
                   <span className="ml-1.5 text-purple-500">→ {checkedItems.size}개 티켓</span>
                 )}
@@ -1022,7 +1268,7 @@ function IssueModal({ open, onClose, onIssued, services }) {
           {issueMode === "merged" && (
             <div className="space-y-3">
               <div>
-                <label className="text-xs font-semibold text-slate-400 block mb-1.5">티켓 제목</label>
+                <label className="text-xs font-semibold text-slate-400 block mb-1.5">업무 제목</label>
                 <input
                   value={title}
                   onChange={e => setTitle(e.target.value)}
@@ -1068,7 +1314,7 @@ function IssueModal({ open, onClose, onIssued, services }) {
                   <CustomDropdown
                     value={priority}
                     onChange={setPriority}
-                    options={["Medium", "High", "Low", "Critical"]}
+                    options={["높음", "보통", "낮음"]}
                     placeholder="우선순위 선택"
                     disabled={issuing}
                   />
@@ -1098,13 +1344,28 @@ function RegenModal({ open, onClose, onRegen }) {
   const [focus, setFocus] = useState("");
   const [prompt, setPrompt] = useState("");
   const [len, setLen] = useState("보통");
+  const [showDirectInput, setShowDirectInput] = useState(false);
+  const promptRef = useRef(null);
   const FOCUSES = [
-    { label: "기술 이슈",    val: "기술적 제약 사항 위주" },
+    { label: "회의 요약",  val: "회의 전체 요약 위주" },
+    { label: "주요 결정",    val: "의사결정 사항 위주" },
     { label: "해야 할 일", val: "해야 할 일과 담당자 위주" },
-    { label: "일정",        val: "일정 및 마일스톤 위주" },
-    { label: "의사결정",    val: "의사결정 사항 위주" },
+    { label: "이슈/리스크",  val: "기술적 제약 사항 위주" },
   ];
   const LENS = ["간결", "보통", "상세"];
+
+  useEffect(() => {
+    if (showDirectInput && promptRef.current) {
+      promptRef.current.focus();
+    }
+  }, [showDirectInput]);
+
+  useEffect(() => {
+    if (!open) {
+      setShowDirectInput(false);
+    }
+  }, [open]);
+
   return (
     <Modal
       open={open}
@@ -1130,34 +1391,57 @@ function RegenModal({ open, onClose, onRegen }) {
       }
     >
       <div className="space-y-5">
-        <p className="text-sm text-slate-400 leading-relaxed">요약의 초점을 조정할 수 있어요. 빠른 선택이나 직접 지시 중 하나를 사용하세요.</p>
+        <p className="text-sm text-slate-400 leading-relaxed">빠른 선택이나 직접 지시 중 하나를 사용하세요.</p>
         <div>
-          <p className="text-xs font-semibold text-slate-400 mb-2.5">초점 선택</p>
+          <p className="text-xs font-semibold text-slate-400 mb-2.5">무엇을 중심으로 요약할까요?</p>
           <div className="flex flex-wrap gap-2">
             {FOCUSES.map(f => (
               <button
                 key={f.val}
-                onClick={() => { setFocus(f.val); setPrompt(f.val); }}
+                type="button"
+                onClick={() => { setFocus(f.val); setPrompt(f.val); setShowDirectInput(false); }}
                 className={`text-xs font-semibold px-3 py-1.5 rounded-full border transition-colors ${
-                  focus === f.val ? "bg-purple-50 text-purple-600 border-purple-300" : "text-slate-400 border-slate-200 hover:border-slate-300"
+                  !showDirectInput && focus === f.val ? "bg-purple-50 text-purple-600 border-purple-300" : "text-slate-400 border-slate-200 hover:border-slate-300"
                 }`}
               >
                 {f.label}
               </button>
             ))}
+            <button
+              type="button"
+              onClick={() => setShowDirectInput(true)}
+              className={`text-xs font-semibold px-3 py-1.5 rounded-full border transition-colors ${
+                showDirectInput ? "bg-cyan-50 text-cyan-600 border-cyan-300" : "text-slate-400 border-slate-200 hover:border-slate-300"
+              }`}
+            >
+              직접 입력
+            </button>
           </div>
         </div>
+        {showDirectInput && (
         <div>
           <p className="text-xs font-semibold text-slate-400 mb-2">직접 지시</p>
-          <textarea
-            rows={2}
-            value={prompt}
-            onChange={e => setPrompt(e.target.value)}
-            placeholder="예: 기술적 리스크 위주로 요약해줘"
-            className="w-full text-sm rounded-xl px-4 py-3 outline-none resize-none placeholder:text-slate-300 border border-slate-200 focus:border-cyan-400 bg-slate-50 transition-colors"
-            style={{ fontFamily: "inherit" }}
-          />
+          <div className="relative">
+            {!prompt && (
+              <p className="pointer-events-none absolute left-4 top-3 text-sm text-slate-300">직접 원하는 방향을 입력하세요.</p>
+            )}
+            <textarea
+              ref={promptRef}
+              rows={6}
+              value={prompt}
+              onChange={e => setPrompt(e.target.value)}
+              placeholder={`
+- 주요 결정과 해야 할 일 중심으로 5줄 이내로 요약해줘
+- 회의 결과와 다음에 할 일을 위주로 정리해줘
+- 각 이슈에 대한 대응 방향이 보이게 써줘
+- 다음 회의 안건까지 포함해서 회의 내용을 정리해줘
+- 해야 할 일을 자세히 정리해줘`}
+              className={`w-full text-sm rounded-xl px-4 outline-none resize-none placeholder:text-[13px] placeholder:text-slate-300 border border-slate-200 focus:border-cyan-400 bg-slate-50 transition-colors ${prompt ? "py-3" : "pt-9 pb-3"}`}
+              style={{ fontFamily: "inherit" }}
+            />
+          </div>
         </div>
+        )}
         <div>
           <p className="text-xs font-semibold text-slate-400 mb-2">요약 길이</p>
           <div className="flex gap-2">
@@ -1180,7 +1464,7 @@ function RegenModal({ open, onClose, onRegen }) {
 }
 
 /* ─── Transcript Card ────────────────────────────────── */
-function TxCard({ item, isActive, isBookmarked, onSeek, onToggleBm, collapsed, onToggleCollapse }) {
+function TxCard({ item, isActive, isBookmarked, onSeek, onToggleBm }) {
   const col = SPK_COLOR[item.spk] || "#5A6F8A";
   const anonLabel = SPK_ANON_LABEL[item.spk] || item.spk;
   const anonInitial = anonLabel.replace("팀원", "");
@@ -1211,20 +1495,10 @@ function TxCard({ item, isActive, isBookmarked, onSeek, onToggleBm, collapsed, o
         >
           {isBookmarked ? <LucideIcon name="star-filled" size={14} /> : <LucideIcon name="star" size={14} />}
         </button>
-        <button
-          onClick={e => { e.stopPropagation(); onToggleCollapse(item.idx); }}
-          className={`flex-shrink-0 w-6 h-6 flex items-center justify-center rounded-md text-slate-300 hover:text-slate-500 hover:bg-slate-100 transition-all opacity-0 group-hover:opacity-100 ${!collapsed ? "opacity-100" : ""}`}
-        >
-          <span style={{ transform: collapsed ? "rotate(-90deg)" : "rotate(0deg)", transition: "transform 0.2s" }}>
-            <LucideIcon name="chevron-down" size={12} color={PROJECTLIST_CHEVRON_COLOR} strokeWidth={2} />
-          </span>
-        </button>
       </div>
 
-      <div style={{ maxHeight: collapsed ? 0 : 200, overflow: "hidden", transition: "max-height 0.25s ease" }}>
-        <div className="px-4 pb-3 pl-[3.75rem]">
-          <p className="text-sm text-slate-800 leading-relaxed">{item.txt}</p>
-        </div>
+      <div className="px-4 pb-3 pl-[3.75rem]">
+        <p className="text-sm text-slate-800 leading-relaxed">{item.txt}</p>
       </div>
     </div>
   );
@@ -1261,15 +1535,8 @@ function EditableDecision({ text, onSave }) {
           </div>
         </div>
       ) : (
-        <div className="flex items-start gap-2.5">
-          <span className="flex-shrink-0 mt-1 text-cyan-500"><LucideIcon name="square-check" size={14} /></span>
+        <div className="flex items-start gap-2">
           <p className="text-sm text-slate-800 leading-relaxed flex-1">{val}</p>
-          <button
-            onClick={() => setEditing(true)}
-            className="opacity-0 group-hover:opacity-100 text-slate-400 p-1 rounded hover:bg-slate-100 transition-opacity text-sm"
-          >
-            <LucideIcon name="pencil" size={13} />
-          </button>
         </div>
       )}
     </div>
@@ -1277,7 +1544,7 @@ function EditableDecision({ text, onSave }) {
 }
 
 /* ─── ActionItem ─────────────────────────────────────── */
-function ActionItem({ item, checked, onToggle, onIssue }) {
+function ActionItem({ item, checked, onToggle }) {
   return (
     <div
       className={`group flex items-start gap-3 p-3 rounded-xl border cursor-pointer ${
@@ -1300,17 +1567,77 @@ function ActionItem({ item, checked, onToggle, onIssue }) {
           {item.assignee}{checked ? " · 완료" : item.due ? ` · ${item.due}` : ""}
         </p>
       </div>
-      {checked ? (
+      {checked && (
         <span className="text-xs font-bold px-2 py-1 rounded-lg bg-emerald-100 text-emerald-600">완료</span>
-      ) : (
-        <button
-          onClick={e => { e.stopPropagation(); onIssue(); }}
-          className="flex-shrink-0 text-xs font-semibold px-2 py-1 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity bg-cyan-50 text-cyan-600 border border-cyan-200"
-        >
-          발행
-        </button>
       )}
     </div>
+  );
+}
+
+/* ─── 편집 모드 공용 인풋 ─────────────────────────────── */
+function EditField({ label, hint, action, children }) {
+  return (
+    <div>
+      {(label || action) && (
+        <div className="flex items-center justify-between mb-1.5">
+          {label && <p className="text-xs font-semibold text-slate-500">{label}</p>}
+          {action}
+        </div>
+      )}
+      {children}
+      {hint && <p className="text-[11px] text-slate-400 mt-1">{hint}</p>}
+    </div>
+  );
+}
+
+const EDIT_INPUT_CLS =
+  "w-full text-sm rounded-lg px-3 py-2.5 outline-none border border-slate-200 bg-white transition-colors placeholder:text-slate-300 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-100";
+
+function EditAddButton({ onClick, label = "항목 추가" }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="flex items-center gap-1 text-[11px] font-semibold px-2.5 py-1 rounded-full border border-dashed border-slate-300 text-slate-500 hover:border-cyan-300 hover:text-cyan-600 hover:bg-cyan-50/60 transition-colors cursor-pointer"
+    >
+      <span className="text-sm leading-none">+</span>
+      {label}
+    </button>
+  );
+}
+
+function EditRemoveButton({ onClick, label = "삭제" }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={label}
+      className="flex-shrink-0 w-7 h-7 flex items-center justify-center rounded-lg text-slate-300 hover:text-red-500 hover:bg-red-50 transition-colors cursor-pointer"
+    >
+      <LucideIcon name="x" size={14} />
+    </button>
+  );
+}
+
+function EditEmptyRow({ children }) {
+  return (
+    <div className="rounded-lg border border-dashed border-slate-200 py-3 px-3 text-center text-xs text-slate-400">
+      {children}
+    </div>
+  );
+}
+
+function EditSaveButton({ onClick, label = "저장" }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="flex items-center gap-1.5 text-[11px] font-bold px-3 py-1.5 rounded-lg text-white transition-all hover:-translate-y-0.5 cursor-pointer"
+      style={{ background: "linear-gradient(135deg,#0099CC,#7C3AED)", boxShadow: "0 4px 12px rgba(0,100,180,0.18)" }}
+    >
+      <LucideIcon name="check" size={11} color="#fff" />
+      {label}
+    </button>
   );
 }
 
@@ -1326,93 +1653,117 @@ function Divider({ label }) {
 }
 
 /* ─── AI Summary Panel ───────────────────────────────── */
-function SummaryPanel({ summaryData, onOpenRegen, onSaveSummaryEdit, onOpenIssue, transcriptVisible, onToggleTranscript, isMobile, summaryCollapsed, onToggleSummary, actions, onToggleAction }) {
+function SummaryPanel({ summaryData, onOpenRegen, onSaveSummaryEdit, transcriptVisible, onToggleTranscript, isMobile, summaryCollapsed, onToggleSummary, actions, onToggleAction }) {
   const [decisions, setDecisions] = useState(summaryData.decisions);
   const [isMoreOpen, setIsMoreOpen] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [keywordsText, setKeywordsText] = useState("");
   const [summaryText, setSummaryText] = useState("");
-  const [decisionsText, setDecisionsText] = useState("");
-  const [actionsText, setActionsText] = useState("");
-  const [issuesText, setIssuesText] = useState("");
-  const [nextAgendaText, setNextAgendaText] = useState("");
+  const [decisionsDraft, setDecisionsDraft] = useState([]);
+  const [actionsDraft, setActionsDraft] = useState([]);
+  const [issuesDraft, setIssuesDraft] = useState([]);
+  const [nextAgendaDraft, setNextAgendaDraft] = useState([]);
+  const [openDuePickerIdx, setOpenDuePickerIdx] = useState(null);
+
+  // 4개 서브 섹션(주요 결정/해야 할 일/이슈&리스크/다음 회의 안건) 개별 접기 상태
+  const [collapsedSections, setCollapsedSections] = useState({
+    decisions: false,
+    actions: false,
+    issues: false,
+    nextAgenda: false,
+  });
+
+  const toggleSection = useCallback((key) => {
+    setCollapsedSections((prev) => ({ ...prev, [key]: !prev[key] }));
+  }, []);
 
   const resetEditDraft = useCallback(() => {
     setKeywordsText((summaryData.keywords || []).map((k) => k.text).join(", "));
     setSummaryText(summaryData.summary || "");
-    setDecisionsText((summaryData.decisions || []).join("\n"));
-    setActionsText(
-      (summaryData.actions || [])
-        .map((a) => `${a.text} | ${a.assignee || ""} | ${a.due || "미정"} | ${a.status || "todo"}`)
-        .join("\n")
-    );
-    setIssuesText(
-      (summaryData.issues || [])
-        .map((i) => `${i.level}: ${i.text}`)
-        .join("\n")
-    );
-    setNextAgendaText((summaryData.next_agenda || []).join("\n"));
+    setDecisionsDraft([...(summaryData.decisions || [])]);
+    setActionsDraft((summaryData.actions || []).map((a) => ({
+      ...a,
+      due: normalizeDueLabel(a.due),
+    })));
+    setIssuesDraft((summaryData.issues || []).map((i) => ({ ...i })));
+    setNextAgendaDraft((summaryData.next_agenda || []).map((item) => parseNextAgendaItem(item)));
   }, [summaryData]);
 
-  const handleInlineSave = useCallback(() => {
-    const keywordItems = keywordsText
+  const buildKeywordItems = useCallback(() => {
+    return keywordsText
       .split(/,|\n/)
       .map((v) => v.trim())
       .filter(Boolean)
       .map((text) => ({ text, type: "cyan" }));
+  }, [keywordsText]);
 
-    const nextDecisions = decisionsText
-      .split("\n")
-      .map((v) => v.trim())
+  const buildDecisions = useCallback(() => {
+    return decisionsDraft
+      .map((v) => (v || "").trim())
       .filter(Boolean);
+  }, [decisionsDraft]);
 
-    const nextActions = actionsText
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .map((line) => {
-        const [textPart, assigneePart, duePart, statusPart] = line.split("|").map((v) => v.trim());
-        const normalizedStatus =
-          statusPart === "done" || statusPart === "완료" ? "done" : "todo";
-
-        return {
-          text: textPart || "",
-          assignee: assigneePart || "",
-          due: !duePart || duePart === "미정" ? null : duePart,
-          status: normalizedStatus,
-        };
-      })
+  const buildActions = useCallback(() => {
+    return actionsDraft
+      .map((a) => ({
+        text: (a.text || "").trim(),
+        assignee: (a.assignee || "").trim(),
+        due: !a.due || `${a.due}`.trim() === "" || `${a.due}`.trim() === "미정" ? null : `${a.due}`.trim(),
+        status: a.status === "done" ? "done" : "todo",
+      }))
       .filter((a) => a.text);
+  }, [actionsDraft]);
 
-    const nextIssues = issuesText
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .map((line) => {
-        const parts = line.split(":");
-        const first = (parts[0] || "").trim().toLowerCase();
-        const text = (parts.slice(1).join(":") || line).trim();
-        const level = first === "high" || first === "medium" || first === "low" ? first : "medium";
-        return { level, text };
-      })
+  const buildIssues = useCallback(() => {
+    return issuesDraft
+      .map((i) => ({
+        level: i.level === "high" || i.level === "medium" || i.level === "low" ? i.level : "medium",
+        text: (i.text || "").trim(),
+      }))
       .filter((i) => i.text);
+  }, [issuesDraft]);
 
-    const nextAgenda = nextAgendaText
-      .split("\n")
-      .map((v) => v.trim())
+  const buildNextAgenda = useCallback(() => {
+    return nextAgendaDraft
+      .map((v) => formatNextAgendaItem(v))
       .filter(Boolean);
+  }, [nextAgendaDraft]);
 
+  const persistSummary = useCallback((nextFields) => {
     onSaveSummaryEdit?.({
       ...summaryData,
-      keywords: keywordItems,
-      summary: summaryText,
-      decisions: nextDecisions,
-      actions: nextActions,
-      issues: nextIssues,
-      next_agenda: nextAgenda,
+      ...nextFields,
     });
+  }, [onSaveSummaryEdit, summaryData]);
+
+  const handleSaveSection = useCallback((sectionKey) => {
+    switch (sectionKey) {
+      case "overview":
+        persistSummary({
+          keywords: buildKeywordItems(),
+          summary: summaryText,
+        });
+        return;
+      case "decisions":
+        persistSummary({ decisions: buildDecisions() });
+        return;
+      case "actions":
+        persistSummary({ actions: buildActions() });
+        return;
+      case "issues":
+        persistSummary({ issues: buildIssues() });
+        return;
+      case "nextAgenda":
+        persistSummary({ next_agenda: buildNextAgenda() });
+        return;
+      default:
+        return;
+    }
+  }, [buildActions, buildDecisions, buildIssues, buildKeywordItems, buildNextAgenda, persistSummary, summaryText]);
+
+  const handleInlineDone = useCallback(() => {
     setIsEditing(false);
-  }, [actionsText, decisionsText, issuesText, keywordsText, nextAgendaText, onSaveSummaryEdit, summaryData, summaryText]);
+  }, []);
 
   const handleInlineCancel = useCallback(() => {
     resetEditDraft();
@@ -1428,6 +1779,20 @@ function SummaryPanel({ summaryData, onOpenRegen, onSaveSummaryEdit, onOpenIssue
       resetEditDraft();
     }
   }, [isEditing, resetEditDraft]);
+
+  useEffect(() => {
+    if (openDuePickerIdx === null) return;
+
+    const handleOutsideClick = (event) => {
+      if (event.target instanceof Element && event.target.closest("[data-due-picker-root]")) return;
+      setOpenDuePickerIdx(null);
+    };
+
+    document.addEventListener("mousedown", handleOutsideClick);
+    return () => document.removeEventListener("mousedown", handleOutsideClick);
+  }, [openDuePickerIdx]);
+
+  const doneActionsCount = actions.filter((a) => a.status === "done").length;
 
   return (
     <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden h-full flex flex-col">
@@ -1505,92 +1870,294 @@ function SummaryPanel({ summaryData, onOpenRegen, onSaveSummaryEdit, onOpenIssue
         <div className="px-5 py-5 space-y-6 overflow-y-auto flex-1">
           {isEditing ? (
             <>
-              <div className="rounded-xl p-4 space-y-3 bg-cyan-50/60 border border-cyan-100">
-                <div className="flex items-center justify-between gap-2 flex-wrap">
-                  <p className="text-xs font-semibold text-cyan-700 uppercase tracking-widest">인라인 편집 모드</p>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={handleInlineCancel}
-                      className="text-xs font-semibold px-2.5 py-1.5 rounded-lg text-slate-500 border border-slate-200 bg-white hover:bg-slate-100"
-                    >
-                      취소
-                    </button>
-                    <button
-                      onClick={handleInlineSave}
-                      className="text-xs font-bold px-3 py-1.5 rounded-lg text-white"
-                      style={{ background: "linear-gradient(135deg,#0099CC,#7C3AED)" }}
-                    >
-                      저장
-                    </button>
+              {/* 편집 모드 헤더 */}
+              <div
+                className="mb-3 rounded-xl px-4 py-3 flex items-center justify-between gap-3 flex-wrap border"
+                style={{
+                  background: "linear-gradient(180deg, rgba(0,153,204,0.07), rgba(124,58,237,0.05))",
+                  borderColor: "rgba(0,100,180,0.12)",
+                }}
+              >
+                <div className="flex items-center gap-2.5">
+                  <span
+                    className="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0"
+                    style={{ background: "linear-gradient(135deg,#0099CC,#7C3AED)" }}
+                  >
+                    <LucideIcon name="pencil" size={13} color="#fff" />
+                  </span>
+                  <div>
+                    <p className="text-sm font-bold text-slate-900 leading-tight">AI 요약 수정 중</p>
+                    <p className="text-[11px] text-slate-400 leading-tight">저장하면 바로 반영돼요</p>
                   </div>
                 </div>
-                <p className="text-xs text-slate-500 leading-relaxed">
-                  아래 항목을 직접 수정한 뒤 저장하면 AI 요약에 바로 반영됩니다.
-                </p>
-              </div>
-              <div>
-                <p className="text-xs font-semibold text-slate-400 mb-1.5">핵심 키워드 (쉼표로 구분)</p>
-                <input
-                  value={keywordsText}
-                  onChange={(e) => setKeywordsText(e.target.value)}
-                  className="w-full text-sm rounded-xl px-4 py-2.5 outline-none border border-slate-200 focus:border-cyan-400 bg-slate-50 transition-colors"
-                  style={{ fontFamily: "inherit" }}
-                />
-              </div>
-
-              <div>
-                <p className="text-xs font-semibold text-slate-400 mb-1.5">전체 요약</p>
-                <textarea
-                  rows={4}
-                  value={summaryText}
-                  onChange={(e) => setSummaryText(e.target.value)}
-                  className="w-full text-sm rounded-xl px-4 py-3 outline-none resize-none border border-slate-200 focus:border-cyan-400 bg-slate-50 transition-colors"
-                  style={{ fontFamily: "inherit" }}
-                />
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={handleInlineCancel}
+                    className="text-xs font-semibold px-3 py-1.5 rounded-lg text-slate-500 border border-slate-200 bg-white hover:bg-slate-50 transition-colors cursor-pointer"
+                  >
+                    취소
+                  </button>
+                  <button
+                    onClick={handleInlineDone}
+                    className="flex items-center gap-1.5 text-xs font-bold px-3.5 py-1.5 rounded-lg text-white transition-all hover:-translate-y-0.5 cursor-pointer"
+                    style={{ background: "linear-gradient(135deg,#0099CC,#7C3AED)", boxShadow: "0 4px 12px rgba(0,100,180,0.18)" }}
+                  >
+                    <LucideIcon name="check" size={12} color="#fff" />
+                    수정 완료
+                  </button>
+                </div>
               </div>
 
-              <div>
-                <p className="text-xs font-semibold text-slate-400 mb-1.5">주요 결정 (줄바꿈 구분)</p>
-                <textarea
-                  rows={4}
-                  value={decisionsText}
-                  onChange={(e) => setDecisionsText(e.target.value)}
-                  className="w-full text-sm rounded-xl px-4 py-3 outline-none resize-none border border-slate-200 focus:border-cyan-400 bg-slate-50 transition-colors"
-                  style={{ fontFamily: "inherit" }}
-                />
+              {/* 핵심 키워드 + 전체 요약 */}
+              <div className="rounded-xl p-4 space-y-4 bg-blue-50/70 border border-blue-100">
+                <div className="flex items-center justify-between">
+                  <p className="text-sm font-bold text-slate-800">핵심 키워드 / 전체 요약</p>
+                  <EditSaveButton onClick={() => handleSaveSection("overview")} />
+                </div>
+                <EditField label="핵심 키워드" hint="쉼표(,)로 구분해서 입력하세요">
+                  <input
+                    value={keywordsText}
+                    onChange={(e) => setKeywordsText(e.target.value)}
+                    placeholder="예: STT 파이프라인, 화자 분리, 배포 일정"
+                    className={EDIT_INPUT_CLS}
+                    style={{ fontFamily: "inherit" }}
+                  />
+                  {keywordsText.trim() && (
+                    <div className="flex flex-wrap gap-1.5 mt-2.5">
+                      {keywordsText.split(/,|\n/).map((v) => v.trim()).filter(Boolean).map((k, i) => (
+                        <span key={`${k}-${i}`} className={`text-xs font-semibold px-2.5 py-1 rounded-full ${KW_BADGE}`}>
+                          {k}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </EditField>
+
+                <EditField label="전체 요약">
+                  <textarea
+                    rows={4}
+                    value={summaryText}
+                    onChange={(e) => setSummaryText(e.target.value)}
+                    placeholder="회의 내용을 한눈에 알 수 있도록 정리해주세요"
+                    className={`${EDIT_INPUT_CLS} resize-none leading-relaxed`}
+                    style={{ fontFamily: "inherit" }}
+                  />
+                </EditField>
               </div>
 
-              <div>
-                <p className="text-xs font-semibold text-slate-400 mb-1.5">해야 할 일 (한 줄당: 내용 | 담당자 | 마감일 | 상태(todo/done))</p>
-                <textarea
-                  rows={5}
-                  value={actionsText}
-                  onChange={(e) => setActionsText(e.target.value)}
-                  className="w-full text-sm rounded-xl px-4 py-3 outline-none resize-none border border-slate-200 focus:border-cyan-400 bg-slate-50 transition-colors"
-                  style={{ fontFamily: "inherit" }}
-                />
+              {/* 주요 결정 */}
+              <div className="rounded-xl border border-slate-200 p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <p className="text-sm font-bold text-slate-800">주요 결정</p>
+                    <span className="text-xs font-semibold text-slate-400">{decisionsDraft.length}건</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <EditAddButton onClick={() => setDecisionsDraft((prev) => [...prev, ""])} />
+                    <EditSaveButton onClick={() => handleSaveSection("decisions")} />
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  {decisionsDraft.length === 0 && <EditEmptyRow>아직 추가된 결정 사항이 없어요</EditEmptyRow>}
+                  {decisionsDraft.map((item, idx) => (
+                    <div key={`decision-edit-${idx}`} className="flex items-center gap-2">
+                      <span
+                        className="flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-white text-[10px] font-bold"
+                        style={{ background: "rgba(0,153,204,0.5)" }}
+                      >
+                        {idx + 1}
+                      </span>
+                      <input
+                        value={item}
+                        onChange={(e) =>
+                          setDecisionsDraft((prev) => prev.map((v, i) => (i === idx ? e.target.value : v)))
+                        }
+                        className={EDIT_INPUT_CLS}
+                        style={{ fontFamily: "inherit" }}
+                        placeholder={`주요 결정 ${idx + 1}`}
+                      />
+                      <EditRemoveButton onClick={() => setDecisionsDraft((prev) => prev.filter((_, i) => i !== idx))} />
+                    </div>
+                  ))}
+                </div>
               </div>
 
-              <div>
-                <p className="text-xs font-semibold text-slate-400 mb-1.5">이슈/리스크 (한 줄당: high|medium|low: 내용)</p>
-                <textarea
-                  rows={4}
-                  value={issuesText}
-                  onChange={(e) => setIssuesText(e.target.value)}
-                  className="w-full text-sm rounded-xl px-4 py-3 outline-none resize-none border border-slate-200 focus:border-cyan-400 bg-slate-50 transition-colors"
-                  style={{ fontFamily: "inherit" }}
-                />
+              {/* 해야 할 일 */}
+              <div className="rounded-xl border border-slate-200 p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <p className="text-sm font-bold text-slate-800">해야 할 일</p>
+                    <span className="text-xs font-semibold text-slate-400">{actionsDraft.length}건</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <EditAddButton onClick={() => setActionsDraft((prev) => [...prev, { text: "", assignee: "", due: null, status: "todo" }])} />
+                    <EditSaveButton onClick={() => handleSaveSection("actions")} />
+                  </div>
+                </div>
+                <div className="space-y-2.5">
+                  {actionsDraft.length === 0 && <EditEmptyRow>아직 추가된 할 일이 없어요</EditEmptyRow>}
+                  {actionsDraft.map((item, idx) => {
+                    const isDone = item.status === "done";
+                    return (
+                      <div
+                        key={`action-edit-${idx}`}
+                        className="rounded-xl border p-3 space-y-2.5 transition-colors"
+                        style={{
+                          borderColor: isDone ? "rgba(16,185,129,0.3)" : "rgba(0,100,180,0.12)",
+                          background: isDone ? "rgba(16,185,129,0.05)" : "#F8FAFF",
+                        }}
+                      >
+                        <div className="flex items-center gap-2">
+                          <input
+                            value={item.text || ""}
+                            onChange={(e) =>
+                              setActionsDraft((prev) => prev.map((v, i) => (i === idx ? { ...v, text: e.target.value } : v)))
+                            }
+                            className={`${EDIT_INPUT_CLS} bg-white font-medium`}
+                            style={{ fontFamily: "inherit" }}
+                            placeholder="할 일 내용"
+                          />
+                          <EditRemoveButton onClick={() => setActionsDraft((prev) => prev.filter((_, i) => i !== idx))} />
+                        </div>
+                        <div className="grid grid-cols-3 gap-2">
+                          <input
+                            value={item.assignee || ""}
+                            onChange={(e) =>
+                              setActionsDraft((prev) => prev.map((v, i) => (i === idx ? { ...v, assignee: e.target.value } : v)))
+                            }
+                            className={`${EDIT_INPUT_CLS} bg-white text-xs py-2`}
+                            style={{ fontFamily: "inherit" }}
+                            placeholder="담당자"
+                          />
+                          <div className="relative" data-due-picker-root>
+                            <button
+                              type="button"
+                              onClick={() => setOpenDuePickerIdx((prev) => (prev === idx ? null : idx))}
+                              className={`${EDIT_INPUT_CLS} bg-white text-xs py-2 text-left flex items-center justify-between gap-2 cursor-pointer`}
+                              style={{ fontFamily: "inherit" }}
+                            >
+                              <span className={`${item.due ? "text-slate-700" : "text-slate-400"}`}>{item.due || "마감일"}</span>
+                              <LucideIcon name="chevron-down" size={12} color={PROJECTLIST_CHEVRON_COLOR} strokeWidth={2} />
+                            </button>
+                            {openDuePickerIdx === idx && (
+                              <DueDateCalendar
+                                value={parseDueToDateStr(item.due) || toDateStr(new Date().getFullYear(), new Date().getMonth(), new Date().getDate())}
+                                onSelect={(dateStr) => {
+                                  setActionsDraft((prev) => prev.map((v, i) => (i === idx ? { ...v, due: formatDueFromDateStr(dateStr) } : v)));
+                                }}
+                                onClose={() => setOpenDuePickerIdx(null)}
+                              />
+                            )}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setActionsDraft((prev) => prev.map((v, i) => (i === idx ? { ...v, status: isDone ? "todo" : "done" } : v)))
+                            }
+                            className="h-8 mt-3 justify-self-end px-2.5 flex items-center justify-center text-[10px] font-semibold rounded-md border transition-colors cursor-pointer whitespace-nowrap"
+                            style={{
+                              borderColor: isDone ? "rgba(16,185,129,0.4)" : "rgba(0,100,180,0.15)",
+                              color: isDone ? "#10B981" : "#5A6F8A",
+                              background: isDone ? "rgba(16,185,129,0.1)" : "#fff",
+                            }}
+                          >
+                            {isDone ? "완료" : "진행 중"}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
 
-              <div>
-                <p className="text-xs font-semibold text-slate-400 mb-1.5">다음 회의 안건 (줄바꿈 구분)</p>
-                <textarea
-                  rows={4}
-                  value={nextAgendaText}
-                  onChange={(e) => setNextAgendaText(e.target.value)}
-                  className="w-full text-sm rounded-xl px-4 py-3 outline-none resize-none border border-slate-200 focus:border-cyan-400 bg-slate-50 transition-colors"
-                  style={{ fontFamily: "inherit" }}
-                />
+              {/* 이슈/리스크 */}
+              <div className="rounded-xl border border-slate-200 p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <p className="text-sm font-bold text-slate-800">이슈 &amp; 리스크</p>
+                    <span className="text-xs font-semibold text-slate-400">{issuesDraft.length}건</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <EditAddButton onClick={() => setIssuesDraft((prev) => [...prev, { level: "medium", text: "" }])} />
+                    <EditSaveButton onClick={() => handleSaveSection("issues")} />
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  {issuesDraft.length === 0 && <EditEmptyRow>아직 등록된 이슈가 없어요</EditEmptyRow>}
+                  {issuesDraft.map((item, idx) => {
+                    const levelStyles =
+                      (item.level || "medium") === "high"
+                        ? { background: "#FEF2F2", borderColor: "#FECACA", color: "#EF4444" }
+                        : (item.level || "medium") === "low"
+                        ? { background: "#F8FAFC", borderColor: "#E2E8F0", color: "#64748B" }
+                        : { background: "#FFFBEB", borderColor: "#FDE68A", color: "#D97706" };
+                    return (
+                      <div key={`issue-edit-${idx}`} className="flex items-center gap-2">
+                        <div className="w-[92px] flex-shrink-0">
+                          <CustomDropdown
+                            value={ISSUE_LEVEL_TO_LABEL[item.level || "medium"] || "보통"}
+                            onChange={(label) =>
+                              setIssuesDraft((prev) =>
+                                prev.map((v, i) => (i === idx ? { ...v, level: ISSUE_LABEL_TO_LEVEL[label] || "medium" } : v))
+                              )
+                            }
+                            options={["높음", "보통", "낮음"]}
+                            placeholder="보통"
+                            triggerStyle={levelStyles}
+                          />
+                        </div>
+                        <input
+                          value={item.text || ""}
+                          onChange={(e) =>
+                            setIssuesDraft((prev) => prev.map((v, i) => (i === idx ? { ...v, text: e.target.value } : v)))
+                          }
+                          className={EDIT_INPUT_CLS}
+                          style={{ fontFamily: "inherit" }}
+                          placeholder="이슈/리스크 내용"
+                        />
+                        <EditRemoveButton onClick={() => setIssuesDraft((prev) => prev.filter((_, i) => i !== idx))} />
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* 다음 회의 안건 */}
+              <div className="rounded-xl border border-cyan-100 bg-cyan-50/40 p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <p className="text-sm font-bold text-slate-800">다음 회의 안건</p>
+                    <span className="text-xs font-semibold text-slate-400">{nextAgendaDraft.length}건</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <EditAddButton onClick={() => setNextAgendaDraft((prev) => [...prev, { topic: "" }])} />
+                    <EditSaveButton onClick={() => handleSaveSection("nextAgenda")} />
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  {nextAgendaDraft.length === 0 && <EditEmptyRow>다음 회의 안건을 추가해보세요</EditEmptyRow>}
+                  {nextAgendaDraft.map((item, idx) => (
+                    <div key={`agenda-edit-${idx}`} className="flex items-start gap-2">
+                      <span
+                        className="flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-white text-[10px] font-bold bg-cyan-500 mt-2"
+                      >
+                        {idx + 1}
+                      </span>
+                      <div className="flex-1">
+                        <input
+                          value={item.topic || ""}
+                          onChange={(e) =>
+                            setNextAgendaDraft((prev) => prev.map((v, i) => (i === idx ? { ...v, topic: e.target.value } : v)))
+                          }
+                          className={`${EDIT_INPUT_CLS} bg-white`}
+                          style={{ fontFamily: "inherit" }}
+                          placeholder={`다음 회의 안건 ${idx + 1}`}
+                        />
+                      </div>
+                      <EditRemoveButton onClick={() => setNextAgendaDraft((prev) => prev.filter((_, i) => i !== idx))} />
+                    </div>
+                  ))}
+                </div>
               </div>
             </>
           ) : (
@@ -1614,72 +2181,135 @@ function SummaryPanel({ summaryData, onOpenRegen, onSaveSummaryEdit, onOpenIssue
 
               <Divider label="협업" />
 
+              {/* 주요 결정 */}
               <div>
-                <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-3">주요 결정</p>
-                <div className="space-y-1">
-                  {decisions.map((d, i) => (
-                    <EditableDecision
-                      key={i}
-                      text={d}
-                      onSave={v => setDecisions(prev => prev.map((x, j) => (j === i ? v : x)))}
-                    />
-                  ))}
+                <CollapsibleSectionHeader
+                  label="주요 결정"
+                  collapsed={collapsedSections.decisions}
+                  onToggle={() => toggleSection("decisions")}
+                  badge={
+                    <span className="text-xs text-slate-300">{decisions.length}건</span>
+                  }
+                />
+                <div
+                  style={{
+                    maxHeight: collapsedSections.decisions ? 0 : 2000,
+                    overflow: "hidden",
+                    transition: "max-height 0.25s ease",
+                  }}
+                >
+                  <div className="space-y-1">
+                    {decisions.map((d, i) => (
+                      <EditableDecision
+                        key={i}
+                        text={d}
+                        onSave={v => setDecisions(prev => prev.map((x, j) => (j === i ? v : x)))}
+                      />
+                    ))}
+                  </div>
                 </div>
               </div>
 
+              {/* 해야 할 일 */}
               <div>
-                <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-3">해야 할 일</p>
-                <div className="space-y-2">
-                  {actions.map((a, i) => (
-                    <ActionItem
-                      key={i}
-                      item={a}
-                      checked={a.status === "done"}
-                      onToggle={() => onToggleAction(i)}
-                      onIssue={onOpenIssue}
-                    />
-                  ))}
+                <CollapsibleSectionHeader
+                  label="해야 할 일"
+                  collapsed={collapsedSections.actions}
+                  onToggle={() => toggleSection("actions")}
+                  badge={
+                    <span className="text-xs text-slate-300">{doneActionsCount}/{actions.length}</span>
+                  }
+                />
+                <div
+                  style={{
+                    maxHeight: collapsedSections.actions ? 0 : 2000,
+                    overflow: "hidden",
+                    transition: "max-height 0.25s ease",
+                  }}
+                >
+                  <div className="space-y-2">
+                    {actions.map((a, i) => (
+                      <ActionItem
+                        key={i}
+                        item={a}
+                        checked={a.status === "done"}
+                        onToggle={() => onToggleAction(i)}
+                      />
+                    ))}
+                  </div>
                 </div>
               </div>
 
               <Divider label="인사이트" />
 
+              {/* 이슈 & 리스크 */}
               <div>
-                <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-3">이슈 &amp; 리스크</p>
-                <div className="space-y-2">
-                  {summaryData.issues.map((iss, i) => {
-                    const c = ISSUE_CFG[iss.level];
-                    return (
-                      <div key={i} className={`flex items-start gap-3 p-3 rounded-xl border ${c.bg} ${c.border}`}>
-                        <span className="flex-shrink-0 mt-0.5">
-                          <LucideIcon
-                            name={c.icon}
-                            size={16}
-                            color={iss.level === "high" ? "#EF4444" : iss.level === "medium" ? "#F59E0B" : "#64748B"}
-                          />
-                        </span>
-                        <p className="flex-1 text-sm text-slate-800 leading-relaxed">{iss.text}</p>
-                        <span className={`flex-shrink-0 text-xs font-bold px-2 py-0.5 rounded ${c.badge}`}>{c.label}</span>
-                      </div>
-                    );
-                  })}
+                <CollapsibleSectionHeader
+                  label="이슈 & 리스크"
+                  collapsed={collapsedSections.issues}
+                  onToggle={() => toggleSection("issues")}
+                  badge={
+                    <span className="text-xs text-slate-300">{summaryData.issues.length}건</span>
+                  }
+                />
+                <div
+                  style={{
+                    maxHeight: collapsedSections.issues ? 0 : 2000,
+                    overflow: "hidden",
+                    transition: "max-height 0.25s ease",
+                  }}
+                >
+                  <div className="space-y-2">
+                    {summaryData.issues.map((iss, i) => {
+                      const c = ISSUE_CFG[iss.level];
+                      return (
+                        <div key={i} className={`flex items-start gap-3 p-3 rounded-xl border ${c.bg} ${c.border}`}>
+                          <span className="flex-shrink-0 mt-0.5">
+                            <LucideIcon
+                              name={c.icon}
+                              size={16}
+                              color={iss.level === "high" ? "#EF4444" : iss.level === "medium" ? "#F59E0B" : "#64748B"}
+                            />
+                          </span>
+                          <p className="flex-1 text-sm text-slate-800 leading-relaxed">{iss.text}</p>
+                          <span className={`flex-shrink-0 text-xs font-bold px-2 py-0.5 rounded ${c.badge}`}>{c.label}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
               </div>
 
+              {/* 다음 회의 안건 */}
               <div>
-                <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-3">다음 회의 안건</p>
-                <div className="rounded-xl p-3 space-y-2 bg-cyan-50/60 border border-cyan-100">
-                  {summaryData.next_agenda.map((item, i) => (
-                    <div key={i} className="flex items-start gap-2.5">
-                      <span
-                        className="flex-shrink-0 text-xs font-bold w-5 h-5 rounded-full flex items-center justify-center text-white mt-0.5 bg-cyan-500"
-                        style={{ fontSize: 10 }}
-                      >
-                        {i + 1}
-                      </span>
-                      <p className="text-sm text-slate-800 leading-relaxed">{item}</p>
-                    </div>
-                  ))}
+                <CollapsibleSectionHeader
+                  label="다음 회의 안건"
+                  collapsed={collapsedSections.nextAgenda}
+                  onToggle={() => toggleSection("nextAgenda")}
+                  badge={
+                    <span className="text-xs text-slate-300">{summaryData.next_agenda.length}건</span>
+                  }
+                />
+                <div
+                  style={{
+                    maxHeight: collapsedSections.nextAgenda ? 0 : 2000,
+                    overflow: "hidden",
+                    transition: "max-height 0.25s ease",
+                  }}
+                >
+                  <div className="rounded-xl p-3 space-y-2 bg-cyan-50/60 border border-cyan-100">
+                    {summaryData.next_agenda.map((item, i) => (
+                      <div key={i} className="flex items-start gap-2.5">
+                        <span
+                          className="flex-shrink-0 text-xs font-bold w-5 h-5 rounded-full flex items-center justify-center text-white mt-0.5 bg-cyan-500"
+                          style={{ fontSize: 10 }}
+                        >
+                          {i + 1}
+                        </span>
+                        <p className="text-sm text-slate-800 leading-relaxed">{item}</p>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               </div>
             </>
@@ -1948,7 +2578,7 @@ function IntegrationControlTower({ services, auditLog, onBadgeClick, onIssueOpen
               style={{ background: "#10B981" }}
             />
             <span className="text-xs text-slate-400">
-              최근 발행:&nbsp;
+              최근 생성일:&nbsp;
               <span className="font-semibold text-slate-600">{latestLog.time}</span>
               &nbsp;
               <span className="text-slate-400">({latestLog.user})</span>
@@ -1970,7 +2600,7 @@ function IntegrationControlTower({ services, auditLog, onBadgeClick, onIssueOpen
       {isMobile && latestLog && (
         <p className="text-xs text-slate-400 mt-2.5 flex items-center gap-1.5">
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 flex-shrink-0" />
-          최근 발행: <span className="font-semibold text-slate-600">{latestLog.time}</span>
+          최근 생성일: <span className="font-semibold text-slate-600">{latestLog.time}</span>
           &nbsp;({latestLog.user})
         </p>
       )}
@@ -1998,7 +2628,7 @@ function IssueButton({ onClick, issuingGlobal = false }) {
       ) : (
         <>
           <span style={{ fontSize: 14, lineHeight: 1 }}>+</span>
-          발행하기
+          업무 보내기
         </>
       )}
     </button>
@@ -2052,6 +2682,7 @@ export default function TikiSprint12() {
     }
   });
   const timerRef = useRef(null);
+  const isAnyModalOpen = Boolean(modal || detailSvc || issueOpen);
 
   const stateLabels = {
     IDLE: "대기",
@@ -2085,6 +2716,19 @@ export default function TikiSprint12() {
     };
   }, []);
 
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
+    if (isAnyModalOpen) {
+      document.body.style.overflow = "hidden";
+    } else {
+      document.body.style.overflow = previousOverflow || "";
+    }
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [isAnyModalOpen]);
+
   const showToast = useCallback((msg, color = "#10B981") => {
     setToast({ msg, color });
     setTimeout(() => setToast({ msg: "", color }), 2800);
@@ -2112,14 +2756,6 @@ export default function TikiSprint12() {
 
   const toggleBm = useCallback((idx) => {
     setBookmarks(prev => {
-      const next = new Set(prev);
-      next.has(idx) ? next.delete(idx) : next.add(idx);
-      return next;
-    });
-  }, []);
-
-  const toggleCollapse = useCallback((idx) => {
-    setCollapsedSet(prev => {
       const next = new Set(prev);
       next.has(idx) ? next.delete(idx) : next.add(idx);
       return next;
@@ -2167,8 +2803,9 @@ export default function TikiSprint12() {
       (!bmFilter || bookmarks.has(d.idx)) &&
       (!searchQ || d.txt.includes(searchQ) || d.spk.includes(searchQ))
     );
-  const visible = txData.slice(0, shownCount);
-  const remaining = txData.length - shownCount;
+  const visibleTx = txData.filter((d) => !collapsedSet.has(d.idx));
+  const visible = visibleTx.slice(0, shownCount);
+  const remaining = visibleTx.length - shownCount;
 
   const activeIdx = TX.reduce((acc, item, i) => {
     const nxt = i + 1 < TX.length ? TX[i + 1].ts : 99999;
@@ -2309,7 +2946,6 @@ export default function TikiSprint12() {
                 setSummaryActions(nextData.actions.map((a) => ({ ...a })));
                 showToast("AI 요약 내용이 수정되었습니다.", "#0099CC");
               }}
-              onOpenIssue={() => setIssueOpen(true)}
               actions={summaryActions}
               onToggleAction={handleToggleAction}
             />
@@ -2364,10 +3000,8 @@ export default function TikiSprint12() {
                   item={item}
                   isActive={activeIdx === item.idx}
                   isBookmarked={bookmarks.has(item.idx)}
-                  collapsed={collapsedSet.has(item.idx)}
                   onSeek={seekTo}
                   onToggleBm={toggleBm}
-                  onToggleCollapse={toggleCollapse}
                 />
               ))}
               {remaining > 0 && (
@@ -2447,6 +3081,8 @@ export default function TikiSprint12() {
                 .filter(Boolean);
 
             const focusSummaryMap = {
+              "회의 전체 요약 위주":
+                "회의 전반의 진행 흐름과 핵심 결정, 후속 실행 항목을 함께 정리했습니다. 결정 사항과 리스크를 균형 있게 반영해 전체 맥락을 파악할 수 있도록 구성했습니다.",
               "기술적 제약 사항 위주":
                 "이번 회의는 STT 처리 속도와 화자 분리 정확도 이슈를 중심으로 정리했습니다. 성능 목표 달성을 위해 최적화 우선순위와 추가 데이터 확보 필요성을 확인했습니다.",
               "해야 할 일과 담당자 위주":
@@ -2458,6 +3094,7 @@ export default function TikiSprint12() {
             };
 
             const focusKeywordMap = {
+              "회의 전체 요약 위주": ["전체 맥락", "핵심 결정", "실행 항목"],
               "기술적 제약 사항 위주": ["성능 최적화", "정확도 개선", "기술 리스크"],
               "해야 할 일과 담당자 위주": ["실행 계획", "담당자", "마감 관리"],
               "일정 및 마일스톤 위주": ["마일스톤", "일정 관리", "배포 계획"],
@@ -2480,20 +3117,24 @@ export default function TikiSprint12() {
               baseSentences[1],
             ].filter(Boolean);
 
+            const contextLines = [...baseSentences, ...focusSentences].filter(Boolean);
+
             const conciseLines = [
-              seed[0] || "회의 핵심 내용을 압축해 정리했습니다.",
-              userPrompt ? `${firstAction} 중심으로 우선순위를 다시 잡았습니다.` : `${topDecision}`,
+              seed[0] || topDecision || "회의 핵심 내용을 압축해 정리했습니다.",
+              userPrompt
+                ? `핵심 실행 항목: ${firstAction}`
+                : `핵심 실행 항목: ${firstAction}`,
             ];
 
             const normalLines = [
-              seed[0] || "회의 핵심 진행 상황을 정리했습니다.",
-              seed[1] || `${topDecision}`,
-              `${firstAction}`,
+              contextLines[0] || "회의 배경과 현재 상황을 중심으로 정리했습니다.",
+              contextLines[1] || "주요 논의 흐름을 중심으로 맥락을 정리했습니다.",
+              `주요 결정: ${topDecision}`,
+              `다음 실행: ${firstAction}`,
             ];
 
             const detailedLines = [
-              seed[0] || "회의 핵심 진행 상황을 정리했습니다.",
-              seed[1] || `${topDecision}`,
+              ...contextLines.slice(0, 4),
               `주요 결정: ${topDecision}`,
               `실행 계획: ${firstAction} / ${secondAction}`,
               `리스크 점검: ${topRisk}`,
@@ -2503,8 +3144,8 @@ export default function TikiSprint12() {
               selectedLen === "간결"
                 ? conciseLines.slice(0, 2)
                 : selectedLen === "상세"
-                ? detailedLines.slice(0, 5)
-                : normalLines.slice(0, 3);
+                ? detailedLines.slice(0, 7)
+                : normalLines.slice(0, 4);
 
             let generated = selectedLines.join("\n").trim();
             if (!generated) {
@@ -2512,6 +3153,7 @@ export default function TikiSprint12() {
             }
 
             const focusAnchorMap = {
+              "회의 전체 요약 위주": "회의 요약",
               "기술적 제약 사항 위주": "기술 이슈",
               "해야 할 일과 담당자 위주": "해야 할 일",
               "일정 및 마일스톤 위주": "일정/마일스톤",

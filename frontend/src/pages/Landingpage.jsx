@@ -613,7 +613,7 @@ export default function TikiLandingPage() {
             glow: 'shadow-[0_0_30px_rgba(0,153,204,0.15)]',
             title: '자동 받아쓰기',
             sub: '소음 속에서도 명확하게',
-            desc: 'Whisper 엔진 기반의 고정밀 STT로 어떤 환경의 녹음 파일도 오탈자 없이 완벽하게 텍스트로 변환합니다.',
+            desc: 'Whisper 엔진 기반의 고정밀 STT로 어떤 환경의 파일도 오탈자 없이 완벽하게 텍스트로 변환합니다.',
             badge: 'STT 정확도 94%',
         },
         {
@@ -624,7 +624,7 @@ export default function TikiLandingPage() {
             glow: 'shadow-[0_0_30px_rgba(124,58,237,0.15)]',
             title: '스마트 요약',
             sub: '긴 회의도 3줄로 핵심만',
-            desc: 'LLM이 대화의 맥락과 의도를 분석하여 실행 가능한 액션 아이템만 정밀하게 추출합니다.',
+            desc: 'LLM이 대화의 맥락과 의도를 분석하여 실행 가능한 해야 할 일만 정밀하게 추출합니다.',
             badge: '평균 3초 추출',
         },
         {
@@ -652,7 +652,13 @@ export default function TikiLandingPage() {
     ];
 
     const steps = [
-        { icon: 'upload', label: '녹음 파일 업로드', desc: '.mp3 / .wav / .m4a 지원', color: '#0099CC', num: '01' },
+        {
+            icon: 'upload',
+            label: '파일 업로드',
+            desc: '.mp3 / .wav / .m4a / 한글 / PDF / Word 지원',
+            color: '#0099CC',
+            num: '01',
+        },
         { icon: 'cpu', label: 'AI 엔진 분석', desc: 'Whisper + LLM 처리', color: '#7C3AED', num: '02' },
         { icon: 'shield', label: '보안 마스킹', desc: '민감 정보 자동 필터링', color: '#10B981', num: '03' },
         { icon: 'link', label: '툴 연동 완료', desc: 'Jira · Notion 전송', color: '#F59E0B', num: '04' },
@@ -709,7 +715,7 @@ export default function TikiLandingPage() {
             color: '#10B981',
             bg: 'from-[#10B981]/10 to-[#10B981]/5',
             border: 'border-[#10B981]/30',
-            items: ['사후 오디오 업로드 분석', 'LLM 액션 아이템 추출', 'Jira 원클릭 연동', '보안 마스킹 시스템'],
+            items: ['사후 파일 업로드 분석', 'LLM 해야 할 일 추출', 'Jira 원클릭 연동', '보안 마스킹 시스템'],
         },
         {
             phase: 'v1.5',
@@ -839,7 +845,7 @@ export default function TikiLandingPage() {
                                             네오테크 6월 3주차 스프린트 회의
                                         </p>
                                         <p className="text-xs text-[#5A6F8A] mt-0.5">
-                                            참여자 4명 · 녹화 시간 38분 · 액션아이템 7개 추출
+                                            참여자 4명 · 녹화 시간 38분 · 해야 할 일 7개 추출
                                         </p>
                                     </div>
                                     <button className="shrink-0 px-4 py-2 bg-[#0099CC] text-white text-xs font-bold rounded-xl hover:bg-[#0086b3] transition-colors">
@@ -1393,7 +1399,7 @@ export default function TikiLandingPage() {
                     <p className="text-white/75 text-base sm:text-xl mb-12 max-w-xl mx-auto leading-relaxed">
                         신용카드 없이, 설치 없이.
                         <br />
-                        오디오 파일 하나만 있으면 됩니다.
+                        파일 하나만 있으면 됩니다.
                     </p>
                     <div className="flex flex-col sm:flex-row justify-center items-center gap-4">
                         <Link

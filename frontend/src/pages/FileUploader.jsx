@@ -549,11 +549,11 @@ export default function TikiApp() {
           AI-Powered · STT + LLM + Jira 자동화
         </div>
         <h1 className={cn("mb-3.5 font-bold leading-[1.1] tracking-[-1.5px]", isMobile ? "text-[26px]" : "text-[clamp(28px,5vw,60px)]")}>
-          회의 녹음을 올리면<br />
+          회의 파일을 올리면<br />
           <em className="not-italic bg-[linear-gradient(90deg,#0099CC,#7C3AED)] bg-clip-text text-transparent">완성되는 자동 회의록</em>
         </h1>
         <p className={cn("mx-auto mb-8 max-w-[42rem] text-balance leading-[1.45] text-[#5A6F8A] sm:leading-8", isMobile ? "text-[14px]" : "text-[17px]")}>
-          <span className="block">음성을 업로드하면 화자 분리, AI 요약, Jira 티켓 생성까지</span>
+          <span className="block">회의 파일을 업로드하면 화자 분리, AI 요약, Jira 티켓 생성까지</span>
           <span className="block">회의가 끝나는 순간 모든 게 정리됩니다.</span>
         </p>
       </section>
@@ -670,7 +670,7 @@ export default function TikiApp() {
             >
               <IIcon name="uploadCloud" size={isMobile ? 28 : 36} color="#0099CC" sw={1.5} />
             </div>
-            <div className={cn("mb-2 font-semibold tracking-[-0.3px]", isMobile ? "text-base" : "text-[20px]")}>음성 파일을 여기에 드래그하세요</div>
+            <div className={cn("mb-2 font-semibold tracking-[-0.3px]", isMobile ? "text-base" : "text-[20px]")}>회의 파일을 여기에 드래그하세요</div>
             <div className="mb-5 text-[14px] leading-[1.5] text-[#5A6F8A]">
               또는 <span className="font-semibold text-[#0099CC]">파일 선택</span>을 눌러 탐색하세요<br />최대 파일 크기: 1GB
             </div>
@@ -685,7 +685,7 @@ export default function TikiApp() {
               파일 선택
             </button>
             <div className="mt-6 flex flex-wrap justify-center gap-2">
-              {[".MP3", ".WAV", ".M4A", ".AAC", ".OGG", ".FLAC"].map((format) => (
+              {[".MP3", ".WAV", ".M4A", ".AAC", ".OGG", ".FLAC", ".한글", ".WORD", ".PDF"].map((format) => (
                 <span
                   key={format}
                   className={cn(
@@ -697,7 +697,7 @@ export default function TikiApp() {
                 </span>
               ))}
             </div>
-            <div className="mt-2.5 text-xs text-[#5A6F8A]">최대 업로드 용량 1GB · 오디오 파일만 지원</div>
+            <div className="mt-2.5 text-xs text-[#5A6F8A]">최대 업로드 용량 1GB</div>
             <input
               ref={fileInputRef}
               type="file"

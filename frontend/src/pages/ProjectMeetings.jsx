@@ -345,6 +345,7 @@ const PARTICIPANT_COLOR_MAP = {
 
 const PROJECT_OVERRIDE_STORAGE_KEY = 'tiki_project_overrides';
 const PROJECT_CATALOG_STORAGE_KEY = 'tiki_project_catalog';
+const MANUAL_MEETING_RECORDS_KEY = 'tiki_manual_minutes_records';
 
 const TOAST_COLORS = { info: '#0099CC', ai: '#7C3AED', success: '#10B981', warning: '#F59E0B', error: '#EF4444' };
 const TOAST_VARIANTS = {
@@ -361,6 +362,21 @@ function normalizeProjectId(value) {
 
 function isSameProjectId(left, right) {
     return normalizeProjectId(left) === normalizeProjectId(right);
+}
+
+function normalizeProjectVisibility(value) {
+    const raw = String(value || '').trim().toLowerCase();
+    if (raw === 'private' || raw === '개인') return 'private';
+    if (raw === 'org' || raw === 'public' || raw === '전체보기') return 'org';
+    if (raw === 'members' || raw === '구성원만') return 'members';
+    return 'members';
+}
+
+function getProjectVisibilityMeta(value) {
+    const normalized = normalizeProjectVisibility(value);
+    if (normalized === 'private') return { label: '개인', icon: 'lock' };
+    if (normalized === 'org') return { label: '전체보기', icon: 'globe' };
+    return { label: '구성원만', icon: 'user' };
 }
 
 const readProjectOverrides = () => {
@@ -380,6 +396,25 @@ const writeProjectOverrides = (next) => {
     } catch {
         // ignore storage write failures in local mock mode
     }
+};
+
+const readManualMeetingRecords = () => {
+    try {
+        const raw = localStorage.getItem(MANUAL_MEETING_RECORDS_KEY);
+        if (!raw) return {};
+        const parsed = JSON.parse(raw);
+        return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch {
+        return {};
+    }
+};
+
+const normalizeStorageDate = (value) => {
+    const raw = String(value || '').trim();
+    if (!raw) return '-';
+    if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw.replace(/-/g, '.');
+    if (/^\d{4}\.\d{2}\.\d{2}$/.test(raw)) return raw;
+    return raw;
 };
 
 const readProjectCatalog = () => {
@@ -455,6 +490,7 @@ function normalizeProject(project) {
         name: project.name || '프로젝트',
         description: project.description || '',
         createdAt,
+        visibility: normalizeProjectVisibility(project.visibility || project.projectVisibility),
         status: project.status || '진행 중',
         teamLead: teamLead || participants[0] || '담당자',
         participants,
@@ -637,8 +673,8 @@ function ArrowUpRightIcon({ className = '' }) {
 function PencilIcon({ className = '' }) {
     return (
         <svg
-            width="14"
-            height="14"
+            width="13"
+            height="13"
             viewBox="0 0 24 24"
             fill="none"
             stroke="currentColor"
@@ -648,6 +684,85 @@ function PencilIcon({ className = '' }) {
             className={className}
         >
             <path d="m16.5 3.5 4 4L8 20l-4 1 1-4 11.5-13.5Z" />
+        </svg>
+    );
+}
+
+function VisibilityIcon({ type = 'members', className = '' }) {
+    if (type === 'lock') {
+        return (
+            <svg
+                width="12"
+                height="12"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className={className}
+            >
+                <rect x="3" y="11" width="18" height="10" rx="2" ry="2" />
+                <path d="M7 11V8a5 5 0 0 1 10 0v3" />
+            </svg>
+        );
+    }
+
+    if (type === 'globe') {
+        return (
+            <svg
+                width="12"
+                height="12"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className={className}
+            >
+                <circle cx="12" cy="12" r="10" />
+                <path d="M2 12h20" />
+                <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+            </svg>
+        );
+    }
+
+    if (type === 'user') {
+        return (
+            <svg
+                width="12"
+                height="12"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className={className}
+            >
+                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+                <circle cx="12" cy="7" r="4" />
+            </svg>
+        );
+    }
+
+    return (
+        <svg
+            width="12"
+            height="12"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className={className}
+        >
+            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+            <circle cx="9" cy="7" r="4" />
+            <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+            <path d="M16 3.13a4 4 0 0 1 0 7.75" />
         </svg>
     );
 }
@@ -1075,12 +1190,48 @@ export default function ProjectMeetings() {
             setActionItems([]);
             return;
         }
+
+        const manualRecords = readManualMeetingRecords();
+        const manualActionItems = Object.values(manualRecords)
+            .filter((record) => String(record?.projectId || '') === String(project.id || ''))
+            .flatMap((record) => {
+                const actions = Array.isArray(record?.actions) ? record.actions : [];
+                return actions.map((action, index) => ({
+                    id: `${record.id}-action-${index + 1}`,
+                    text: action?.text || '',
+                    description: record?.summary || '',
+                    due: normalizeStorageDate(action?.dueDate),
+                    assignee: action?.assignee || project.teamLead || '담당자 미지정',
+                    status: action?.checked ? '검토완료' : '검토대기',
+                    source: String(record?.title || '').trim() || project.name || '회의 제목 없음',
+                    integrationTool: null,
+                    externalLink: '',
+                    snapshotOf: null,
+                    historySavedAt: null,
+                    updatedAt: record?.createdAt || getKSTTimestampLabel(),
+                    meeting: null,
+                }));
+            });
+
+        const mergedActionItems = [...(project.myActionItems || []), ...manualActionItems].filter((item) => {
+            return String(item?.text || '').trim().length > 0;
+        });
+        const dedupedActionItems = [];
+        const seen = new Set();
+        mergedActionItems.forEach((item) => {
+            const id = String(item?.id || '').trim();
+            const dedupeKey = id || `${item?.text || ''}::${item?.source || ''}::${item?.due || ''}`;
+            if (seen.has(dedupeKey)) return;
+            seen.add(dedupeKey);
+            dedupedActionItems.push(item);
+        });
+
         const fallbackMeetingTitle =
             project.meetings.find((meeting) => String(meeting.title || '').trim())?.title ||
             project.name ||
             '회의 제목 없음';
         setActionItems(
-            (project.myActionItems || []).map((item) => ({
+            dedupedActionItems.map((item) => ({
                 id: item.id,
                 text: item.text,
                 description: item.description || '',
@@ -1429,6 +1580,7 @@ export default function ProjectMeetings() {
     };
     const currentToastVariant = TOAST_VARIANTS[toast.type] || TOAST_VARIANTS.info;
     const projectDescriptionText = project.description?.trim() || '';
+    const visibilityMeta = getProjectVisibilityMeta(project.visibility);
     const projectCreatedAtText =
         toDateLabel(project.createdAt) ||
         toDateLabel(project.created_at) ||
@@ -1570,6 +1722,10 @@ export default function ProjectMeetings() {
                                 <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
                                     <div className="flex-1 min-w-0">
                                         <div className="flex flex-wrap items-center gap-2">
+                                            <span className="inline-flex items-center gap-1 rounded-full bg-[#F5F7FB] px-2 py-0.5 text-[11px] font-semibold text-[#6B7F95]">
+                                                <VisibilityIcon type={visibilityMeta.icon} className="text-[#8EA1B6]" />
+                                                {visibilityMeta.label}
+                                            </span>
                                             <span className="text-xs text-[#8A9AB0]">생성일 {projectCreatedAtText}</span>
                                         </div>
                                         <div className="mt-1 flex flex-wrap items-center gap-2">
@@ -2717,7 +2873,7 @@ export default function ProjectMeetings() {
                     role="dialog"
                 >
                     <aside
-                        className={`${isMobile ? 'panel-enter-bottom rounded-t-3xl border-t border-x border-[rgba(0,100,180,0.14)] h-auto max-h-[88vh] w-full max-w-none' : 'panel-enter h-full w-full max-w-[480px] border-l border-[rgba(0,100,180,0.14)]'} relative flex flex-col bg-white shadow-2xl overflow-hidden`}
+                        className={`${isMobile ? 'panel-enter-bottom rounded-t-3xl border-t border-x border-[rgba(0,100,180,0.14)] h-auto max-h-[88vh] w-full max-w-none' : 'panel-enter h-full w-full max-w-[520px] border-l border-[rgba(0,100,180,0.14)]'} relative flex flex-col bg-white shadow-2xl overflow-hidden`}
                         onClick={(e) => e.stopPropagation()}
                     >
                         {isMobile && (
@@ -2771,7 +2927,7 @@ export default function ProjectMeetings() {
                                     <button
                                         type="button"
                                         onClick={() => setIsActionEditMode((prev) => !prev)}
-                                        className={`w-8 h-8 rounded-lg transition ${isActionEditMode ? 'bg-[#EEF3FF] text-[#0099CC]' : 'text-[#5A6F8A] hover:bg-[#F8FAFF] hover:text-[#0D1B2A]'}`}
+                                        className={`w-8 h-8 rounded-lg border transition ${isActionEditMode ? 'bg-[#EEF3FF] text-[#0099CC] border-[rgba(0,153,204,0.35)]' : 'border-[rgba(0,100,180,0.14)] text-[#5A6F8A] hover:bg-[#F8FAFF] hover:text-[#0D1B2A]'}`}
                                         aria-label="수정 모드"
                                         title="수정 모드"
                                     >
@@ -3081,20 +3237,31 @@ export default function ProjectMeetings() {
                         </div>
 
                         {actionDrawerView === 'detail' && (
-                            <div className="shrink-0 px-5 py-4 border-t border-gray-100 bg-[#F8FAFF] overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
-                                <div className="flex items-center justify-between gap-3 min-w-max">
+                            <div className="shrink-0 px-5 pb-5 pt-3 border-t border-slate-100 bg-white overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+                                <div className="flex items-center justify-between gap-2 min-w-max">
                                     <button
                                         type="button"
                                         onClick={() => requestDeleteActionItem(actionDraft.id)}
                                         className="px-3.5 py-2 text-xs font-semibold text-[#EF4444] hover:bg-red-50 rounded-lg transition-colors flex items-center gap-1.5"
+                                        aria-label="삭제"
                                     >
                                         <TrashIcon />
                                         삭제
                                     </button>
 
-                                    <div className="flex items-center gap-2">
+                                    <div className="flex items-center justify-end gap-2">
                                         {normalizeActionStatus(actionDraft.status) === '검토대기' && (
                                             <>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                        const ok = saveActionDraft({ closeAfterSave: true });
+                                                        if (ok) showToast('변경 사항이 저장되었습니다.', 'success');
+                                                    }}
+                                                    className="text-sm font-semibold px-4 py-2 rounded-xl text-slate-500 border border-slate-200 bg-white hover:bg-slate-50 transition-colors"
+                                                >
+                                                    수정 저장
+                                                </button>
                                                 <button
                                                     type="button"
                                                     onClick={() => {
@@ -3108,20 +3275,15 @@ export default function ProjectMeetings() {
                                                                 'success'
                                                             );
                                                     }}
-                                                    className="px-5 py-2.5 text-sm font-bold text-white bg-[#0099CC] hover:bg-[#0086b3] rounded-xl shadow-md shadow-cyan-500/20 transition-all flex items-center gap-1.5"
+                                                    className="flex items-center gap-1.5 text-sm font-bold px-5 py-2 rounded-xl text-white transition-all hover:-translate-y-0.5"
+                                                    style={{
+                                                        background:
+                                                            'linear-gradient(135deg,#0099CC,#7C3AED)',
+                                                        boxShadow: '0 4px 12px rgba(0,100,180,0.18)',
+                                                    }}
                                                 >
                                                     <CheckCircleIcon />
                                                     검토완료
-                                                </button>
-                                                <button
-                                                    type="button"
-                                                    onClick={() => {
-                                                        const ok = saveActionDraft({ closeAfterSave: true });
-                                                        if (ok) showToast('변경 사항이 저장되었습니다.', 'success');
-                                                    }}
-                                                    className="px-4 py-2.5 text-sm font-semibold text-[#5A6F8A] bg-white border border-gray-200 hover:border-gray-300 hover:bg-gray-50 rounded-xl transition-all"
-                                                >
-                                                    내용 저장
                                                 </button>
                                             </>
                                         )}
@@ -3133,14 +3295,19 @@ export default function ProjectMeetings() {
                                                     onClick={() => {
                                                         saveActionToHistory(actionDraft.id, { closeAfterSave: true });
                                                     }}
-                                                    className="px-5 py-2.5 text-sm font-bold text-[#7C3AED] bg-white border border-[#7C3AED]/60 hover:bg-[#F6F0FF] rounded-xl shadow-sm transition-all"
+                                                    className="text-sm font-semibold px-4 py-2 rounded-xl text-slate-500 border border-slate-200 bg-white hover:bg-slate-50 transition-colors"
                                                 >
-                                                    완료 저장
+                                                    수행완료
                                                 </button>
                                                 <button
                                                     type="button"
                                                     onClick={() => setActionDrawerView('integrate')}
-                                                    className="px-5 py-2.5 text-sm font-bold text-white bg-[linear-gradient(135deg,#10B981,#0D9488)] hover:brightness-105 rounded-xl shadow-md shadow-emerald-500/25 transition-all flex items-center gap-1.5 disabled:opacity-70"
+                                                    className="flex items-center gap-1.5 text-sm font-bold px-5 py-2 rounded-xl text-white transition-all hover:-translate-y-0.5"
+                                                    style={{
+                                                        background:
+                                                            'linear-gradient(135deg,#0099CC,#7C3AED)',
+                                                        boxShadow: '0 4px 12px rgba(0,100,180,0.18)',
+                                                    }}
                                                 >
                                                     <ZapIcon className="text-white" />
                                                     연동하기
@@ -3156,18 +3323,23 @@ export default function ProjectMeetings() {
                                                         const ok = saveActionDraft({ closeAfterSave: true });
                                                         if (ok) showToast('변경 사항이 저장되었습니다.', 'success');
                                                     }}
-                                                    className="px-4 py-2.5 text-sm font-semibold text-[#5A6F8A] bg-white border border-gray-200 hover:border-gray-300 hover:bg-gray-50 rounded-xl transition-all"
+                                                    className="text-sm font-semibold px-4 py-2 rounded-xl text-slate-500 border border-slate-200 bg-white hover:bg-slate-50 transition-colors"
                                                 >
-                                                    내용 저장
+                                                    수정 저장
                                                 </button>
                                                 <button
                                                     type="button"
                                                     onClick={() =>
                                                         saveActionToHistory(actionDraft.id, { closeAfterSave: true })
                                                     }
-                                                    className="px-4 py-2.5 text-sm font-bold text-white bg-[linear-gradient(135deg,#10B981,#0D9488)] hover:brightness-105 rounded-xl shadow-md shadow-emerald-500/25 transition-all"
+                                                    className="flex items-center gap-1.5 text-sm font-bold px-5 py-2 rounded-xl text-white transition-all hover:-translate-y-0.5"
+                                                    style={{
+                                                        background:
+                                                            'linear-gradient(135deg,#0099CC,#7C3AED)',
+                                                        boxShadow: '0 4px 12px rgba(0,100,180,0.18)',
+                                                    }}
                                                 >
-                                                    완료 저장
+                                                    수행완료
                                                 </button>
                                             </>
                                         )}
@@ -3179,9 +3351,9 @@ export default function ProjectMeetings() {
                                                     const ok = saveActionDraft({ closeAfterSave: true });
                                                     if (ok) showToast('변경 사항이 저장되었습니다.', 'success');
                                                 }}
-                                                className="px-4 py-2.5 text-sm font-semibold text-[#5A6F8A] bg-white border border-gray-200 hover:border-gray-300 hover:bg-gray-50 rounded-xl transition-all"
+                                                className="text-sm font-semibold px-4 py-2 rounded-xl text-slate-500 border border-slate-200 bg-white hover:bg-slate-50 transition-colors"
                                             >
-                                                    내용 저장
+                                                수정 저장
                                             </button>
                                         )}
                                     </div>

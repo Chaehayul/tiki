@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import Header from '../components/Header';
 import Footer from '../components/Footer';
 import MobileTab from '../components/MobileTab';
+import ToastPopup from '../components/toastpopup';
 
 const ISSUE_PRIORITY_OPTIONS = ['높음', '보통', '낮음'];
 
@@ -90,19 +91,6 @@ const formatStorageDate = (raw) => {
   return value;
 };
 
-function Toast({ msg, color }) {
-  if (!msg) return null;
-
-  return (
-    <div
-      className="fixed bottom-20 left-1/2 -translate-x-1/2 z-50 w-fit max-w-[calc(100vw-2rem)] px-4 py-2.5 rounded-full text-white text-xs font-semibold shadow-lg pointer-events-none whitespace-nowrap overflow-hidden text-ellipsis"
-      style={{ background: color }}
-    >
-      {msg}
-    </div>
-  );
-}
-
 function LoadingOverlay() {
   return (
     <div className="fixed inset-0 z-40 bg-[#0D1B2A]/35 backdrop-blur-[2px] flex items-center justify-center px-4">
@@ -163,7 +151,7 @@ export default function MeetingMinutesCreate() {
   const [activeTab, setActiveTab] = useState('home');
   const [isTypeOpen, setIsTypeOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
-  const [toast, setToast] = useState({ msg: '', color: '#10B981' });
+  const [toast, setToast] = useState({ message: '', type: 'info' });
 
   const [decisionInput, setDecisionInput] = useState('');
   const [actionInput, setActionInput] = useState({ title: '', assignee: '', dueDate: '' });
@@ -239,7 +227,16 @@ export default function MeetingMinutesCreate() {
   };
 
   const toggleAction = (id) => {
-    setActionItems((prev) => prev.map((item) => (item.id === id ? { ...item, checked: !item.checked } : item)));
+    let nextChecked = false;
+    setActionItems((prev) => prev.map((item) => {
+      if (item.id !== id) return item;
+      nextChecked = !item.checked;
+      return { ...item, checked: nextChecked };
+    }));
+
+    if (nextChecked) {
+      showToast('해야 할 일이 완료되었습니다.', 'success');
+    }
   };
 
   const removeAction = (id) => {
@@ -268,7 +265,7 @@ export default function MeetingMinutesCreate() {
     const nextTitle = actionEditInput.title.trim();
     if (!editingActionId) return;
     if (!nextTitle) {
-      showToast('해야 할 일 제목을 입력해 주세요.', '#F59E0B');
+      showToast('해야 할 일 제목을 입력해 주세요.', 'warning');
       return;
     }
 
@@ -283,7 +280,7 @@ export default function MeetingMinutesCreate() {
         : item
     )));
     cancelEditAction();
-    showToast('해야 할 일이 수정되었습니다.', '#10B981');
+    showToast('해야 할 일이 수정되었습니다.', 'success');
   };
 
   const requestRemoveAction = (id) => {
@@ -301,7 +298,7 @@ export default function MeetingMinutesCreate() {
       cancelEditAction();
     }
     setPendingDeleteActionId(null);
-    showToast('해야 할 일이 삭제되었습니다.', '#10B981');
+    showToast('해야 할 일이 삭제되었습니다.', 'success');
   };
 
   const addKeywordTags = () => {
@@ -373,15 +370,15 @@ export default function MeetingMinutesCreate() {
     };
   }, []);
 
-  const showToast = useCallback((msg, color = '#10B981') => {
-    setToast({ msg, color });
+  const showToast = useCallback((message, type = 'info') => {
+    setToast({ message, type });
 
     if (toastTimerRef.current) {
       clearTimeout(toastTimerRef.current);
     }
 
     toastTimerRef.current = setTimeout(() => {
-      setToast({ msg: '', color });
+      setToast({ message: '', type: 'info' });
     }, 2800);
   }, []);
 
@@ -490,6 +487,7 @@ export default function MeetingMinutesCreate() {
       const key = String(projectId);
       const prev = nextOverrides[key] && typeof nextOverrides[key] === 'object' ? nextOverrides[key] : {};
       const prevMeetings = Array.isArray(prev.meetings) ? prev.meetings : [];
+      const prevActionItems = Array.isArray(prev.myActionItems) ? prev.myActionItems : [];
       const meetingRow = {
         id: manualRecordId,
         date: meetingDate,
@@ -505,16 +503,32 @@ export default function MeetingMinutesCreate() {
         detailRecordId: manualRecordId,
       };
 
+      const generatedActionItems = mergedActionItems.map((item, index) => ({
+        id: `${manualRecordId}-action-${index + 1}`,
+        text: item.text,
+        description: manualRecord.summary || '',
+        due: formatStorageDate(item.dueDate),
+        assignee: item.assignee || '담당자 미지정',
+        status: '검토대기',
+        source: manualRecord.title,
+        integrationTool: null,
+        externalLink: '',
+        snapshotOf: null,
+        historySavedAt: null,
+        updatedAt: new Date().toISOString(),
+      }));
+
       nextOverrides[key] = {
         ...prev,
         meetings: [meetingRow, ...prevMeetings],
+        myActionItems: [...generatedActionItems, ...prevActionItems],
       };
       writeProjectOverrides(nextOverrides);
     }
 
     saveTimerRef.current = setTimeout(() => {
       setIsSaving(false);
-      showToast('저장되었습니다.', '#10B981');
+      showToast('저장되었습니다.', 'success');
       navigate('/meeting-manual-detail', {
         state: {
           recordId: manualRecordId,
@@ -738,8 +752,19 @@ export default function MeetingMinutesCreate() {
                             className="mt-0.5"
                           />
                           <span className={`flex-1 text-sm ${item.checked ? 'text-[#7C8EA6] line-through' : 'text-[#0D1B2A]'}`}>{item.text}</span>
-                          <button type="button" onClick={() => removeDecision(item.id)} className="text-xs text-[#9AAAC0] hover:text-[#EF4444]">
-                            삭제
+                          <button
+                            type="button"
+                            onClick={() => removeDecision(item.id)}
+                            className="w-7 h-7 rounded-lg border border-[rgba(0,100,180,0.14)] text-[#7C8EA6] hover:bg-[#FEF2F2] hover:text-[#EF4444] hover:border-[rgba(239,68,68,0.3)] flex items-center justify-center transition-colors"
+                            aria-label="주요 결정 삭제"
+                          >
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                              <path d="M3 6h18" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                              <path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                              <path d="M19 6l-1 14a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1L5 6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                              <path d="M10 11v6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                              <path d="M14 11v6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                            </svg>
                           </button>
                         </label>
                       ))}
@@ -979,9 +1004,16 @@ export default function MeetingMinutesCreate() {
                             <button
                               type="button"
                               onClick={() => removeIssue(item.id)}
-                              className="text-xs text-[#9AAAC0] hover:text-[#EF4444] shrink-0"
+                              className="w-7 h-7 rounded-lg border border-[rgba(0,100,180,0.14)] text-[#7C8EA6] hover:bg-[#FEF2F2] hover:text-[#EF4444] hover:border-[rgba(239,68,68,0.3)] flex items-center justify-center transition-colors shrink-0"
+                              aria-label="리스크/이슈 삭제"
                             >
-                              삭제
+                              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                                <path d="M3 6h18" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                                <path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                                <path d="M19 6l-1 14a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1L5 6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                                <path d="M10 11v6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                                <path d="M14 11v6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                              </svg>
                             </button>
                           </div>
                         );
@@ -1033,7 +1065,7 @@ export default function MeetingMinutesCreate() {
         onCancel={cancelRemoveAction}
         onConfirm={confirmRemoveAction}
       />
-      <Toast msg={toast.msg} color={toast.color} />
+      <ToastPopup show={Boolean(toast.message)} message={toast.message} type={toast.type} />
     </div>
   );
 }

@@ -1829,6 +1829,18 @@ class HeuristicLLMAnalysisService(LLMAnalysisService):
         )
         keywords = self._build_keywords(analysis_text, summary, action_items, decisions, issues, next_agenda)
         summary, action_items = self._normalize_analysis_output(summary, action_items)
+        if source_kind == "audio_batch":
+            summary, action_items, decisions, issues, next_agenda = _apply_audio_batch_conservative_filters(
+                transcript=analysis_text,
+                context=context,
+                summary=summary,
+                keywords=keywords,
+                decisions=decisions,
+                action_items=action_items,
+                issues=issues,
+                next_agenda=next_agenda,
+            )
+            keywords = self._build_keywords(analysis_text, summary, action_items, decisions, issues, next_agenda)
         if source_kind == "document":
             summary = re.sub(r"^회의에서는\s*", "문서에서는 ", summary).strip()
             summary = _normalize_document_summary_value(summary)

@@ -262,6 +262,7 @@ def get_analysis(
     analysis = content.analysis_result if content else None
     extra_data = analysis.extra_data if analysis else {}
     summary_request = extra_data.get("summary_request")
+    document_summary = extra_data.get("document_summary")
 
     return AnalysisResultResponse(
         contract_version=extra_data.get("analysis_contract_version", "v1"),
@@ -279,6 +280,7 @@ def get_analysis(
         segments=extra_data.get("script_segments"),
         tx=extra_data.get("tx"),
         search_document=extra_data.get("search_document"),
+        document_summary=document_summary,
         summary_request=summary_request,
         extra_data=extra_data,
         model_name=analysis.model_name if analysis else None,

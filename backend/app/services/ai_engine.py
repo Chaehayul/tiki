@@ -8,6 +8,9 @@ from __future__ import annotations
 
 import logging
 import re
+import shutil
+import subprocess
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -458,7 +461,7 @@ class AIAnalysisPayload:
     def _action_item_to_action(item: dict[str, Any]) -> dict[str, Any]:
         return {
             "text": str(item.get("title", "")).strip() or str(item.get("description", "")).strip(),
-            "assignee": item.get("assignee"),
+            "assignee": item.get("assignee") or "미정",
             "due": item.get("due_at"),
             "status": item.get("status"),
         }
@@ -475,6 +478,7 @@ class AIProcessingResult:
         tx = _build_tx_rows(self.segments)
         summary_request = analysis.get("summary_request")
         search_document = analysis.get("extra_data", {}).get("search_document")
+        document_summary = analysis.get("extra_data", {}).get("document_summary")
         return {
             "analysis_contract_version": analysis.get("contract_version", ANALYSIS_OUTPUT_CONTRACT_VERSION),
             "transcript": self.transcript,
@@ -492,6 +496,7 @@ class AIProcessingResult:
                 "issues": analysis.get("issues", []),
                 "next_agenda": analysis.get("next_agenda", []),
                 "search_document": search_document,
+                "document_summary": document_summary,
                 "summary_request": summary_request,
                 "segments": self.segments,
                 "tx": tx,
@@ -543,6 +548,7 @@ class AIProcessingBatchResult:
         tx = _build_tx_rows(self.segments)
         summary_request = analysis.get("summary_request")
         search_document = analysis.get("extra_data", {}).get("search_document")
+        document_summary = analysis.get("extra_data", {}).get("document_summary")
         return {
             "analysis_contract_version": analysis.get("contract_version", ANALYSIS_OUTPUT_CONTRACT_VERSION),
             "file_count": self.file_count,
@@ -562,6 +568,7 @@ class AIProcessingBatchResult:
                 "issues": analysis.get("issues", []),
                 "next_agenda": analysis.get("next_agenda", []),
                 "search_document": search_document,
+                "document_summary": document_summary,
                 "summary_request": summary_request,
                 "segments": self.segments,
                 "tx": tx,
@@ -699,6 +706,42 @@ def _build_context_snapshot(context: Any | None) -> dict[str, Any] | None:
         }
         and value not in (None, "", [], {}, ())
     }
+
+
+def _build_document_analysis_context(document: Any, rag_context: Any | None = None) -> dict[str, Any]:
+    document_extraction = {
+        "source_path": getattr(document, "source_path", None),
+        "source_name": getattr(document, "source_name", None),
+        "source_kind": getattr(document, "source_kind", None),
+        "extraction_method": getattr(document, "extraction_method", None),
+        "page_count": getattr(document, "page_count", None),
+        "chunk_count": len(getattr(document, "chunks", []) or []),
+    }
+
+    if isinstance(rag_context, dict):
+        analysis_context = dict(rag_context)
+    else:
+        normalized_context = normalize_rag_context(rag_context)
+        analysis_context = normalized_context.to_dict() if normalized_context else {}
+
+    extra = dict(analysis_context.get("extra") or {})
+    extra.update(
+        {
+            "source_kind": "document",
+            "source_title": getattr(document, "metadata", {}).get("source_title") if getattr(document, "metadata", None) else None,
+            "source_name": getattr(document, "source_name", None),
+            "document_extraction": document_extraction,
+        }
+    )
+    extra = {key: value for key, value in extra.items() if value not in (None, "", [], {}, ())}
+
+    analysis_context["source_kind"] = "document"
+    analysis_context["source_title"] = getattr(document, "metadata", {}).get("source_title") if getattr(document, "metadata", None) else None
+    analysis_context["source_name"] = getattr(document, "source_name", None)
+    analysis_context["document_extraction"] = document_extraction
+    if extra:
+        analysis_context["extra"] = extra
+    return analysis_context
 
 def _build_meeting_search_document(
     *,
@@ -1015,6 +1058,47 @@ def _summarize_stt_routing(segments: list[dict[str, Any]] | None) -> list[dict[s
     ]
     return routing or None
 
+
+def _merge_audio_files_for_transcription(file_paths: list[str]) -> Path | None:
+    if len(file_paths) <= 1:
+        return Path(file_paths[0]) if file_paths else None
+
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        return None
+
+    output_handle = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
+    output_handle.close()
+    output_path = Path(output_handle.name)
+
+    command = [ffmpeg, "-y", "-hide_banner", "-loglevel", "error"]
+    for file_path in file_paths:
+        command.extend(["-i", file_path])
+    concat_inputs = "".join(f"[{index}:a]" for index in range(len(file_paths)))
+    command.extend(
+        [
+            "-filter_complex",
+            f"{concat_inputs}concat=n={len(file_paths)}:v=0:a=1[out]",
+            "-map",
+            "[out]",
+            "-ac",
+            "1",
+            "-ar",
+            "16000",
+            "-c:a",
+            "pcm_s16le",
+            str(output_path),
+        ]
+    )
+
+    try:
+        subprocess.run(command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:
+        output_path.unlink(missing_ok=True)
+        return None
+
+    return output_path
+
 def _augment_context_with_audio_quality(context: Any | None, preprocessing: Any | None) -> dict[str, Any] | Any | None:
     audio_summary = _summarize_audio_preprocessing(preprocessing)
     if not audio_summary:
@@ -1252,9 +1336,14 @@ class AIEngine:
     def process_document(self, file_path: str, rag_context: Any | None = None) -> AIProcessingResult:
         document = load_document_file(file_path)
         document.masked_text = mask_personal_information(document.text)
-        context_snapshot = _build_context_snapshot(rag_context)
+        analysis_context = _build_document_analysis_context(document, rag_context)
+        context_snapshot = _build_context_snapshot(analysis_context)
+        if context_snapshot is None:
+            context_snapshot = {}
+        if not context_snapshot.get("meeting_title"):
+            context_snapshot["meeting_title"] = document.metadata.get("source_title") or document.source_name
         summary_request = _build_summary_request_contract(rag_context)
-        analysis_data = self.llm_service.summarize_and_extract_tickets(document.masked_text, context=rag_context)
+        analysis_data = self.llm_service.summarize_and_extract_tickets(document.masked_text, context=analysis_context)
         segments = _build_sentence_segments(document.masked_text)
         ai_input_contract = document.to_ai_input_contract()
         evidence = _build_evidence_items(document.masked_text, analysis_data, segments, context_snapshot=context_snapshot)
@@ -1266,6 +1355,7 @@ class AIEngine:
             "extraction_method": document.extraction_method,
             "page_count": document.page_count,
             "chunk_count": len(document.chunks),
+            "source_title": document.metadata.get("source_title"),
         }
         script_segments, tx_rows, search_document = _build_script_contract(
             transcript=document.text,
@@ -1507,164 +1597,320 @@ class AIEngine:
         timeline_segments: list[dict[str, Any]] = []
         audio_preprocessing_summaries: list[dict[str, Any]] = []
         diarization_summaries: list[dict[str, Any]] = []
+        file_windows: list[dict[str, Any]] = []
 
         for index, file_path in enumerate(file_paths):
-            transcriber = getattr(self.stt_service, "transcribe_with_segments", None)
-            if callable(transcriber):
-                transcript, raw_segments = transcriber(file_path, participant_names=participant_names)
-            else:
-                transcript = self.transcribe_audio(file_path)
-                raw_segments = []
-
-            masked_transcript = mask_personal_information(transcript)
             preprocessing = None
-            get_last_preprocessing = getattr(self.stt_service, "get_last_preprocessing", None)
-            if callable(get_last_preprocessing):
-                preprocessing = get_last_preprocessing()
+            prepare_audio = getattr(self.stt_service, "prepare_audio", None)
+            if callable(prepare_audio):
+                try:
+                    preprocessing = prepare_audio(file_path)
+                except Exception as exc:  # pragma: no cover - fallback path
+                    logger.warning("Audio preprocessing failed for batch file %s: %s", file_path, exc)
             preprocessing_summary = _summarize_audio_preprocessing(preprocessing)
             if preprocessing_summary:
                 audio_preprocessing_summaries.append(preprocessing_summary)
+
+            duration_seconds = None
+            if preprocessing is not None:
+                duration_seconds = getattr(preprocessing, "duration_seconds", None)
+            if duration_seconds is None and preprocessing_summary:
+                duration_seconds = preprocessing_summary.get("duration_seconds")
+            try:
+                duration_seconds = float(duration_seconds or 0.0)
+            except (TypeError, ValueError):
+                duration_seconds = 0.0
+
+            file_windows.append(
+                {
+                    "index": index,
+                    "file_path": file_path,
+                    "file_name": Path(file_path).name,
+                    "segment_label": f"[PART {index + 1}/{len(file_paths)} | {Path(file_path).name}]",
+                    "start_seconds": 0.0,
+                    "end_seconds": duration_seconds,
+                    "duration_seconds": duration_seconds,
+                    "audio_preprocessing": preprocessing_summary,
+                }
+            )
+
             get_last_diarization = getattr(self.stt_service, "get_last_diarization", None)
             if callable(get_last_diarization):
                 diarization_summary = get_last_diarization()
                 if diarization_summary:
                     diarization_summaries.append({"file_index": index, "file_path": file_path, **diarization_summary})
-            segment_label = f"[SEGMENT {index + 1}]"
 
-            file_results.append(
-                AIFileProcessingResult(
-                    index=index,
-                    file_path=file_path,
-                    segment_label=segment_label,
-                    transcript=transcript,
-                    masked_transcript=masked_transcript,
-                    audio_preprocessing=preprocessing_summary,
-                )
-            )
+        cumulative_seconds = 0.0
+        for window in file_windows:
+            window["start_seconds"] = cumulative_seconds
+            cumulative_seconds += float(window.get("duration_seconds") or 0.0)
+            window["end_seconds"] = cumulative_seconds
 
-            file_segments = [
-                _build_script_segment(
-                    index=segment.get("index", segment_index),
-                    text=segment.get("text", ""),
-                    masked_text=mask_personal_information(segment.get("text", "")),
-                    speaker=segment.get("speaker"),
-                    speaker_id=segment.get("speaker_id"),
-                    speaker_label=segment.get("speaker_label"),
-                    participant_name=segment.get("participant_name"),
-                    speaker_display_name=segment.get("speaker_display_name"),
-                    speaker_kind=segment.get("speaker_kind"),
-                    is_mapped=segment.get("is_mapped"),
-                    start_seconds=segment.get("start_seconds"),
-                    end_seconds=segment.get("end_seconds"),
-                    duration_seconds=segment.get("duration_seconds"),
-                    confidence=segment.get("confidence"),
-                    chunk_index=segment.get("chunk_index"),
-                    chunk_local_index=segment.get("chunk_local_index"),
-                    model_name=segment.get("model_name"),
-                    chunk_difficulty=segment.get("chunk_difficulty"),
-                    source="audio_chunk",
-                    segment_label=segment_label,
-                    file_index=index,
-                    file_path=file_path,
-                    file_name=Path(file_path).name,
-                )
-                for segment_index, segment in enumerate(raw_segments)
-            ]
-            if not file_segments:
-                file_segments = [
-                    _build_script_segment(
-                        index=0,
-                        text=transcript.strip(),
-                        masked_text=masked_transcript.strip(),
-                        participant_name=None,
-                        speaker_display_name=None,
-                        speaker_kind="unknown",
-                        is_mapped=False,
-                        source="text_fallback",
-                        segment_label=segment_label,
-                        file_index=index,
-                        file_path=file_path,
-                        file_name=Path(file_path).name,
+        merged_audio_path = _merge_audio_files_for_transcription(file_paths)
+        cleanup_merged_audio = len(file_paths) > 1 and merged_audio_path is not None
+
+        try:
+            if merged_audio_path is not None:
+                transcriber = getattr(self.stt_service, "transcribe_with_segments", None)
+                if callable(transcriber):
+                    combined_transcript, merged_segments = transcriber(str(merged_audio_path), participant_names=participant_names)
+                else:
+                    combined_transcript = self.transcribe_audio(str(merged_audio_path))
+                    merged_segments = []
+
+                combined_masked_transcript = mask_personal_information(combined_transcript)
+
+                def _resolve_file_window(segment_start: Any, segment_end: Any) -> dict[str, Any]:
+                    if not file_windows:
+                        return {
+                            "index": 0,
+                            "file_path": file_paths[0],
+                            "file_name": Path(file_paths[0]).name,
+                            "segment_label": "[PART 1/1]",
+                            "start_seconds": 0.0,
+                            "end_seconds": 0.0,
+                        }
+
+                    try:
+                        start_value = float(segment_start or 0.0)
+                    except (TypeError, ValueError):
+                        start_value = 0.0
+                    try:
+                        end_value = float(segment_end or start_value)
+                    except (TypeError, ValueError):
+                        end_value = start_value
+                    midpoint = (start_value + end_value) / 2.0
+
+                    for window in file_windows:
+                        if midpoint < float(window["end_seconds"]) or window is file_windows[-1]:
+                            if midpoint >= float(window["start_seconds"]):
+                                return window
+                    return file_windows[-1]
+
+                segments_by_file: dict[int, list[dict[str, Any]]] = {window["index"]: [] for window in file_windows}
+                for segment_index, segment in enumerate(merged_segments):
+                    window = _resolve_file_window(segment.get("start_seconds"), segment.get("end_seconds"))
+                    file_index = int(window["index"])
+                    file_segment = _build_script_segment(
+                        index=segment.get("index", segment_index),
+                        text=segment.get("text", ""),
+                        masked_text=mask_personal_information(segment.get("text", "")),
+                        speaker=segment.get("speaker"),
+                        speaker_id=segment.get("speaker_id"),
+                        speaker_label=segment.get("speaker_label"),
+                        participant_name=segment.get("participant_name"),
+                        speaker_display_name=segment.get("speaker_display_name"),
+                        speaker_kind=segment.get("speaker_kind"),
+                        is_mapped=segment.get("is_mapped"),
+                        start_seconds=segment.get("start_seconds"),
+                        end_seconds=segment.get("end_seconds"),
+                        duration_seconds=segment.get("duration_seconds"),
+                        confidence=segment.get("confidence"),
+                        chunk_index=segment.get("chunk_index"),
+                        chunk_local_index=segment.get("chunk_local_index"),
+                        model_name=segment.get("model_name"),
+                        chunk_difficulty=segment.get("chunk_difficulty"),
+                        source="audio_batch",
+                        segment_label=window["segment_label"],
+                        file_index=file_index,
+                        file_path=window["file_path"],
+                        file_name=window["file_name"],
                     )
-                ] if transcript.strip() else []
+                    timeline_segments.append(file_segment)
+                    segments_by_file[file_index].append(file_segment)
 
-            timeline_segments.extend(file_segments)
+                for window in file_windows:
+                    file_segments = segments_by_file.get(window["index"], [])
+                    file_transcript = "\n".join(segment.get("text", "").strip() for segment in file_segments if segment.get("text", "").strip())
+                    file_masked_transcript = "\n".join(
+                        segment.get("masked_text", "").strip() for segment in file_segments if segment.get("masked_text", "").strip()
+                    )
 
-            if transcript.strip():
-                transcript_segments.append(f"{segment_label}\n{transcript.strip()}")
-            if masked_transcript.strip():
-                masked_segments.append(f"{segment_label}\n{masked_transcript.strip()}")
+                    file_results.append(
+                        AIFileProcessingResult(
+                            index=window["index"],
+                            file_path=window["file_path"],
+                            segment_label=window["segment_label"],
+                            transcript=file_transcript,
+                            masked_transcript=file_masked_transcript,
+                            audio_preprocessing=window.get("audio_preprocessing"),
+                        )
+                    )
 
-        combined_transcript = "\n\n".join(transcript_segments)
-        combined_masked_transcript = "\n\n".join(masked_segments)
-        summary_request = _build_summary_request_contract(rag_context)
-        batch_context = _augment_context_with_audio_quality(
-            rag_context,
-            {
-                "strategy": "batch",
-                "chunking_enabled": any(item.get("chunking_enabled") for item in audio_preprocessing_summaries),
-                "chunk_count": sum(int(item.get("chunk_count") or 0) for item in audio_preprocessing_summaries),
-                "quality_flags": sorted(
-                    {
-                        flag
-                        for item in audio_preprocessing_summaries
-                        for flag in (item.get("quality_flags") or [])
-                    }
-                ),
-            },
-        )
-        ai_input_contract = _build_ai_input_contract(
-            source_kind="audio_batch",
-            source_text=combined_transcript,
-            masked_source_text=combined_masked_transcript,
-            segments=timeline_segments,
-            context_snapshot=batch_context,
-            source_title=batch_context.get("meeting_title") if batch_context else None,
-            metadata={
-                "source": "audio_batch",
-                "file_count": len(file_paths),
-            },
-        )
-        analysis_data = self.llm_service.summarize_and_extract_tickets(combined_masked_transcript, context=batch_context)
-        evidence = _build_evidence_items(
-            combined_masked_transcript,
-            analysis_data,
-            timeline_segments,
-            context_snapshot=batch_context,
-        )
-        analysis = _build_analysis_payload(analysis_data, evidence=evidence)
-        if audio_preprocessing_summaries:
-            analysis.extra_data["audio_preprocessing"] = audio_preprocessing_summaries
-        if diarization_summaries:
-            analysis.extra_data["speaker_diarization"] = diarization_summaries
-        stt_routing = _summarize_stt_routing(timeline_segments)
-        if stt_routing:
-            analysis.extra_data["stt_routing"] = stt_routing
-        script_segments, tx_rows, search_document = _build_script_contract(
-            transcript=combined_transcript,
-            masked_transcript=combined_masked_transcript,
-            analysis_data=analysis_data,
-            segments=timeline_segments,
-            context_snapshot=batch_context,
-        )
-        _attach_analysis_contract_metadata(
-            analysis,
-            summary_request=summary_request,
-            search_document=search_document,
-        )
-        analysis.extra_data["script_segment_contract_version"] = SCRIPT_SEGMENT_CONTRACT_VERSION
-        analysis.extra_data["ai_input_contract_version"] = AI_INPUT_CONTRACT_VERSION
-        analysis.extra_data["ai_input_contract"] = ai_input_contract
-        analysis.extra_data["script_segments"] = script_segments
-        analysis.extra_data["tx"] = tx_rows
-        return AIProcessingBatchResult(
-            file_count=len(file_paths),
-            files=file_results,
-            transcript=combined_transcript,
-            masked_transcript=combined_masked_transcript,
-            segments=timeline_segments,
-            analysis=analysis,
-        )
+                    if file_transcript:
+                        transcript_segments.append(f"{window['segment_label']}\n{file_transcript}")
+                    if file_masked_transcript:
+                        masked_segments.append(f"{window['segment_label']}\n{file_masked_transcript}")
+            else:
+                # Fallback path: merge failed, so analyze each file independently.
+                for window in file_windows:
+                    index = int(window["index"])
+                    file_path = str(window["file_path"])
+                    transcriber = getattr(self.stt_service, "transcribe_with_segments", None)
+                    if callable(transcriber):
+                        transcript, raw_segments = transcriber(file_path, participant_names=participant_names)
+                    else:
+                        transcript = self.transcribe_audio(file_path)
+                        raw_segments = []
+
+                    masked_transcript = mask_personal_information(transcript)
+                    get_last_diarization = getattr(self.stt_service, "get_last_diarization", None)
+                    if callable(get_last_diarization):
+                        diarization_summary = get_last_diarization()
+                        if diarization_summary:
+                            diarization_summaries.append({"file_index": index, "file_path": file_path, **diarization_summary})
+
+                    file_results.append(
+                        AIFileProcessingResult(
+                            index=index,
+                            file_path=file_path,
+                            segment_label=window["segment_label"],
+                            transcript=transcript,
+                            masked_transcript=masked_transcript,
+                            audio_preprocessing=window.get("audio_preprocessing"),
+                        )
+                    )
+
+                    file_segments = [
+                        _build_script_segment(
+                            index=segment.get("index", segment_index),
+                            text=segment.get("text", ""),
+                            masked_text=mask_personal_information(segment.get("text", "")),
+                            speaker=segment.get("speaker"),
+                            speaker_id=segment.get("speaker_id"),
+                            speaker_label=segment.get("speaker_label"),
+                            participant_name=segment.get("participant_name"),
+                            speaker_display_name=segment.get("speaker_display_name"),
+                            speaker_kind=segment.get("speaker_kind"),
+                            is_mapped=segment.get("is_mapped"),
+                            start_seconds=segment.get("start_seconds"),
+                            end_seconds=segment.get("end_seconds"),
+                            duration_seconds=segment.get("duration_seconds"),
+                            confidence=segment.get("confidence"),
+                            chunk_index=segment.get("chunk_index"),
+                            chunk_local_index=segment.get("chunk_local_index"),
+                            model_name=segment.get("model_name"),
+                            chunk_difficulty=segment.get("chunk_difficulty"),
+                            source="audio_chunk",
+                            segment_label=window["segment_label"],
+                            file_index=index,
+                            file_path=file_path,
+                            file_name=Path(file_path).name,
+                        )
+                        for segment_index, segment in enumerate(raw_segments)
+                    ]
+                    if not file_segments:
+                        file_segments = [
+                            _build_script_segment(
+                                index=0,
+                                text=transcript.strip(),
+                                masked_text=masked_transcript.strip(),
+                                participant_name=None,
+                                speaker_display_name=None,
+                                speaker_kind="unknown",
+                                is_mapped=False,
+                                source="text_fallback",
+                                segment_label=window["segment_label"],
+                                file_index=index,
+                                file_path=file_path,
+                                file_name=Path(file_path).name,
+                            )
+                        ] if transcript.strip() else []
+
+                    timeline_segments.extend(file_segments)
+
+                    if transcript.strip():
+                        transcript_segments.append(f"{window['segment_label']}\n{transcript.strip()}")
+                    if masked_transcript.strip():
+                        masked_segments.append(f"{window['segment_label']}\n{masked_transcript.strip()}")
+
+            combined_transcript = "\n\n".join(transcript_segments)
+            combined_masked_transcript = "\n\n".join(masked_segments)
+            summary_request = _build_summary_request_contract(rag_context)
+            batch_context = _augment_context_with_audio_quality(
+                rag_context,
+                {
+                    "source_kind": "audio_batch",
+                    "strategy": "merged_audio_batch" if len(file_paths) > 1 else "single_file",
+                    "batch_file_count": len(file_paths),
+                    "batch_files": [
+                        {
+                            "index": window["index"],
+                            "file_name": window["file_name"],
+                            "duration_seconds": window["duration_seconds"],
+                            "start_seconds": window["start_seconds"],
+                            "end_seconds": window["end_seconds"],
+                        }
+                        for window in file_windows
+                    ],
+                    "chunking_enabled": any(item.get("chunking_enabled") for item in audio_preprocessing_summaries),
+                    "chunk_count": sum(int(item.get("chunk_count") or 0) for item in audio_preprocessing_summaries),
+                    "quality_flags": sorted(
+                        {
+                            flag
+                            for item in audio_preprocessing_summaries
+                            for flag in (item.get("quality_flags") or [])
+                        }
+                    ),
+                    "note": "같은 회의의 순차 분할 파일이므로 한 번의 회의로 합쳐서 요약하라.",
+                },
+            )
+            ai_input_contract = _build_ai_input_contract(
+                source_kind="audio_batch",
+                source_text=combined_transcript,
+                masked_source_text=combined_masked_transcript,
+                segments=timeline_segments,
+                context_snapshot=batch_context,
+                source_title=batch_context.get("meeting_title") if batch_context else None,
+                metadata={
+                    "source": "audio_batch",
+                    "file_count": len(file_paths),
+                    "batch_mode": "merged_audio" if cleanup_merged_audio else "fallback_file_by_file",
+                },
+            )
+            analysis_data = self.llm_service.summarize_and_extract_tickets(combined_masked_transcript, context=batch_context)
+            evidence = _build_evidence_items(
+                combined_masked_transcript,
+                analysis_data,
+                timeline_segments,
+                context_snapshot=batch_context,
+            )
+            analysis = _build_analysis_payload(analysis_data, evidence=evidence)
+            if audio_preprocessing_summaries:
+                analysis.extra_data["audio_preprocessing"] = audio_preprocessing_summaries
+            if diarization_summaries:
+                analysis.extra_data["speaker_diarization"] = diarization_summaries
+            stt_routing = _summarize_stt_routing(timeline_segments)
+            if stt_routing:
+                analysis.extra_data["stt_routing"] = stt_routing
+            script_segments, tx_rows, search_document = _build_script_contract(
+                transcript=combined_transcript,
+                masked_transcript=combined_masked_transcript,
+                analysis_data=analysis_data,
+                segments=timeline_segments,
+                context_snapshot=batch_context,
+            )
+            _attach_analysis_contract_metadata(
+                analysis,
+                summary_request=summary_request,
+                search_document=search_document,
+            )
+            analysis.extra_data["script_segment_contract_version"] = SCRIPT_SEGMENT_CONTRACT_VERSION
+            analysis.extra_data["ai_input_contract_version"] = AI_INPUT_CONTRACT_VERSION
+            analysis.extra_data["ai_input_contract"] = ai_input_contract
+            analysis.extra_data["script_segments"] = script_segments
+            analysis.extra_data["tx"] = tx_rows
+            return AIProcessingBatchResult(
+                file_count=len(file_paths),
+                files=file_results,
+                transcript=combined_transcript,
+                masked_transcript=combined_masked_transcript,
+                segments=timeline_segments,
+                analysis=analysis,
+            )
+        finally:
+            if cleanup_merged_audio and merged_audio_path is not None:
+                merged_audio_path.unlink(missing_ok=True)
 
 _DEFAULT_AI_ENGINE: AIEngine | None = None
 

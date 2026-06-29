@@ -190,7 +190,7 @@ function MobileSideMenu({ open, onClose, isLoggedIn, isSubscribed, onLogout }) {
 
     const publicLinks = [
         { icon: 'zap', label: '기능 소개', to: '/landing' },
-        { icon: 'creditCard', label: '요금제', to: '#pricing' },
+        { icon: 'creditCard', label: '요금제', to: '/subscription' },
         { icon: 'user', label: '로그인/회원가입', to: '/login' },
     ];
 
@@ -286,7 +286,16 @@ function MobileSideMenu({ open, onClose, isLoggedIn, isSubscribed, onLogout }) {
     );
 }
 
-export default function Header({ isMobile, isLoggedIn, phase, stateLabels, user, isSubscribed, onLogout, hideMobileMenu = false }) {
+export default function Header({
+    isMobile,
+    isLoggedIn,
+    phase,
+    stateLabels,
+    user,
+    isSubscribed,
+    onLogout,
+    hideMobileMenu = false,
+}) {
     const { pathname } = useLocation();
     const navigate = useNavigate();
     const [mobileOpen, setMobileOpen] = useState(false);
@@ -334,7 +343,7 @@ export default function Header({ isMobile, isLoggedIn, phase, stateLabels, user,
 
     const desktopLoggedOutLinks = [
         { label: '기능 소개', to: '/landing' },
-        { label: '요금제', to: '#pricing' },
+        { label: '요금제', to: '/subscription' },
         { label: '로그인/회원가입', to: '/login' },
     ];
 
@@ -353,10 +362,7 @@ export default function Header({ isMobile, isLoggedIn, phase, stateLabels, user,
                 )}
             >
                 {/* ── Logo ── */}
-                <Link
-                    to={logoDestination}
-                    className="flex items-center gap-2.5 text-[#0D1B2A] no-underline"
-                >
+                <Link to={logoDestination} className="flex items-center gap-2.5 text-[#0D1B2A] no-underline">
                     <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-[linear-gradient(135deg,#0099CC,#7C3AED)]">
                         <Icon name="fileAudio" size={20} color="#fff" sw={2} />
                     </div>
@@ -369,17 +375,19 @@ export default function Header({ isMobile, isLoggedIn, phase, stateLabels, user,
                 <nav className="flex items-center gap-1">
                     {!isMobile && (
                         <>
-                            {(effectiveLoggedIn ? desktopLoggedInLinks : desktopLoggedOutLinks).map(({ label, to, disabled, preventNavigation }) => (
-                                <Link
-                                    key={label}
-                                    to={to}
-                                    onClick={disabled || preventNavigation ? (e) => e.preventDefault() : undefined}
-                                    aria-disabled={disabled ? 'true' : undefined}
-                                    className="rounded-[6px] px-[14px] py-[6px] text-sm text-[#5A6F8A] no-underline transition-colors duration-200 hover:bg-[#EEF3FF] hover:text-[#0D1B2A]"
-                                >
-                                    {label}
-                                </Link>
-                            ))}
+                            {(effectiveLoggedIn ? desktopLoggedInLinks : desktopLoggedOutLinks).map(
+                                ({ label, to, disabled, preventNavigation }) => (
+                                    <Link
+                                        key={label}
+                                        to={to}
+                                        onClick={disabled || preventNavigation ? (e) => e.preventDefault() : undefined}
+                                        aria-disabled={disabled ? 'true' : undefined}
+                                        className="rounded-[6px] px-[14px] py-[6px] text-sm text-[#5A6F8A] no-underline transition-colors duration-200 hover:bg-[#EEF3FF] hover:text-[#0D1B2A]"
+                                    >
+                                        {label}
+                                    </Link>
+                                )
+                            )}
                         </>
                     )}
 
@@ -389,32 +397,8 @@ export default function Header({ isMobile, isLoggedIn, phase, stateLabels, user,
                             <ProfileDropdown user={effectiveUser} onLogout={handleLogout} />
                         </div>
                     )}
-
-                    {/* Mobile: hamburger */}
-                    {isMobile && !hideMobileMenu && (
-                        <>
-                            <button
-                                onClick={() => setMobileOpen(true)}
-                                className="ml-1 flex h-9 w-9 items-center justify-center rounded-[8px] text-[#0D1B2A] transition-colors hover:bg-[#EEF3FF]"
-                                aria-label="메뉴 열기"
-                            >
-                                <Icon name="menu" size={22} />
-                            </button>
-                        </>
-                    )}
                 </nav>
             </header>
-
-            {/* Mobile drawer */}
-            {isMobile && !hideMobileMenu && (
-                <MobileSideMenu
-                    open={mobileOpen}
-                    onClose={() => setMobileOpen(false)}
-                    isLoggedIn={effectiveLoggedIn}
-                    isSubscribed={subscribed}
-                    onLogout={handleLogout}
-                />
-            )}
         </>
     );
 }

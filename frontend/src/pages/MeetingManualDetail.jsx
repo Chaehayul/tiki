@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import Header from '../components/Header';
 import Footer from '../components/Footer';
 import MobileTab from '../components/MobileTab';
+import ToastPopup from '../components/toastpopup';
 
 const MANUAL_MEETING_RECORDS_KEY = 'tiki_manual_minutes_records';
 const PROJECTLIST_CHEVRON_COLOR = '#A0AFBF';
@@ -220,19 +221,6 @@ function Spinner({ size = 14, color = '#fff' }) {
       <path d="M12 2a10 10 0 0 1 10 10" stroke={color} strokeWidth="3" strokeLinecap="round" />
       <style>{'@keyframes tiki-spin { to { transform: rotate(360deg); } }'}</style>
     </svg>
-  );
-}
-
-function Toast({ msg, color }) {
-  if (!msg) return null;
-
-  return (
-    <div
-      className="fixed bottom-20 left-1/2 -translate-x-1/2 z-50 w-fit max-w-[calc(100vw-2rem)] px-4 py-2.5 rounded-full text-white text-xs font-semibold shadow-lg pointer-events-none whitespace-nowrap overflow-hidden text-ellipsis"
-      style={{ background: color }}
-    >
-      {msg}
-    </div>
   );
 }
 
@@ -947,7 +935,7 @@ export default function MeetingManualDetail() {
 
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
   const [activeTab, setActiveTab] = useState('home');
-  const [toast, setToast] = useState({ msg: '', color: '#10B981' });
+  const [toast, setToast] = useState({ show: false, message: '', type: 'success' });
 
   const [detailSvc, setDetailSvc] = useState(null);
   const [issueOpen, setIssueOpen] = useState(false);
@@ -1086,9 +1074,9 @@ export default function MeetingManualDetail() {
     return () => document.removeEventListener('mousedown', handleOutsideClick);
   }, [openDuePickerIdx]);
 
-  const showToast = useCallback((msg, color = '#10B981') => {
-    setToast({ msg, color });
-    setTimeout(() => setToast({ msg: '', color }), 2200);
+  const showToast = useCallback((message, type = 'success') => {
+    setToast({ show: true, message, type });
+    setTimeout(() => setToast({ show: false, message: '', type }), 2200);
   }, []);
 
   const persistMinutes = useCallback((nextMinutes) => {
@@ -1775,7 +1763,7 @@ export default function MeetingManualDetail() {
 
             <Divider label="협업" />
 
-            <section className="pt-5 border-t border-slate-100">
+            <section className="pt-5">
               <div className="flex items-center justify-between gap-2 mb-3">
                 <div className="flex items-center gap-2">
                   <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest">주요 결정</p>
@@ -1833,9 +1821,7 @@ export default function MeetingManualDetail() {
               )}
             </section>
 
-            <Divider label="인사이트" />
-
-            <section className="pt-5 border-t border-slate-100">
+            <section className="pt-5">
               <div className="flex items-center justify-between gap-2 mb-3">
                 <div className="flex items-center gap-2">
                   <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest">해야 할 일</p>
@@ -1946,7 +1932,9 @@ export default function MeetingManualDetail() {
               )}
             </section>
 
-            <section className="pt-5 border-t border-slate-100">
+            <Divider label="인사이트" />
+
+            <section className="pt-5">
               <div className="flex items-center justify-between gap-2 mb-3">
                 <div className="flex items-center gap-2">
                   <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest">이슈 & 리스크</p>
@@ -2022,7 +2010,7 @@ export default function MeetingManualDetail() {
               )}
             </section>
 
-            <section className="pt-5 border-t border-slate-100">
+            <section className="pt-5">
               <div className="flex items-center justify-between gap-2 mb-3">
                 <div className="flex items-center gap-2">
                   <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest">다음 회의 안건</p>
@@ -2200,31 +2188,38 @@ export default function MeetingManualDetail() {
           <div className="space-y-5">
             <div>
               <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-2.5">어디에 등록할까요?</p>
+              <div
+                className="grid gap-2"
+                style={{ gridTemplateColumns: 'repeat(2, minmax(0, 1fr))' }}
+              >
+                {[
+                  { id: 'jira', name: 'Jira', iconBg: '#0099CC', iconLabel: 'J' },
+                  { id: 'notion', name: 'Notion', iconBg: '#0D1B2A', iconLabel: 'N' },
+                ].map((svc) => {
+                  const selected = selectedIssueSvc === svc.id;
+                  return (
+                    <button
+                      key={svc.id}
+                      type="button"
+                      onClick={() => setSelectedIssueSvc(svc.id)}
+                      className="flex flex-col items-center gap-2 py-3 px-2 rounded-xl border transition-all hover:-translate-y-0.5 cursor-pointer"
+                      style={{
+                        borderColor: selected ? '#0099CC' : 'rgba(0,100,180,0.12)',
+                        background: selected ? 'rgba(0,153,204,0.06)' : '#fff',
+                      }}
+                    >
+                      <span
+                        className="w-8 h-8 rounded-lg flex items-center justify-center text-white font-bold text-sm"
+                        style={{ background: svc.iconBg }}
+                      >
+                        {svc.iconLabel}
+                      </span>
+                      <span className="text-xs font-semibold text-slate-700">{svc.name}</span>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
-          <div className="grid grid-cols-2 gap-2">
-            {[
-              { id: 'jira', name: 'Jira', iconBg: '#0099CC', iconLabel: 'J' },
-              { id: 'notion', name: 'Notion', iconBg: '#0D1B2A', iconLabel: 'N' },
-            ].map((svc) => {
-              const selected = selectedIssueSvc === svc.id;
-              return (
-                <button
-                  key={svc.id}
-                  type="button"
-                  onClick={() => setSelectedIssueSvc(svc.id)}
-                  className="flex items-center justify-center gap-2 py-2.5 rounded-xl border text-sm font-semibold"
-                  style={{
-                    borderColor: selected ? '#0099CC' : 'rgba(0,100,180,0.14)',
-                    background: selected ? 'rgba(0,153,204,0.06)' : '#fff',
-                    color: selected ? '#0099CC' : '#334155',
-                  }}
-                >
-                  <span className="w-4 h-4 rounded flex items-center justify-center text-white text-[10px]" style={{ background: svc.iconBg }}>{svc.iconLabel}</span>
-                  <span>{svc.name}</span>
-                </button>
-              );
-            })}
-          </div>
 
             <div>
               <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-2.5">
@@ -2488,7 +2483,7 @@ export default function MeetingManualDetail() {
         </div>
       )}
 
-      <Toast msg={toast.msg} color={toast.color} />
+      <ToastPopup show={toast.show} message={toast.message} type={toast.type} />
     </div>
   );
 }

@@ -33,7 +33,13 @@ function Icon({ name, size = 20, color = 'currentColor', sw = 1.8 }) {
 
 const LOGGED_IN_TABS = [
     { id: 'home', icon: 'home', label: '홈', to: '/dashboard' },
-    { id: 'projects', icon: 'folder', label: '프로젝트', to: '/project-list' },
+    {
+        id: 'projects',
+        icon: 'folder',
+        label: '프로젝트',
+        to: '/project-list',
+        matchPaths: ['/project-list', '/project/', '/create-project', '/meeting-create'],
+    },
     { id: 'upload', icon: 'plus', label: '업로드', to: '/upload' },
     { id: 'mypage', icon: 'user', label: '마이페이지', to: '/mypage' },
 ];
@@ -63,8 +69,9 @@ export default function MobileTab({ active, onChange }) {
         return location.pathname.startsWith(tab.to);
     })?.id;
     const isUploadRoute = location.pathname.startsWith('/upload');
-    const activeTab = isLoggedIn && isUploadRoute && active === 'home'
-        ? 'home'
+    const uploadTabIntent = location.state?.mobileTab;
+    const activeTab = isLoggedIn && isUploadRoute && (uploadTabIntent === 'home' || uploadTabIntent === 'upload')
+        ? uploadTabIntent
         : (routeActiveTab ?? active ?? (isLoggedIn ? 'home' : 'intro'));
 
     return (
@@ -85,6 +92,10 @@ export default function MobileTab({ active, onChange }) {
                             key={tab.id}
                             onClick={() => {
                                 onChange?.(tab.id);
+                                if (isLoggedIn && (tab.id === 'home' || tab.id === 'upload')) {
+                                    navigate(targetPath, { state: { mobileTab: tab.id } });
+                                    return;
+                                }
                                 navigate(targetPath);
                             }}
                             className={cn(

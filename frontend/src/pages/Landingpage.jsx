@@ -738,7 +738,7 @@ export default function TikiLandingPage() {
                     <div className="inline-flex items-center gap-2 px-4 py-2 bg-white border border-[rgba(0,153,204,0.3)] rounded-full mb-8 shadow-sm">
                         <span className="w-2 h-2 rounded-full bg-[#10B981] animate-pulse" />
                         <span className="text-xs font-bold text-[#0D1B2A]">AI 기반 회의 자동화 플랫폼</span>
-                        <span className="text-xs text-[#5A6F8A]">· 네오테크 스타트업</span>
+                        <span className="text-xs text-[#5A6F8A]"> TIKI</span>
                     </div>
 
                     <h1 className="text-4xl sm:text-6xl lg:text-7xl font-extrabold tracking-tight text-[#0D1B2A] leading-[1.1] mb-6">
@@ -1206,7 +1206,7 @@ export default function TikiLandingPage() {
                             <Icon name="users" size={12} className="text-[#0099CC]" />팀 소개
                         </span>
                         <h2 className="text-3xl sm:text-4xl font-extrabold text-[#0D1B2A] mb-4">
-                            네오테크를 만드는 사람들
+                            티키를 만드는 사람들
                         </h2>
                         <p className="text-[#5A6F8A]">작지만 강한 팀이 큰 문제를 해결합니다.</p>
                     </div>

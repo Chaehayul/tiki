@@ -46,7 +46,7 @@ export default function ToastPopup({ show, message, type = "info" }) {
 	const meta = TOAST_META[type] ?? TOAST_META.info;
 
 	return (
-		<div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 min-w-[260px] max-w-[92vw] flex items-center gap-2.5 bg-[#0D1B2A] text-[#FFFFFF] px-5 py-3 rounded-xl shadow-2xl border border-[rgba(255,255,255,0.12)] animate-in slide-in-from-bottom-4 duration-300">
+		<div className="fixed bottom-24 md:bottom-6 left-1/2 -translate-x-1/2 z-[220] min-w-[260px] max-w-[92vw] flex items-center gap-2.5 bg-[#0D1B2A] text-[#FFFFFF] px-5 py-3 rounded-xl shadow-2xl border border-[rgba(255,255,255,0.12)] animate-in slide-in-from-bottom-4 duration-300">
 			<ToastIcon name={meta.icon} color={meta.color} size={16} />
 			<span className="text-sm font-semibold text-[#FFFFFF]">{message}</span>
 		</div>

@@ -29,5 +29,9 @@ dist/
 # Uploaded local files
 uploads/
 
+# Local ML model weights (keep app ORM models tracked)
+models/whisper/
+models/whisper/*.pt
+
 # macOS
 .DS_Store

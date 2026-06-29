@@ -34,6 +34,7 @@ const ICON_PATHS = {
   sparkles: ["M12 3l1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5L12 3z","M5 17l.8 2.2L8 20l-2.2.8L5 23l-.8-2.2L2 20l2.2-.8L5 17z","M19 15l.7 1.9L21.5 17.6l-1.9.7-.7 1.9-.7-1.9-1.9-.7 1.9-.7.7-1.9z"],
   home: ["M3 9.5L12 3l9 6.5","M5 10v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V10","M9 21v-6h6v6"],
   pencil: ["M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z","M15 5l4 4"],
+  mail: ["M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z","M22 6l-10 7L2 6"],
 };
 
 function Icon({ name, size = 16, color = "currentColor", sw = 1.8 }) {
@@ -62,14 +63,10 @@ const NAV_ITEMS = [
 ];
 
 const DEPARTMENTS = [
-  "기획팀",
-  "디자인팀",
-  "프론트엔드 개발팀",
-  "백엔드 개발팀",
-  "QA팀",
-  "마케팅팀",
-  "인사팀",
-  "직접 입력",
+  "마케터",
+  "PM",
+  "디자이너",
+  "기타",
 ];
 
 const ROLE_LABELS = {
@@ -324,7 +321,7 @@ function getGreeting() {
 // ── Home (마이페이지 홈 대시보드) ───────────────────────────────────────────
 function StatBlock({ value, label, accent }) {
   return (
-    <div>
+    <div className="text-center">
       <p className={cn("text-[26px] font-black tracking-[-1px]", accent ? "text-[#0099CC]" : "text-[#0D1B2A]")}>{value}</p>
       <p className="mt-0.5 text-[12px] text-[#5A6F8A]">{label}</p>
     </div>
@@ -365,7 +362,7 @@ function HomeSection({ goTo, name, email, department }) {
           <Icon name="sparkles" size={13} color="#0099CC" />
           {getGreeting()}
         </p>
-        <h1 className="mt-1 text-[22px] font-black tracking-[-0.4px] text-[#0D1B2A]">
+        <h1 className="mt-1 text-[22px] font-bold tracking-[-0.4px] text-[#0D1B2A]">
           {name}<span className="text-[#5A6F8A] font-bold">님,</span> 오늘의 TIKI 현황입니다
         </h1>
       </div>
@@ -380,8 +377,53 @@ function HomeSection({ goTo, name, email, department }) {
         </div>
       </div>
 
-      <div className="grid gap-5 lg:grid-cols-[1fr_280px]">
-        {/* 좌측: 최근 회의 */}
+      <div className="grid gap-5 lg:grid-cols-[280px_1fr]">
+        {/* 좌측: 프로필(계정) + 구독권 */}
+        <div className="space-y-5">
+          <div className="rounded-2xl border border-[rgba(0,100,180,.1)] bg-white p-5">
+            <div className="mb-3 flex items-center justify-between">
+              <div className="flex items-center gap-1.5">
+                <p className="text-[14px] font-black text-[#0D1B2A]">TIKI Pro</p>
+                <Badge label="이용중" variant="cyan" />
+              </div>
+              <button onClick={() => goTo("subscription")}
+                className="text-[11px] font-semibold text-[#5A6F8A] hover:text-[#0099CC]">관리</button>
+            </div>
+            <div className="space-y-2.5">
+              <UsageBar label="월간 업로드" value={42} max={100} unit="건" />
+              <UsageBar label="저장 용량" value={2.3} max={10} unit="GB" />
+            </div>
+          </div>
+
+          {/* 계정 카드: 아바타·이름을 한 줄에, 이메일·부서를 보조 메타로 한 줄에 정리 */}
+          <div className="rounded-2xl border border-[rgba(0,100,180,.1)] bg-white p-5">
+            <div className="flex items-center gap-3">
+              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-[linear-gradient(135deg,#0099CC,#7C3AED)] text-[16px] font-black text-white select-none">
+                {(name || "사")[0]}
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-[14px] font-bold text-[#0D1B2A]">{name}</p>
+                <div className="mt-1 flex items-center gap-1.5 text-[11px] text-[#9BAABE]">
+                  <Icon name="mail" size={11} color="#9BAABE" />
+                  <span className="truncate">{email}</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="my-3.5 h-px bg-[rgba(0,100,180,.07)]" />
+
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5 min-w-0">
+                <Icon name="briefcase" size={12} color="#5A6F8A" />
+                <span className="truncate text-[14px] font-semibold text-[#5A6F8A]">
+                  {department || "부서 미설정"}
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* 우측: 최근 회의 */}
         <div className="rounded-2xl border border-[rgba(0,100,180,.1)] bg-white p-5">
           <div className="mb-4 flex items-center justify-between">
             <h3 className="text-[14px] font-bold text-[#0D1B2A]">최근 회의</h3>
@@ -399,48 +441,11 @@ function HomeSection({ goTo, name, email, department }) {
                 </div>
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-[13px] font-semibold text-[#0D1B2A]">{m.title}</p>
-                  <p className="mt-0.5 text-[11px] text-[#9BAABE]">{m.date} · 액션 아이템 {m.done}/{m.actionItems} 완료</p>
+                  <p className="mt-0.5 text-[11px] text-[#9BAABE]">{m.date} · 해야 할일 {m.done}/{m.actionItems} 완료</p>
                 </div>
                 <Icon name="chevronRight" size={14} color="#9BAABE" />
               </div>
             ))}
-          </div>
-        </div>
-
-        {/* 우측: 프로필 + 구독권 */}
-        <div className="space-y-5">
-          <div className="rounded-2xl border border-[rgba(0,100,180,.1)] bg-white p-5">
-            <div className="flex items-center gap-3">
-              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-[linear-gradient(135deg,#0099CC,#7C3AED)] text-[15px] font-black text-white select-none">
-                {(name || "사")[0]}
-              </div>
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-[13px] font-bold text-[#0D1B2A]">{name}</p>
-                <p className="truncate text-[11px] text-[#9BAABE]">{email}</p>
-              </div>
-              <button onClick={() => goTo("profile")}
-                className="shrink-0 flex h-7 w-7 items-center justify-center rounded-lg border border-[rgba(0,100,180,.15)] bg-[#F8FAFF] transition-colors hover:border-[rgba(0,153,204,.4)]">
-                <Icon name="pencil" size={12} color="#5A6F8A" />
-              </button>
-            </div>
-            <div className="mt-3">
-              <Badge label={department || "부서 미설정"} />
-            </div>
-          </div>
-
-          <div className="rounded-2xl border border-[rgba(0,100,180,.1)] bg-white p-5">
-            <div className="mb-3 flex items-center justify-between">
-              <div className="flex items-center gap-1.5">
-                <p className="text-[14px] font-black text-[#0D1B2A]">TIKI Pro</p>
-                <Badge label="이용중" variant="cyan" />
-              </div>
-              <button onClick={() => goTo("subscription")}
-                className="text-[11px] font-semibold text-[#5A6F8A] hover:text-[#0099CC]">관리</button>
-            </div>
-            <div className="space-y-2.5">
-              <UsageBar label="월간 업로드" value={42} max={100} unit="건" />
-              <UsageBar label="저장 용량" value={2.3} max={10} unit="GB" />
-            </div>
           </div>
         </div>
       </div>
@@ -1038,7 +1043,7 @@ export default function MyPage() {
     "";
 
   return (
-    <div className="relative min-h-screen bg-white text-[#0D1B2A] [font-family:'Pretendard',-apple-system,BlinkMacSystemFont,sans-serif]">
+    <div className="relative min-h-screen bg-white text-[#0D1B2A] [font-family:'Pretendard']">
       <Header
         isMobile={isMobile}
         isLoggedIn={isAuthenticated}
@@ -1079,13 +1084,20 @@ export default function MyPage() {
 
           {/* ── Content ── */}
           <main className="min-w-0 flex-1 pt-2 sm:pt-0">
-            <div className="mb-4 flex items-center gap-2 sm:hidden">
-              <span className="text-[12px] text-[#9BAABE]">설정</span>
-              <Icon name="chevronRight" size={12} color="#9BAABE" />
-              <span className="text-[12px] font-semibold text-[#0D1B2A]">{activeNav?.label}</span>
-            </div>
+            {activeTab !== "home" && (
+              <div className="mb-4 flex items-center gap-2 sm:hidden">
+                <span
+                  onClick={() => setActiveTab("home")}
+                  className="cursor-pointer text-[12px] font-semibold text-[#9BAABE] transition-colors hover:text-[#0099CC]"
+                >
+                  홈
+                </span>
+                <Icon name="chevronRight" size={12} color="#9BAABE" />
+                <span className="text-[12px] font-semibold text-[#0D1B2A]">{activeNav?.label}</span>
+              </div>
+            )}
 
-            <div className="mb-4 flex gap-2 overflow-x-auto pb-1 sm:hidden">
+            <div className="mb-4 flex gap-2 overflow-x-auto pb-1 sm:hidden [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
               {NAV_ITEMS.map(item => {
                 const active = activeTab === item.id;
                 return (
@@ -1103,6 +1115,15 @@ export default function MyPage() {
                   </button>
                 );
               })}
+              {/* 모바일 전용 로그아웃: 메뉴 리스트와 같은 칩 형태, 위험 액션이라 붉은 톤으로 구분 */}
+              <div className="ml-1 shrink-0 self-stretch w-px bg-[rgba(0,100,180,.12)]" />
+              <button
+                onClick={handleLogout}
+                className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-[rgba(239,68,68,.25)] bg-[rgba(239,68,68,.05)] px-3 py-1.5 text-[12px] font-semibold text-[#EF4444] transition-colors"
+              >
+                <Icon name="logOut" size={12} color="#EF4444" sw={2} />
+                로그아웃
+              </button>
             </div>
 
             <div className="rounded-2xl border border-[rgba(0,100,180,.1)] bg-white p-5 shadow-[0_2px_16px_rgba(0,60,150,.05)] sm:p-7">

@@ -105,8 +105,24 @@ class PyannoteSpeakerDiarizationService(SpeakerDiarizationService):
         self.enabled = enabled
 
     @staticmethod
-    @lru_cache(maxsize=2)
-    def _load_pipeline(model_name: str, token: str | None):
+    def _resolve_device_name() -> str:
+        try:
+            import torch
+        except ImportError as exc:  # pragma: no cover - optional dependency
+            raise RuntimeError("torch is required for pyannote diarization but is not installed.") from exc
+
+        if torch.cuda.is_available():
+            return "cuda"
+
+        mps = getattr(torch.backends, "mps", None)
+        if mps is not None and mps.is_available():
+            return "mps"
+
+        return "cpu"
+
+    @staticmethod
+    @lru_cache(maxsize=4)
+    def _load_pipeline(model_name: str, token: str | None, device_name: str):
         try:
             from pyannote.audio import Pipeline
         except ImportError as exc:  # pragma: no cover - optional dependency
@@ -121,9 +137,20 @@ class PyannoteSpeakerDiarizationService(SpeakerDiarizationService):
 
         logger.info("Loading diarization pipeline: %s", model_name)
         try:
-            return Pipeline.from_pretrained(model_name, token=token)
+            pipeline = Pipeline.from_pretrained(model_name, token=token)
         except TypeError:
-            return Pipeline.from_pretrained(model_name, use_auth_token=token)
+            pipeline = Pipeline.from_pretrained(model_name, use_auth_token=token)
+
+        if device_name != "cpu":
+            try:
+                import torch
+
+                pipeline.to(torch.device(device_name))
+                logger.info("Moved diarization pipeline to %s", device_name)
+            except Exception as exc:  # pragma: no cover - device fallback path
+                logger.warning("Falling back to CPU diarization because %s device setup failed: %s", device_name, exc)
+
+        return pipeline
 
     def diarize(
         self,
@@ -149,7 +176,8 @@ class PyannoteSpeakerDiarizationService(SpeakerDiarizationService):
             sample_rate = preprocessor.sample_rate
 
         waveform = torch.from_numpy(np.asarray(samples, dtype=np.float32)).unsqueeze(0)
-        pipeline = self._load_pipeline(self.model_name, self.token)
+        device_name = self._resolve_device_name()
+        pipeline = self._load_pipeline(self.model_name, self.token, device_name)
         try:
             diarization = pipeline({"waveform": waveform, "sample_rate": sample_rate})
         except Exception as exc:

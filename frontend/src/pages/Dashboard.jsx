@@ -1663,7 +1663,7 @@ export default function App() {
                         <LucideIcon name="chevronDown" size={13} className={`shrink-0 text-[#A0AFBF] transition-transform ${isAssigneeOpen ? "rotate-180" : ""}`} />
                       </button>
                       {isAssigneeOpen && (
-                        <div className="absolute left-0 right-0 z-20 mt-1.5 overflow-hidden rounded-xl border border-[rgba(0,0,0,0.08)] bg-white shadow-[0_12px_32px_rgba(0,0,0,0.12)]">
+                        <div className="absolute left-0 right-0 z-20 bottom-full mb-1.5 overflow-hidden rounded-xl border border-[rgba(0,0,0,0.08)] bg-white shadow-[0_12px_32px_rgba(0,0,0,0.12)]">
                           {TEAM_MEMBERS.map((m) => {
                             const isSelected = editForm.assignee === m.name;
                             return (

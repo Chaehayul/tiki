@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import time
 from abc import ABC, abstractmethod
@@ -312,6 +313,15 @@ TITLE_PREFIX_CLEANUP_PATTERN = re.compile(
 
 DEFAULT_PROMPT_VERSION = "openai-v4"
 DEFAULT_MODEL_NAME = settings.openai_model
+LLM_MODEL_TIERS: tuple[str, ...] = ("small", "medium", "large")
+LLM_MODEL_TIER_ALIASES: dict[str, str] = {
+    "light": "small",
+    "small": "small",
+    "balanced": "medium",
+    "medium": "medium",
+    "premium": "large",
+    "large": "large",
+}
 MAX_ACTION_ITEMS = 7
 MAX_SUMMARY_SENTENCES = 3
 MAX_SUMMARY_SENTENCE_CHARS = 120
@@ -324,6 +334,10 @@ MAX_KEYWORDS = 6
 MEETING_ANALYSIS_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
+        "meeting_title": {
+            "type": "string",
+            "description": "회의 제목 또는 카드 헤더처럼 보여줄 한 줄 제목.",
+        },
         "summary": {
             "type": "string",
             "description": "회의 핵심을 2~3문장으로 짧게 요약한 내용.",
@@ -394,13 +408,48 @@ MEETING_ANALYSIS_SCHEMA: dict[str, Any] = {
             "items": {"type": "string"},
         },
     },
-    "required": ["summary", "keywords", "decisions", "action_items", "issues", "next_agenda"],
+    "required": ["meeting_title", "summary", "keywords", "decisions", "action_items", "issues", "next_agenda"],
     "additionalProperties": False,
 }
 
 
 def _normalize_text_value(value: Any) -> str:
     return normalize_meeting_terms(_collapse_repeated_phrases(str(value or "")))
+
+
+def _normalize_model_tier(value: Any | None) -> str:
+    normalized = re.sub(r"\s+", " ", str(value or "")).strip().lower()
+    if not normalized:
+        return "medium"
+    return LLM_MODEL_TIER_ALIASES.get(normalized, normalized if normalized in LLM_MODEL_TIERS else "medium")
+
+
+def _estimate_model_tier(transcript: str, context: Any | None = None) -> str:
+    normalized = _normalize_text_value(transcript)
+    char_count = len(normalized)
+    sentence_count = len([part for part in SENTENCE_SPLIT_PATTERN.split(normalized) if part.strip()])
+    noisy_audio = HeuristicLLMAnalysisService._has_noisy_audio_context(context)
+    participant_count = len(normalize_rag_context(context).participants) if normalize_rag_context(context) else 0
+
+    if noisy_audio or char_count >= 2400 or sentence_count >= 18 or participant_count >= 6:
+        return "large"
+    if char_count <= 700 and sentence_count <= 6 and participant_count <= 3 and not noisy_audio:
+        return "small"
+    return "medium"
+
+
+def _resolve_model_name_for_tier(tier: str, *, fallback: str = DEFAULT_MODEL_NAME) -> str:
+    normalized_tier = _normalize_model_tier(tier)
+    configured = {
+        "small": getattr(settings, "openai_small_model", None),
+        "medium": getattr(settings, "openai_medium_model", None),
+        "large": getattr(settings, "openai_large_model", None),
+    }
+    if normalized_tier == "small":
+        return str(configured["small"] or configured["medium"] or fallback)
+    if normalized_tier == "large":
+        return str(configured["large"] or configured["medium"] or fallback)
+    return str(configured["medium"] or fallback)
 
 
 def _collapse_repeated_phrases(text: Any) -> str:
@@ -554,7 +603,7 @@ def _build_issue_sentence(text: Any) -> str:
         elif kind == "재검토 필요":
             sentence = f"{topic_object} 재검토가 필요하다."
         elif kind == "리스크":
-            sentence = f"{topic} 관련 이슈를 확인했다." if "리스크" in topic else f"{topic_object} 리스크를 확인했다."
+            sentence = f"{topic} 관련 리스크를 확인했다." if "리스크" in topic else f"{topic_object} 리스크를 확인했다."
         else:
             sentence = f"{topic} {kind}"
     elif topic:
@@ -651,6 +700,95 @@ def _normalize_summary_card_value(summary: Any) -> str:
     if not normalized.startswith("회의에서는"):
         normalized = f"회의에서는 {normalized}"
     return _compact_summary_text(normalized, max_chars=MAX_SUMMARY_CHARS)
+
+
+def _normalize_meeting_title_value(value: Any) -> str:
+    title = _normalize_text_value(value)
+    if not title:
+        return ""
+    title = title.replace("[회의 요약]", "")
+    title = re.sub(r"^(?:회의(?:에서는|는)?|요약|정리)\s*[:\-]?\s*", "", title)
+    title = TITLE_CLEANUP_PATTERN.sub("", title)
+    title = TITLE_PREFIX_CLEANUP_PATTERN.sub("", title)
+    title = _collapse_repeated_phrases(title)
+    title = WHITESPACE_PATTERN.sub(" ", title).strip(" -_:")
+    return shorten(title, width=60, placeholder="...") if title else ""
+
+
+def _build_meeting_title(
+    *,
+    transcript: str = "",
+    summary: str = "",
+    keywords: list[dict[str, Any]] | None = None,
+    decisions: list[str] | None = None,
+    action_items: list[dict[str, Any]] | None = None,
+    issues: list[dict[str, Any]] | None = None,
+    next_agenda: list[str] | None = None,
+    context: Any | None = None,
+) -> str:
+    normalized_context = normalize_rag_context(context)
+    context_project_name = _normalize_text_value(normalized_context.project_name) if normalized_context else ""
+
+    keyword_texts: list[str] = []
+    for item in keywords or []:
+        if isinstance(item, dict):
+            text = _normalize_text_value(item.get("text"))
+        else:
+            text = _normalize_text_value(item)
+        if text:
+            keyword_texts.append(text)
+
+    action_titles = [_normalize_text_value(item.get("title")) for item in (action_items or [])]
+    issue_texts = [_normalize_text_value(item.get("text")) for item in (issues or [])]
+    decision_texts = [_normalize_text_value(item) for item in (decisions or [])]
+    agenda_texts = [_normalize_text_value(item) for item in (next_agenda or [])]
+    summary_text = _normalize_text_value(summary)
+    transcript_text = _normalize_text_value(transcript)
+    combined_text = _normalize_text_value(
+        " ".join(
+            [
+                context_project_name,
+                " ".join(keyword_texts),
+                " ".join(action_titles),
+                " ".join(issue_texts),
+                " ".join(decision_texts),
+                " ".join(agenda_texts),
+                summary_text,
+                transcript_text,
+            ]
+        )
+    )
+    lowered = combined_text.lower()
+
+    def _finalize(candidate: str) -> str:
+        normalized = _normalize_meeting_title_value(candidate)
+        return normalized or "회의 요약"
+
+    if "업무관리시스템" in combined_text or "업무 관리 시스템" in combined_text:
+        if any(marker in combined_text for marker in ("구축", "프로젝트", "킥오프", "우선순위", "역할 분담", "일정", "리스크")):
+            prefix = "사내 " if "사내" in combined_text else ""
+            return _finalize(f"{prefix}업무관리시스템 구축 프로젝트 킥오프")
+        return _finalize("사내 업무관리시스템 관련 회의" if "사내" in combined_text else "업무관리시스템 관련 회의")
+
+    if context_project_name:
+        if any(marker in combined_text for marker in ("킥오프", "구축", "우선순위", "역할 분담", "일정", "리스크", "정리")):
+            return _finalize(f"{context_project_name} 회의")
+        return _finalize(f"{context_project_name} 관련 회의")
+
+    topic_candidates: list[str] = []
+    for tag, _kind, matchers in HeuristicLLMAnalysisService._build_topic_tag_candidates():
+        if any(matcher in lowered for matcher in matchers):
+            topic_candidates.append(tag)
+    if topic_candidates:
+        topic = topic_candidates[0]
+        if topic in {"기능 우선순위", "요구사항 명세서", "테스트 일정", "리스크 관리", "추가 기능 요청"}:
+            return _finalize(f"{topic} 정리 회의")
+        return _finalize(f"{topic} 회의")
+
+    fallback = _compact_summary_text(summary_text or transcript_text, max_chars=48)
+    if fallback:
+        return _finalize(fallback)
+    return "회의 요약"
 
 
 def _normalize_title_value(value: Any) -> str:
@@ -1021,7 +1159,9 @@ def _compact_next_agenda_text(text: Any, *, max_chars: int = 96) -> str:
     if not cleaned:
         return ""
     cleaned = _collapse_repeated_phrases(cleaned)
+    cleaned = re.sub(r"(?:다음 회의에서\s*){2,}", "다음 회의에서 ", cleaned)
     if cleaned.startswith("다음 회의에서"):
+        cleaned = cleaned.replace("다음 회의에서 다음 회의에서", "다음 회의에서")
         return cleaned if cleaned.endswith(".") else f"{cleaned}."
     cleaned = cleaned.rstrip(".!?。")
     cleaned = f"다음 회의에서 {cleaned}"
@@ -1045,10 +1185,17 @@ class HeuristicLLMAnalysisService(LLMAnalysisService):
         normalized = self._normalize_text(transcript)
         if not normalized:
             return {
+                "contract_version": "v1",
+                "meeting_title": "회의 요약",
                 "summary": "요약할 텍스트가 없습니다.",
+                "keywords": [],
+                "decisions": [],
                 "action_items": [],
+                "issues": [],
+                "next_agenda": [],
                 "model_name": self.model_name,
                 "prompt_version": self.prompt_version,
+                "summary_request": None,
                 "extra_data": {"input_characters": 0, "sentence_count": 0},
             }
 
@@ -1077,8 +1224,20 @@ class HeuristicLLMAnalysisService(LLMAnalysisService):
         keywords = self._build_keywords(analysis_text, summary, action_items, decisions, issues, next_agenda)
         summary, action_items = self._normalize_analysis_output(summary, action_items)
         summary = _normalize_summary_card_value(summary)
+        meeting_title = _build_meeting_title(
+            transcript=analysis_text,
+            summary=summary,
+            keywords=keywords,
+            decisions=decisions,
+            action_items=action_items,
+            issues=issues,
+            next_agenda=next_agenda,
+            context=context,
+        )
 
         return {
+            "contract_version": "v1",
+            "meeting_title": meeting_title,
             "summary": summary,
             "keywords": keywords,
             "decisions": decisions,
@@ -1087,6 +1246,7 @@ class HeuristicLLMAnalysisService(LLMAnalysisService):
             "next_agenda": next_agenda,
             "model_name": self.model_name,
             "prompt_version": self.prompt_version,
+            "summary_request": None,
                 "extra_data": {
                     "input_characters": len(normalized),
                     "sentence_count": len(sentences),
@@ -2204,7 +2364,13 @@ class OpenAIAnalysisService(LLMAnalysisService):
         self.prompt_version = prompt_version
         self._client = self._load_client()
 
-    def _create_response_with_retry(self, normalized: str, context: Any | None = None) -> Any:
+    def _create_response_with_retry(
+        self,
+        normalized: str,
+        *,
+        context: Any | None = None,
+        model_name: str | None = None,
+    ) -> Any:
         try:
             from openai import APIConnectionError, APITimeoutError, RateLimitError
         except ImportError:  # pragma: no cover - openai is available in runtime env
@@ -2214,11 +2380,12 @@ class OpenAIAnalysisService(LLMAnalysisService):
 
         last_error: Exception | None = None
         max_attempts = 3
+        target_model = model_name or self.model_name
 
         for attempt in range(1, max_attempts + 1):
             try:
                 return self._client.responses.create(
-                    model=self.model_name,
+                    model=target_model,
                     instructions=self._build_instructions(context),
                     input=normalized,
                     text={
@@ -2266,17 +2433,26 @@ class OpenAIAnalysisService(LLMAnalysisService):
         normalized = self._normalize_text(transcript)
         if not normalized:
             return {
+                "contract_version": "v1",
+                "meeting_title": "회의 요약",
                 "summary": "요약할 텍스트가 없습니다.",
+                "keywords": [],
+                "decisions": [],
                 "action_items": [],
+                "issues": [],
+                "next_agenda": [],
                 "model_name": self.model_name,
                 "prompt_version": self.prompt_version,
+                "summary_request": None,
                 "extra_data": {"input_characters": 0, "source": "openai"},
         }
 
         try:
             noisy_audio = HeuristicLLMAnalysisService._has_noisy_audio_context(context)
+            model_tier = _estimate_model_tier(normalized, context)
+            resolved_model_name = _resolve_model_name_for_tier(model_tier, fallback=self.model_name)
             name_candidates = _collect_assignee_name_candidates(transcript, context)
-            response = self._create_response_with_retry(normalized, context)
+            response = self._create_response_with_retry(normalized, context=context, model_name=resolved_model_name)
 
             payload = self._parse_response_payload(response)
             normalized_summary = _normalize_summary_card_value(payload.get("summary", ""))
@@ -2294,17 +2470,32 @@ class OpenAIAnalysisService(LLMAnalysisService):
                 if _is_followup_agenda_text(item)
             ]
             normalized_next_agenda = _normalize_next_agenda_value(next_agenda_candidates, MAX_NEXT_AGENDA)
+            meeting_title = _build_meeting_title(
+                transcript=normalized,
+                summary=normalized_summary,
+                keywords=normalized_keywords,
+                decisions=normalized_decisions,
+                action_items=normalized_action_items,
+                issues=normalized_issues,
+                next_agenda=normalized_next_agenda,
+                context=context,
+            )
             return {
+                "contract_version": "v1",
+                "meeting_title": meeting_title,
                 "summary": normalized_summary,
                 "keywords": normalized_keywords,
                 "decisions": normalized_decisions,
                 "action_items": normalized_action_items,
                 "issues": normalized_issues,
                 "next_agenda": normalized_next_agenda,
-                "model_name": self.model_name,
+                "model_name": resolved_model_name,
                 "prompt_version": self.prompt_version,
+                "summary_request": None,
                 "extra_data": {
                     "source": "openai",
+                    "llm_tier": model_tier,
+                    "resolved_model_name": resolved_model_name,
                     "input_characters": len(normalized),
                     "action_item_count": len(normalized_action_items),
                     "decision_count": len(normalized_decisions),
@@ -2322,6 +2513,7 @@ class OpenAIAnalysisService(LLMAnalysisService):
             fallback["extra_data"].update(
                 {
                     "source": "openai_fallback",
+                    "llm_tier": _estimate_model_tier(normalized, context),
                     "fallback_error": str(exc),
                     "input_characters": len(normalized),
                     "context_present": bool(_build_context_block(context)),
@@ -2346,6 +2538,8 @@ class OpenAIAnalysisService(LLMAnalysisService):
             instruction += f"{context_block}\n\n"
         instruction += (
             "작업 원칙:\n"
+            "- meeting_title에는 회의 성격이 바로 드러나는 한 줄 제목을 써라. 너무 길면 안 되고 카드 헤더처럼 보여야 한다.\n"
+            "- 특별한 맥락이 없으면 'OOO 프로젝트 킥오프', 'OOO 정리 회의', 'OOO 검토 회의' 같은 형태로 간결하게 작성하라.\n"
             "- 회의 핵심만 한국어로 2~3문장으로 짧게 요약하라. 장황한 부연 설명은 쓰지 마라.\n"
             "- summary는 카드 헤더처럼 짧고 단정하게 써라. 가능하면 '회의에서는 ...'로 시작하라.\n"
             "- 입력에 잡음, 잔향, 끊긴 발화, 중복 음절이 섞여 있으면 의미 있는 회의 발화만 사용하고 소음성 문구는 무시하라.\n"
@@ -2416,10 +2610,182 @@ class OpenAIAnalysisService(LLMAnalysisService):
         return {"value": str(usage)}
 
 
-def build_llm_analysis_service() -> LLMAnalysisService:
-    """Prefer OpenAI when configured, otherwise fall back to heuristic analysis."""
+class LangChainAnalysisService(LLMAnalysisService):
+    """LangChain-backed meeting analysis that keeps the same JSON contract."""
 
-    if settings.openai_api_key:
+    model_name = DEFAULT_MODEL_NAME
+    prompt_version = "langchain-v1"
+
+    def __init__(self, model_name: str | None = None, prompt_version: str = "langchain-v1") -> None:
+        self.model_name = model_name or DEFAULT_MODEL_NAME
+        self.prompt_version = prompt_version
+
+    @staticmethod
+    @lru_cache(maxsize=1)
+    def _load_components():
+        try:
+            from langchain_core.output_parsers import StrOutputParser
+            from langchain_core.prompts import ChatPromptTemplate
+            from langchain_openai import ChatOpenAI
+        except ImportError as exc:  # pragma: no cover - optional dependency
+            raise RuntimeError("langchain-core/langchain-openai packages are not installed") from exc
+
+        return ChatPromptTemplate, StrOutputParser, ChatOpenAI
+
+    def _invoke_chain(
+        self,
+        transcript: str,
+        context: Any | None = None,
+        *,
+        model_name: str | None = None,
+    ) -> str:
+        ChatPromptTemplate, StrOutputParser, ChatOpenAI = self._load_components()
+
+        if settings.openai_api_key:
+            os.environ.setdefault("OPENAI_API_KEY", settings.openai_api_key)
+
+        prompt = ChatPromptTemplate.from_messages(
+            [
+                ("system", OpenAIAnalysisService._build_instructions(context)),
+                ("human", "{transcript}"),
+            ]
+        )
+        llm = ChatOpenAI(model=model_name or self.model_name, temperature=0, max_retries=3)
+        chain = prompt | llm | StrOutputParser()
+        return str(chain.invoke({"transcript": transcript})).strip()
+
+    def summarize_and_extract_tickets(self, transcript: str, context: Any | None = None) -> dict[str, Any]:
+        normalized = self._normalize_text(transcript)
+        if not normalized:
+            return {
+                "contract_version": "v1",
+                "meeting_title": "회의 요약",
+                "summary": "요약할 텍스트가 없습니다.",
+                "keywords": [],
+                "decisions": [],
+                "action_items": [],
+                "issues": [],
+                "next_agenda": [],
+                "model_name": self.model_name,
+                "prompt_version": self.prompt_version,
+                "summary_request": None,
+                "extra_data": {"input_characters": 0, "source": "langchain"},
+            }
+
+        try:
+            noisy_audio = HeuristicLLMAnalysisService._has_noisy_audio_context(context)
+            model_tier = _estimate_model_tier(normalized, context)
+            resolved_model_name = _resolve_model_name_for_tier(model_tier, fallback=self.model_name)
+            name_candidates = _collect_assignee_name_candidates(transcript, context)
+            response_text = self._invoke_chain(normalized, context, model_name=resolved_model_name)
+            payload = json.loads(response_text)
+
+            normalized_summary = _normalize_summary_card_value(payload.get("summary", ""))
+            normalized_action_items = _normalize_action_items_value(
+                payload.get("action_items", []),
+                name_candidates=name_candidates,
+            )
+            normalized_keywords = _normalize_keywords_value(payload.get("keywords", []))
+            normalized_decisions, tentative_decisions = _normalize_decisions_value(
+                payload.get("decisions", []),
+                MAX_DECISIONS,
+            )
+            normalized_issues = _normalize_issues_value(payload.get("issues", []))
+            next_agenda_source = list(payload.get("next_agenda", []) or [])
+            next_agenda_candidates = [
+                item
+                for item in next_agenda_source + tentative_decisions
+                if _is_followup_agenda_text(item)
+            ]
+            normalized_next_agenda = _normalize_next_agenda_value(next_agenda_candidates, MAX_NEXT_AGENDA)
+
+            normalizer = HeuristicLLMAnalysisService()
+            summary, action_items = normalizer._normalize_analysis_output(normalized_summary, normalized_action_items)
+            summary = _normalize_summary_card_value(summary)
+            meeting_title = _build_meeting_title(
+                transcript=normalized,
+                summary=summary,
+                keywords=normalized_keywords,
+                decisions=normalized_decisions,
+                action_items=action_items,
+                issues=normalized_issues,
+                next_agenda=normalized_next_agenda,
+                context=context,
+            )
+
+            return {
+                "contract_version": "v1",
+                "meeting_title": meeting_title,
+                "summary": summary,
+                "keywords": normalized_keywords,
+                "decisions": normalized_decisions,
+                "action_items": action_items,
+                "issues": normalized_issues,
+                "next_agenda": normalized_next_agenda,
+                "model_name": resolved_model_name,
+                "prompt_version": self.prompt_version,
+                "summary_request": None,
+                "extra_data": {
+                    "source": "langchain",
+                    "llm_tier": model_tier,
+                    "resolved_model_name": resolved_model_name,
+                    "input_characters": len(normalized),
+                    "response_characters": len(response_text),
+                    "action_item_count": len(action_items),
+                    "decision_count": len(normalized_decisions),
+                    "issue_count": len(normalized_issues),
+                    "next_agenda_count": len(normalized_next_agenda),
+                    "context_present": bool(_build_context_block(context)),
+                    "audio_noise_context": noisy_audio,
+                },
+            }
+        except Exception as exc:
+            logger.warning("LangChain analysis request failed; falling back to heuristic service: %s", exc)
+            fallback = HeuristicLLMAnalysisService().summarize_and_extract_tickets(normalized, context=context)
+            fallback["extra_data"] = dict(fallback.get("extra_data", {}))
+            fallback["extra_data"].update(
+                {
+                    "source": "langchain_fallback",
+                    "llm_tier": _estimate_model_tier(normalized, context),
+                    "fallback_error": str(exc),
+                    "input_characters": len(normalized),
+                    "context_present": bool(_build_context_block(context)),
+                    "audio_noise_context": HeuristicLLMAnalysisService._has_noisy_audio_context(context),
+                }
+            )
+            return fallback
+
+
+def _langchain_dependencies_available() -> bool:
+    try:
+        LangChainAnalysisService._load_components()
+    except Exception:
+        return False
+    return True
+
+
+def _normalize_analysis_provider(provider: Any) -> str:
+    value = str(provider or "auto").strip().lower()
+    return value or "auto"
+
+
+def build_llm_analysis_service() -> LLMAnalysisService:
+    """Build the preferred analysis service for the configured provider."""
+
+    provider = _normalize_analysis_provider(getattr(settings, "llm_analysis_provider", "auto"))
+
+    if provider == "heuristic":
+        return HeuristicLLMAnalysisService()
+
+    if provider in {"langchain", "auto"} and settings.openai_api_key and _langchain_dependencies_available():
+        try:
+            return LangChainAnalysisService()
+        except Exception as exc:
+            logger.warning("LangChain analysis unavailable, falling back to OpenAI service: %s", exc)
+            if provider == "langchain":
+                logger.warning("LangChain provider was requested explicitly, but could not be constructed.")
+
+    if provider in {"openai", "langchain", "auto"} and settings.openai_api_key:
         try:
             return OpenAIAnalysisService()
         except Exception as exc:

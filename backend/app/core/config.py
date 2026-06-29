@@ -36,11 +36,16 @@ class Settings(BaseSettings):
     notion_redirect_uri: str | None = Field(default=None, alias="NOTION_REDIRECT_URI")
     openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")
     openai_model: str = Field(default="gpt-5.4-mini", alias="OPENAI_MODEL")
+    openai_small_model: str | None = Field(default=None, alias="OPENAI_SMALL_MODEL")
+    openai_medium_model: str | None = Field(default=None, alias="OPENAI_MEDIUM_MODEL")
+    openai_large_model: str | None = Field(default=None, alias="OPENAI_LARGE_MODEL")
+    llm_analysis_provider: str = Field(default="auto", alias="LLM_ANALYSIS_PROVIDER")
     whisper_model: str = Field(default="large", alias="WHISPER_MODEL")
+    whisper_medium_model: str | None = Field(default="medium", alias="WHISPER_MEDIUM_MODEL")
     whisper_light_model: str = Field(default="small", alias="WHISPER_LIGHT_MODEL")
     diarization_enabled: bool = Field(default=False, alias="DIARIZATION_ENABLED")
     diarization_model: str = Field(
-        default="pyannote/speaker-diarization-community-1",
+        default="pyannote/speaker-diarization-3.1",
         alias="DIARIZATION_MODEL",
     )
     huggingface_token: str | None = Field(

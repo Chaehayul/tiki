@@ -13,8 +13,10 @@ from pathlib import Path
 from typing import Any
 
 from app.services.ai.llm_analysis import LLMAnalysisService, build_llm_analysis_service
+from app.services.ai.document_ingestion import load_document_file
 from app.services.ai.rag_context import RAGContext, normalize_rag_context
 from app.services.ai.stt import SpeechToTextService, WhisperSpeechToTextService
+from app.schemas.ai_input import AIInputChunk, build_ai_input_contract
 from app.schemas.meeting_record import MeetingSearchChunk, MeetingSearchDocument, MeetingSearchSection
 from app.services.pipeline.security_masking import mask_personal_information
 
@@ -23,6 +25,19 @@ logger = logging.getLogger(__name__)
 SENTENCE_SPLIT_PATTERN = re.compile(r"(?<=[.!?。])\s+|\n+")
 SCRIPT_SEGMENT_CONTRACT_VERSION = "v1"
 TX_ROW_CONTRACT_VERSION = "v1"
+AI_INPUT_CONTRACT_VERSION = "v1"
+ANALYSIS_OUTPUT_CONTRACT_VERSION = "v1"
+SUMMARY_REQUEST_CONTRACT_VERSION = "v1"
+ANALYSIS_OUTPUT_FIELDS: tuple[str, ...] = (
+    "meeting_title",
+    "summary",
+    "keywords",
+    "decisions",
+    "action_items",
+    "issues",
+    "next_agenda",
+    "search_document",
+)
 
 def _format_mmss(seconds: Any) -> str | None:
     if seconds is None:
@@ -273,10 +288,142 @@ def _join_search_parts(*parts: Any) -> str:
             values.append(text)
     return " | ".join(values)
 
+
+def _build_ai_input_chunks(
+    segments: list[dict[str, Any]],
+    *,
+    chunk_kind: str = "segment",
+) -> list[dict[str, Any]]:
+    chunks: list[dict[str, Any]] = []
+    for index, segment in enumerate(segments):
+        speaker_fields = _build_speaker_fields(
+            segment.get("speaker"),
+            segment.get("speaker_id"),
+            segment.get("speaker_label"),
+            participant_name=segment.get("participant_name"),
+            speaker_display_name=segment.get("speaker_display_name"),
+            speaker_kind=segment.get("speaker_kind"),
+            is_mapped=segment.get("is_mapped"),
+        )
+        text = _normalize_segment_text(segment.get("text"))
+        masked_text = _normalize_segment_text(segment.get("masked_text") or text)
+        chunks.append(
+            AIInputChunk(
+                index=segment.get("index", index),
+                chunk_kind=segment.get("chunk_kind", chunk_kind),
+                title=segment.get("segment_label") or segment.get("title"),
+                text=text,
+                masked_text=masked_text,
+                page_number=segment.get("page_number"),
+                paragraph_index=segment.get("paragraph_index"),
+                start_seconds=segment.get("start_seconds"),
+                end_seconds=segment.get("end_seconds"),
+                duration_seconds=segment.get("duration_seconds"),
+                speaker=speaker_fields["speaker"],
+                speaker_id=speaker_fields["speaker_id"],
+                speaker_label=speaker_fields["speaker_label"],
+                speaker_display_name=speaker_fields["speaker_display_name"],
+                speaker_kind=speaker_fields["speaker_kind"],
+                is_mapped=speaker_fields["is_mapped"],
+                metadata={
+                    key: value
+                    for key, value in {
+                        "source": segment.get("source"),
+                        "segment_label": segment.get("segment_label"),
+                        "chunk_index": segment.get("chunk_index"),
+                        "chunk_local_index": segment.get("chunk_local_index"),
+                        "model_name": segment.get("model_name"),
+                        "chunk_difficulty": segment.get("chunk_difficulty"),
+                        "file_index": segment.get("file_index"),
+                        "file_path": segment.get("file_path"),
+                        "file_name": segment.get("file_name"),
+                        "confidence": segment.get("confidence"),
+                    }.items()
+                    if value not in (None, "", [], {}, ())
+                },
+            ).model_dump()
+        )
+    return chunks
+
+
+def _build_ai_input_contract(
+    *,
+    source_kind: str,
+    source_text: str,
+    masked_source_text: str,
+    segments: list[dict[str, Any]],
+    context_snapshot: dict[str, Any] | None = None,
+    source_name: str | None = None,
+    source_path: str | None = None,
+    source_title: str | None = None,
+    metadata: dict[str, Any] | None = None,
+    chunk_kind: str = "segment",
+) -> dict[str, Any]:
+    normalized_source_kind = _normalize_segment_text(source_kind) or "text"
+    chunks = _build_ai_input_chunks(segments, chunk_kind=chunk_kind)
+    contract = build_ai_input_contract(
+        contract_version=AI_INPUT_CONTRACT_VERSION,
+        source_kind=normalized_source_kind,
+        source_name=source_name,
+        source_path=source_path,
+        source_title=source_title,
+        source_text=source_text,
+        masked_source_text=masked_source_text,
+        chunks=chunks,
+        context=dict(context_snapshot or {}),
+        metadata={
+            key: value
+            for key, value in {
+                "segment_count": len(chunks),
+                "chunk_kind": chunk_kind,
+                **(metadata or {}),
+            }.items()
+            if value not in (None, "", [], {}, ())
+        },
+    )
+    return contract.model_dump()
+
+
+def _build_summary_request_contract(context: Any | None) -> dict[str, Any] | None:
+    if not context:
+        return None
+
+    candidate: dict[str, Any] = {}
+    if isinstance(context, dict):
+        candidate = dict(context.get("summary_request") or context.get("summaryRequest") or {})
+        extra = context.get("extra")
+        if not candidate and isinstance(extra, dict):
+            candidate = dict(extra.get("summary_request") or extra.get("summaryRequest") or {})
+    else:
+        normalized = normalize_rag_context(context)
+        if normalized and isinstance(normalized.extra, dict):
+            candidate = dict(normalized.extra.get("summary_request") or normalized.extra.get("summaryRequest") or {})
+
+    focus = _normalize_segment_text(candidate.get("focus") or candidate.get("topic"))
+    prompt = _normalize_segment_text(
+        candidate.get("prompt") or candidate.get("instruction") or candidate.get("query")
+    )
+    length = _normalize_segment_text(
+        candidate.get("length") or candidate.get("len") or candidate.get("summary_length")
+    )
+
+    if not any((focus, prompt, length)):
+        return None
+
+    return {
+        "contract_version": SUMMARY_REQUEST_CONTRACT_VERSION,
+        "focus": focus or None,
+        "prompt": prompt or None,
+        "length": length or None,
+        "target_fields": list(ANALYSIS_OUTPUT_FIELDS),
+    }
+
 @dataclass(slots=True)
 class AIAnalysisPayload:
+    meeting_title: str | None
     summary: str
     action_items: list[dict[str, Any]]
+    contract_version: str = ANALYSIS_OUTPUT_CONTRACT_VERSION
     keywords: list[dict[str, Any]] = field(default_factory=list)
     decisions: list[str] = field(default_factory=list)
     actions: list[dict[str, Any]] = field(default_factory=list)
@@ -285,11 +432,14 @@ class AIAnalysisPayload:
     evidence: list[dict[str, Any]] = field(default_factory=list)
     model_name: str | None = None
     prompt_version: str | None = None
+    summary_request: dict[str, Any] | None = None
     extra_data: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         actions = self.actions or [self._action_item_to_action(item) for item in self.action_items]
         return {
+            "contract_version": self.contract_version,
+            "meeting_title": self.meeting_title,
             "summary": self.summary,
             "keywords": self.keywords,
             "decisions": self.decisions,
@@ -300,6 +450,7 @@ class AIAnalysisPayload:
             "evidence": self.evidence,
             "model_name": self.model_name,
             "prompt_version": self.prompt_version,
+            "summary_request": self.summary_request,
             "extra_data": self.extra_data,
         }
 
@@ -322,12 +473,17 @@ class AIProcessingResult:
     def to_dict(self) -> dict[str, Any]:
         analysis = self.analysis.to_dict()
         tx = _build_tx_rows(self.segments)
+        summary_request = analysis.get("summary_request")
+        search_document = analysis.get("extra_data", {}).get("search_document")
         return {
+            "analysis_contract_version": analysis.get("contract_version", ANALYSIS_OUTPUT_CONTRACT_VERSION),
             "transcript": self.transcript,
             "masked_transcript": self.masked_transcript,
             "segments": self.segments,
             "tx": tx,
             "meeting_minutes": {
+                "contract_version": analysis.get("contract_version", ANALYSIS_OUTPUT_CONTRACT_VERSION),
+                "meeting_title": analysis.get("meeting_title", ""),
                 "summary": analysis.get("summary", ""),
                 "keywords": analysis.get("keywords", []),
                 "decisions": analysis.get("decisions", []),
@@ -335,11 +491,17 @@ class AIProcessingResult:
                 "action_items": analysis.get("action_items", []),
                 "issues": analysis.get("issues", []),
                 "next_agenda": analysis.get("next_agenda", []),
+                "search_document": search_document,
+                "summary_request": summary_request,
                 "segments": self.segments,
                 "tx": tx,
                 "evidence": analysis.get("evidence", []),
                 "model_name": analysis.get("model_name"),
                 "prompt_version": analysis.get("prompt_version"),
+                "analysis_contract_version": analysis.get("extra_data", {}).get(
+                    "analysis_contract_version",
+                    ANALYSIS_OUTPUT_CONTRACT_VERSION,
+                ),
                 "extra_data": analysis.get("extra_data", {}),
             },
             "analysis": analysis,
@@ -379,7 +541,10 @@ class AIProcessingBatchResult:
     def to_dict(self) -> dict[str, Any]:
         analysis = self.analysis.to_dict()
         tx = _build_tx_rows(self.segments)
+        summary_request = analysis.get("summary_request")
+        search_document = analysis.get("extra_data", {}).get("search_document")
         return {
+            "analysis_contract_version": analysis.get("contract_version", ANALYSIS_OUTPUT_CONTRACT_VERSION),
             "file_count": self.file_count,
             "files": [file_result.to_dict() for file_result in self.files],
             "transcript": self.transcript,
@@ -387,6 +552,8 @@ class AIProcessingBatchResult:
             "segments": self.segments,
             "tx": tx,
             "meeting_minutes": {
+                "contract_version": analysis.get("contract_version", ANALYSIS_OUTPUT_CONTRACT_VERSION),
+                "meeting_title": analysis.get("meeting_title", ""),
                 "summary": analysis.get("summary", ""),
                 "keywords": analysis.get("keywords", []),
                 "decisions": analysis.get("decisions", []),
@@ -394,11 +561,17 @@ class AIProcessingBatchResult:
                 "action_items": analysis.get("action_items", []),
                 "issues": analysis.get("issues", []),
                 "next_agenda": analysis.get("next_agenda", []),
+                "search_document": search_document,
+                "summary_request": summary_request,
                 "segments": self.segments,
                 "tx": tx,
                 "evidence": analysis.get("evidence", []),
                 "model_name": analysis.get("model_name"),
                 "prompt_version": analysis.get("prompt_version"),
+                "analysis_contract_version": analysis.get("extra_data", {}).get(
+                    "analysis_contract_version",
+                    ANALYSIS_OUTPUT_CONTRACT_VERSION,
+                ),
                 "extra_data": analysis.get("extra_data", {}),
             },
             "analysis": analysis,
@@ -408,12 +581,15 @@ def _build_analysis_payload(
     analysis_data: dict[str, Any],
     *,
     evidence: list[dict[str, Any]] | None = None,
+    summary_request: dict[str, Any] | None = None,
 ) -> AIAnalysisPayload:
     action_items = list(analysis_data.get("action_items", []))
     actions = list(analysis_data.get("actions", [])) or [AIAnalysisPayload._action_item_to_action(item) for item in action_items]
     return AIAnalysisPayload(
+        meeting_title=str(analysis_data.get("meeting_title", "")) or None,
         summary=str(analysis_data.get("summary", "")),
         action_items=action_items,
+        contract_version=str(analysis_data.get("contract_version") or ANALYSIS_OUTPUT_CONTRACT_VERSION),
         keywords=list(analysis_data.get("keywords", [])),
         decisions=list(analysis_data.get("decisions", [])),
         actions=actions,
@@ -422,8 +598,32 @@ def _build_analysis_payload(
         evidence=list(evidence or []),
         model_name=analysis_data.get("model_name"),
         prompt_version=analysis_data.get("prompt_version"),
+        summary_request=summary_request if summary_request is not None else analysis_data.get("summary_request"),
         extra_data=dict(analysis_data.get("extra_data", {})),
     )
+
+
+def _attach_analysis_contract_metadata(
+    analysis: AIAnalysisPayload,
+    *,
+    summary_request: dict[str, Any] | None = None,
+    search_document: dict[str, Any] | None = None,
+) -> None:
+    analysis.extra_data["analysis_contract_version"] = ANALYSIS_OUTPUT_CONTRACT_VERSION
+    analysis.extra_data["analysis_output_fields"] = list(ANALYSIS_OUTPUT_FIELDS)
+    analysis.extra_data["meeting_title"] = analysis.meeting_title
+    analysis.extra_data["summary"] = analysis.summary
+    analysis.extra_data["keywords"] = list(analysis.keywords)
+    analysis.extra_data["decisions"] = list(analysis.decisions)
+    analysis.extra_data["action_items"] = list(analysis.action_items)
+    analysis.extra_data["issues"] = list(analysis.issues)
+    analysis.extra_data["next_agenda"] = list(analysis.next_agenda)
+    if summary_request is not None:
+        analysis.summary_request = summary_request
+    if analysis.summary_request is not None:
+        analysis.extra_data["summary_request"] = analysis.summary_request
+    if search_document is not None:
+        analysis.extra_data["search_document"] = search_document
 
 def build_project_rag_context(project: dict[str, Any] | None = None, **overrides: Any) -> dict[str, Any]:
     base = {
@@ -598,6 +798,8 @@ def _build_meeting_search_document(
     if context_snapshot:
         title = _normalize_segment_text(context_snapshot.get("meeting_title")) or None
         project_name = _normalize_segment_text(context_snapshot.get("project_name")) or None
+    if not title:
+        title = _normalize_segment_text(analysis_data.get("meeting_title")) or None
 
     indexed_text = _join_search_parts(
         title,
@@ -1011,6 +1213,16 @@ class AIEngine:
         analysis_data = self.llm_service.summarize_and_extract_tickets(masked_text, context=rag_context)
         segments = _build_sentence_segments(masked_text)
         context_snapshot = _build_context_snapshot(rag_context)
+        summary_request = _build_summary_request_contract(rag_context)
+        ai_input_contract = _build_ai_input_contract(
+            source_kind="text",
+            source_text=text,
+            masked_source_text=masked_text,
+            segments=segments,
+            context_snapshot=context_snapshot,
+            source_title=context_snapshot.get("meeting_title") if context_snapshot else None,
+            metadata={"source": "text"},
+        )
         evidence = _build_evidence_items(masked_text, analysis_data, segments, context_snapshot=context_snapshot)
         analysis = _build_analysis_payload(analysis_data, evidence=evidence)
         script_segments, tx_rows, search_document = _build_script_contract(
@@ -1020,13 +1232,61 @@ class AIEngine:
             segments=segments,
             context_snapshot=context_snapshot,
         )
+        _attach_analysis_contract_metadata(
+            analysis,
+            summary_request=summary_request,
+            search_document=search_document,
+        )
         analysis.extra_data["script_segment_contract_version"] = SCRIPT_SEGMENT_CONTRACT_VERSION
+        analysis.extra_data["ai_input_contract_version"] = AI_INPUT_CONTRACT_VERSION
+        analysis.extra_data["ai_input_contract"] = ai_input_contract
         analysis.extra_data["script_segments"] = script_segments
         analysis.extra_data["tx"] = tx_rows
-        analysis.extra_data["search_document"] = search_document
         return AIProcessingResult(
             transcript=text,
             masked_transcript=masked_text,
+            segments=segments,
+            analysis=analysis,
+        )
+
+    def process_document(self, file_path: str, rag_context: Any | None = None) -> AIProcessingResult:
+        document = load_document_file(file_path)
+        document.masked_text = mask_personal_information(document.text)
+        context_snapshot = _build_context_snapshot(rag_context)
+        summary_request = _build_summary_request_contract(rag_context)
+        analysis_data = self.llm_service.summarize_and_extract_tickets(document.masked_text, context=rag_context)
+        segments = _build_sentence_segments(document.masked_text)
+        ai_input_contract = document.to_ai_input_contract()
+        evidence = _build_evidence_items(document.masked_text, analysis_data, segments, context_snapshot=context_snapshot)
+        analysis = _build_analysis_payload(analysis_data, evidence=evidence, summary_request=summary_request)
+        analysis.extra_data["document_extraction"] = {
+            "source_path": document.source_path,
+            "source_name": document.source_name,
+            "source_kind": document.source_kind,
+            "extraction_method": document.extraction_method,
+            "page_count": document.page_count,
+            "chunk_count": len(document.chunks),
+        }
+        script_segments, tx_rows, search_document = _build_script_contract(
+            transcript=document.text,
+            masked_transcript=document.masked_text,
+            analysis_data=analysis_data,
+            segments=segments,
+            context_snapshot=context_snapshot,
+        )
+        _attach_analysis_contract_metadata(
+            analysis,
+            summary_request=summary_request,
+            search_document=search_document,
+        )
+        analysis.extra_data["ai_input_contract_version"] = AI_INPUT_CONTRACT_VERSION
+        analysis.extra_data["ai_input_contract"] = ai_input_contract
+        analysis.extra_data["script_segment_contract_version"] = SCRIPT_SEGMENT_CONTRACT_VERSION
+        analysis.extra_data["script_segments"] = script_segments
+        analysis.extra_data["tx"] = tx_rows
+        return AIProcessingResult(
+            transcript=document.text,
+            masked_transcript=document.masked_text,
             segments=segments,
             analysis=analysis,
         )
@@ -1047,6 +1307,7 @@ class AIEngine:
         if callable(get_last_preprocessing):
             preprocessing = get_last_preprocessing()
         analysis_context = _augment_context_with_audio_quality(rag_context, preprocessing)
+        summary_request = _build_summary_request_contract(rag_context)
         segments = [
             _build_script_segment(
                 index=segment.get("index", index),
@@ -1071,6 +1332,20 @@ class AIEngine:
             )
             for index, segment in enumerate(raw_segments)
         ] or _build_sentence_segments(masked_transcript)
+        ai_input_contract = _build_ai_input_contract(
+            source_kind="audio",
+            source_text=transcript,
+            masked_source_text=masked_transcript,
+            segments=segments,
+            context_snapshot=context_snapshot,
+            source_name=Path(file_path).name,
+            source_path=file_path,
+            source_title=context_snapshot.get("meeting_title") if context_snapshot else None,
+            metadata={
+                "source": "audio",
+                "audio_preprocessing": _summarize_audio_preprocessing(preprocessing) if preprocessing else None,
+            },
+        )
 
         analysis_data = self.llm_service.summarize_and_extract_tickets(masked_transcript, context=analysis_context)
         evidence = _build_evidence_items(masked_transcript, analysis_data, segments, context_snapshot=context_snapshot)
@@ -1092,10 +1367,16 @@ class AIEngine:
             segments=segments,
             context_snapshot=context_snapshot,
         )
+        _attach_analysis_contract_metadata(
+            analysis,
+            summary_request=summary_request,
+            search_document=search_document,
+        )
         analysis.extra_data["script_segment_contract_version"] = SCRIPT_SEGMENT_CONTRACT_VERSION
+        analysis.extra_data["ai_input_contract_version"] = AI_INPUT_CONTRACT_VERSION
+        analysis.extra_data["ai_input_contract"] = ai_input_contract
         analysis.extra_data["script_segments"] = script_segments
         analysis.extra_data["tx"] = tx_rows
-        analysis.extra_data["search_document"] = search_document
         return AIProcessingResult(
             transcript=transcript,
             masked_transcript=masked_transcript,
@@ -1122,11 +1403,13 @@ class AIEngine:
         transcript, raw_segments = parallel_transcribe(file_path, n_workers=n_workers)
 
         masked_transcript = mask_personal_information(transcript)
+        context_snapshot = _build_context_snapshot(rag_context)
         preprocessing = None
         get_last_preprocessing = getattr(self.stt_service, "get_last_preprocessing", None)
         if callable(get_last_preprocessing):
             preprocessing = get_last_preprocessing()
         analysis_context = _augment_context_with_audio_quality(rag_context, preprocessing)
+        summary_request = _build_summary_request_contract(rag_context)
         segments = [
             _build_script_segment(
                 index=segment.get("index", index),
@@ -1151,6 +1434,21 @@ class AIEngine:
             )
             for index, segment in enumerate(raw_segments)
         ] or _build_sentence_segments(masked_transcript)
+        ai_input_contract = _build_ai_input_contract(
+            source_kind="audio",
+            source_text=transcript,
+            masked_source_text=masked_transcript,
+            segments=segments,
+            context_snapshot=context_snapshot,
+            source_name=Path(file_path).name,
+            source_path=file_path,
+            source_title=context_snapshot.get("meeting_title") if context_snapshot else None,
+            metadata={
+                "source": "audio",
+                "audio_preprocessing": _summarize_audio_preprocessing(preprocessing) if preprocessing else None,
+                "parallel_workers": n_workers,
+            },
+        )
 
         analysis_data = self.llm_service.summarize_and_extract_tickets(
             masked_transcript, context=analysis_context
@@ -1180,10 +1478,16 @@ class AIEngine:
             segments=segments,
             context_snapshot=context_snapshot,
         )
+        _attach_analysis_contract_metadata(
+            analysis,
+            summary_request=summary_request,
+            search_document=search_document,
+        )
         analysis.extra_data["script_segment_contract_version"] = SCRIPT_SEGMENT_CONTRACT_VERSION
+        analysis.extra_data["ai_input_contract_version"] = AI_INPUT_CONTRACT_VERSION
+        analysis.extra_data["ai_input_contract"] = ai_input_contract
         analysis.extra_data["script_segments"] = script_segments
         analysis.extra_data["tx"] = tx_rows
-        analysis.extra_data["search_document"] = search_document
         return AIProcessingResult(
             transcript=transcript,
             masked_transcript=masked_transcript,
@@ -1293,6 +1597,7 @@ class AIEngine:
 
         combined_transcript = "\n\n".join(transcript_segments)
         combined_masked_transcript = "\n\n".join(masked_segments)
+        summary_request = _build_summary_request_contract(rag_context)
         batch_context = _augment_context_with_audio_quality(
             rag_context,
             {
@@ -1308,12 +1613,24 @@ class AIEngine:
                 ),
             },
         )
+        ai_input_contract = _build_ai_input_contract(
+            source_kind="audio_batch",
+            source_text=combined_transcript,
+            masked_source_text=combined_masked_transcript,
+            segments=timeline_segments,
+            context_snapshot=batch_context,
+            source_title=batch_context.get("meeting_title") if batch_context else None,
+            metadata={
+                "source": "audio_batch",
+                "file_count": len(file_paths),
+            },
+        )
         analysis_data = self.llm_service.summarize_and_extract_tickets(combined_masked_transcript, context=batch_context)
         evidence = _build_evidence_items(
             combined_masked_transcript,
             analysis_data,
             timeline_segments,
-            context_snapshot=context_snapshot,
+            context_snapshot=batch_context,
         )
         analysis = _build_analysis_payload(analysis_data, evidence=evidence)
         if audio_preprocessing_summaries:
@@ -1328,12 +1645,18 @@ class AIEngine:
             masked_transcript=combined_masked_transcript,
             analysis_data=analysis_data,
             segments=timeline_segments,
-            context_snapshot=context_snapshot,
+            context_snapshot=batch_context,
+        )
+        _attach_analysis_contract_metadata(
+            analysis,
+            summary_request=summary_request,
+            search_document=search_document,
         )
         analysis.extra_data["script_segment_contract_version"] = SCRIPT_SEGMENT_CONTRACT_VERSION
+        analysis.extra_data["ai_input_contract_version"] = AI_INPUT_CONTRACT_VERSION
+        analysis.extra_data["ai_input_contract"] = ai_input_contract
         analysis.extra_data["script_segments"] = script_segments
         analysis.extra_data["tx"] = tx_rows
-        analysis.extra_data["search_document"] = search_document
         return AIProcessingBatchResult(
             file_count=len(file_paths),
             files=file_results,
@@ -1362,6 +1685,11 @@ def summarize_meeting(text: str, rag_context: Any | None = None) -> str:
 
 def extract_tickets(summary: str, rag_context: Any | None = None) -> list[dict[str, Any]]:
     return get_default_ai_engine().extract_tickets(summary, rag_context=rag_context)
+
+def process_document(file_path: str, rag_context: Any | None = None) -> dict[str, Any]:
+    result = get_default_ai_engine().process_document(file_path, rag_context=rag_context)
+    logger.info("AI document pipeline completed for %s", file_path)
+    return result.to_dict()
 
 def process_audio(file_path: str, rag_context: Any | None = None) -> dict[str, Any]:
     """Convenience wrapper for callers that prefer dict payloads."""

@@ -86,7 +86,7 @@ function Hero() {
 
         <p className="mt-8 text-base sm:text-lg text-[#5A6F8A] leading-relaxed max-w-lg">
           프로젝트를 만들고 회의 파일을 올리면<br className="hidden sm:block" />
-          요약·액션 아이템·Jira 연동까지 한 번에.
+          요약·해야 할 일·Jira 연동까지 한 번에.
         </p>
 
         {/* CTA row */}
@@ -129,9 +129,9 @@ function Hero() {
 function StatsBand() {
   const stats = [
     { value: "2~5분", label: "첫 결과까지 걸리는 시간" },
-    { value: "6종", label: "지원 오디오 포맷" },
+    { value: "6종", label: "지원 포맷" },
     { value: "3단계", label: "시작에 필요한 전부" },
-    { value: "할일 자동추출", label: "회의록 기반 액션 아이템 생성" },
+    { value: "할일 자동추출", label: "회의록 기반 해야 할 일 생성" },
   ];
   return (
     <section className="border-t border-b border-[rgba(0,100,180,0.12)] bg-white">
@@ -204,8 +204,8 @@ function ProblemSolution() {
             <div className="space-y-3">
               {[
                 { icon: "zap", color: "text-[#F59E0B]", bg: "bg-[#F59E0B]/10", text: "회의 핵심을 자동으로 요약해 드려요" },
-                { icon: "check", color: "text-[#10B981]", bg: "bg-[#10B981]/10", text: "담당자별 액션 아이템을 뽑아드려요" },
-                { icon: "share2", color: "text-[#7C3AED]", bg: "bg-[#7C3AED]/10", text: "Jira·Notion으로 바로 내보낼 수 있어요" },
+                { icon: "check", color: "text-[#10B981]", bg: "bg-[#10B981]/10", text: "담당자별 해야 할 일을 뽑아드려요" },
+                { icon: "link2", color: "text-[#7C3AED]", bg: "bg-[#7C3AED]/10", text: "Jira·Notion으로 바로 내보낼 수 있어요" },
               ].map(({ icon, color, bg, text }) => (
                 <div
                   key={text}
@@ -255,7 +255,7 @@ function HowItWorks() {
       iconColor: "text-[#10B981]",
       accent: "border-[#10B981]",
       title: "결과 확인하기",
-      desc: "요약, 액션 아이템, 연동 흐름까지 실제 결과를 보며 자연스럽게 익힐 수 있어요.",
+      desc: "요약, 해야 할 일, 연동 흐름까지 실제 결과를 보며 자연스럽게 익힐 수 있어요.",
       t: "03:00",
     },
   ];
@@ -312,7 +312,7 @@ function HowItWorks() {
             <span className="text-[12px] font-semibold text-white/50 self-center mr-1">
               지원 포맷
             </span>
-            {["MP3", "WAV", "M4A", "AAC", "OGG", "FLAC"].map((f) => (
+            {["MP3", "WAV", "M4A", "AAC", "OGG", "FLAC", "TXT", "PDF", "WORD", "한글"].map((f) => (
               <Mono
                 key={f}
                 className="px-2.5 py-1 rounded-lg bg-white/10 text-[11px] font-bold text-[#0099CC]"
@@ -343,7 +343,7 @@ function FeatureShowcase() {
       tagColor: "text-[#7C3AED]",
       tagBg: "bg-[#F3F0FF]",
       title: "해야 할 일까지 바로 이어가기",
-      desc: "담당자, 마감일, 내용을 자동으로 분류해 액션 아이템을 정리해 드립니다. 회의가 끝난 뒤 바로 다음 행동으로 넘어갈 수 있어요.",
+      desc: "담당자, 마감일, 내용을 자동으로 분류해 해야 할 일을 정리해 드립니다. 회의가 끝난 뒤 바로 다음 행동으로 넘어갈 수 있어요.",
       highlight: "담당자 자동 인식 및 할 일 분류",
     },
     {

@@ -10,3 +10,5 @@ email-validator
 openai-whisper
 openai
 pyannote.audio
+langchain-core
+langchain-openai

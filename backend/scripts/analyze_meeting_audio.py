@@ -65,9 +65,9 @@ def main() -> int:
     )
     parser.add_argument(
         "--profile",
-        choices=("light", "balanced", "premium"),
+        choices=("small", "medium", "large", "light", "balanced", "premium"),
         default="balanced",
-        help="Transcription budget profile. Large model stays fixed; only decoding and chunking soften.",
+        help="Transcription budget profile. small/light, medium/balanced, large/premium are accepted aliases.",
     )
     args = parser.parse_args()
 
@@ -83,6 +83,9 @@ def main() -> int:
     print(f"TRANSCRIPT_LEN: {len(result.transcript)}")
     print(f"MODEL: {result.analysis.model_name}")
     print(f"PROMPT: {result.analysis.prompt_version}")
+    if result.analysis.meeting_title:
+        print(f"[회의 요약] {result.analysis.meeting_title}")
+        print()
     _print_section("AUDIO_PREPROCESSING", audio_summary)
     print()
     _print_section("STT_ROUTING", stt_routing)

@@ -21,6 +21,7 @@ from app.schemas.upload import UploadBatchResponse, UploadedFileResponse
 from app.workers.tasks import process_uploaded_file
 from app.services.pipeline.file_processing import (
     AUDIO_EXTENSIONS,
+    DOCUMENT_EXTENSIONS,
     MAX_UPLOAD_BYTES,
     build_storage_path,
     classify_file_kind,
@@ -122,10 +123,9 @@ async def upload_files(
     for file in files:
         filename = file.filename or "uploaded-file"
         extension = Path(filename).suffix.lower().lstrip(".")
-
-        if extension not in AUDIO_EXTENSIONS:
+        if extension not in AUDIO_EXTENSIONS and extension not in DOCUMENT_EXTENSIONS:
             raise AppException(
-                detail="Only audio files are currently supported by the frontend",
+                detail="Only audio and document files are currently supported",
                 code="unsupported_file_type",
             )
 
@@ -261,16 +261,26 @@ def get_analysis(
     content = uploaded_file.extracted_content
     analysis = content.analysis_result if content else None
     extra_data = analysis.extra_data if analysis else {}
+    summary_request = extra_data.get("summary_request")
 
     return AnalysisResultResponse(
+        contract_version=extra_data.get("analysis_contract_version", "v1"),
         file_id=uploaded_file.id,
         file_status=uploaded_file.status,
         original_filename=uploaded_file.original_filename,
         project_id=uploaded_file.project_id,
+        meeting_title=extra_data.get("meeting_title"),
         summary=analysis.summary if analysis else None,
+        keywords=extra_data.get("keywords"),
+        decisions=extra_data.get("decisions"),
         action_items=analysis.action_items if analysis else None,
+        issues=extra_data.get("issues"),
+        next_agenda=extra_data.get("next_agenda"),
         segments=extra_data.get("script_segments"),
         tx=extra_data.get("tx"),
+        search_document=extra_data.get("search_document"),
+        summary_request=summary_request,
+        extra_data=extra_data,
         model_name=analysis.model_name if analysis else None,
         prompt_version=analysis.prompt_version if analysis else None,
         masked_transcript=content.masked_text if content else None,

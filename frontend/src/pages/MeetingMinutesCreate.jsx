@@ -6,6 +6,9 @@ import MobileTab from '../components/MobileTab';
 
 const ISSUE_PRIORITY_OPTIONS = ['높음', '보통', '낮음'];
 
+const PROJECT_OVERRIDE_STORAGE_KEY = 'tiki_project_overrides';
+const MANUAL_MEETING_RECORDS_KEY = 'tiki_manual_minutes_records';
+
 const ISSUE_PRIORITY_STYLES = {
   높음: {
     card: 'border-[#FCA5A5] bg-[#FEF2F2]',
@@ -40,6 +43,53 @@ const openDatePicker = (input) => {
   input.focus();
 };
 
+const readProjectOverrides = () => {
+  try {
+    const raw = localStorage.getItem(PROJECT_OVERRIDE_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+};
+
+const writeProjectOverrides = (next) => {
+  try {
+    localStorage.setItem(PROJECT_OVERRIDE_STORAGE_KEY, JSON.stringify(next));
+  } catch {
+    // ignore storage write failures in local mock mode
+  }
+};
+
+const readManualMeetingRecords = () => {
+  try {
+    const raw = localStorage.getItem(MANUAL_MEETING_RECORDS_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+};
+
+const writeManualMeetingRecords = (next) => {
+  try {
+    localStorage.setItem(MANUAL_MEETING_RECORDS_KEY, JSON.stringify(next));
+  } catch {
+    // ignore storage write failures in local mock mode
+  }
+};
+
+const formatStorageDate = (raw) => {
+  const value = String(raw || '').trim();
+  if (!value) return '-';
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return value.replace(/-/g, '.');
+  }
+  return value;
+};
+
 function Toast({ msg, color }) {
   if (!msg) return null;
 
@@ -69,6 +119,37 @@ function LoadingOverlay() {
   );
 }
 
+function ConfirmDeleteModal({ open, title, description, onCancel, onConfirm }) {
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(13,27,42,0.45)' }}>
+      <div className="w-full max-w-sm rounded-2xl border border-[rgba(0,100,180,0.12)] bg-white shadow-[0_18px_50px_rgba(13,27,42,0.22)]">
+        <div className="px-5 py-4 border-b border-[rgba(0,100,180,0.08)]">
+          <h3 className="text-sm font-bold text-[#0D1B2A]">{title}</h3>
+          {description && <p className="text-xs text-[#5A6F8A] mt-1">{description}</p>}
+        </div>
+        <div className="px-5 py-4 flex items-center justify-end gap-2">
+          <button
+            type="button"
+            onClick={onCancel}
+            className="px-3.5 py-2 rounded-lg border border-[rgba(0,100,180,0.14)] text-[#5A6F8A] text-xs font-semibold hover:bg-[#F8FAFF]"
+          >
+            취소
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            className="px-3.5 py-2 rounded-lg bg-[#EF4444] text-white text-xs font-semibold hover:bg-[#DC2626]"
+          >
+            삭제
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function MeetingMinutesCreate() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -88,6 +169,9 @@ export default function MeetingMinutesCreate() {
   const [actionInput, setActionInput] = useState({ title: '', assignee: '', dueDate: '' });
   const [decisionItems, setDecisionItems] = useState([]);
   const [actionItems, setActionItems] = useState([]);
+  const [editingActionId, setEditingActionId] = useState(null);
+  const [actionEditInput, setActionEditInput] = useState({ title: '', assignee: '', dueDate: '' });
+  const [pendingDeleteActionId, setPendingDeleteActionId] = useState(null);
 
   const [issueInput, setIssueInput] = useState('');
   const [issuePriority, setIssuePriority] = useState('보통');
@@ -160,6 +244,64 @@ export default function MeetingMinutesCreate() {
 
   const removeAction = (id) => {
     setActionItems((prev) => prev.filter((item) => item.id !== id));
+  };
+
+  const startEditAction = (item) => {
+    setEditingActionId(item.id);
+    setActionEditInput({
+      title: item.text || '',
+      assignee: item.assignee || '',
+      dueDate: item.dueDate || '',
+    });
+  };
+
+  const updateActionEditInput = (key, value) => {
+    setActionEditInput((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const cancelEditAction = () => {
+    setEditingActionId(null);
+    setActionEditInput({ title: '', assignee: '', dueDate: '' });
+  };
+
+  const saveEditAction = () => {
+    const nextTitle = actionEditInput.title.trim();
+    if (!editingActionId) return;
+    if (!nextTitle) {
+      showToast('해야 할 일 제목을 입력해 주세요.', '#F59E0B');
+      return;
+    }
+
+    setActionItems((prev) => prev.map((item) => (
+      item.id === editingActionId
+        ? {
+            ...item,
+            text: nextTitle,
+            assignee: actionEditInput.assignee.trim(),
+            dueDate: actionEditInput.dueDate,
+          }
+        : item
+    )));
+    cancelEditAction();
+    showToast('해야 할 일이 수정되었습니다.', '#10B981');
+  };
+
+  const requestRemoveAction = (id) => {
+    setPendingDeleteActionId(id);
+  };
+
+  const cancelRemoveAction = () => {
+    setPendingDeleteActionId(null);
+  };
+
+  const confirmRemoveAction = () => {
+    if (!pendingDeleteActionId) return;
+    removeAction(pendingDeleteActionId);
+    if (editingActionId === pendingDeleteActionId) {
+      cancelEditAction();
+    }
+    setPendingDeleteActionId(null);
+    showToast('해야 할 일이 삭제되었습니다.', '#10B981');
   };
 
   const addKeywordTags = () => {
@@ -263,10 +405,124 @@ export default function MeetingMinutesCreate() {
       clearTimeout(saveTimerRef.current);
     }
 
+    const pendingDecision = decisionInput.trim();
+    const pendingActionTitle = actionInput.title.trim();
+    const pendingIssue = issueInput.trim();
+    const pendingKeywordTags = keywordInput
+      .split(/[\n,]/)
+      .map((word) => word.trim().replace(/^#/, ''))
+      .filter(Boolean);
+
+    const mergedDecisionItems = pendingDecision
+      ? [...decisionItems, { id: Date.now() + Math.random(), text: pendingDecision, checked: false }]
+      : decisionItems;
+
+    const mergedActionItems = pendingActionTitle
+      ? [
+          ...actionItems,
+          {
+            id: Date.now() + Math.random(),
+            text: pendingActionTitle,
+            assignee: actionInput.assignee.trim(),
+            dueDate: actionInput.dueDate,
+            checked: false,
+          },
+        ]
+      : actionItems;
+
+    const mergedIssueItems = pendingIssue
+      ? [...issueItems, { id: Date.now() + Math.random(), text: pendingIssue, priority: issuePriority }]
+      : issueItems;
+
+    const mergedKeywords = (() => {
+      const base = keywordTags.length > 0
+        ? [...keywordTags]
+        : form.keywords
+            .split(',')
+            .map((word) => word.trim().replace(/^#/, ''))
+            .filter(Boolean);
+      const next = [...base];
+      pendingKeywordTags.forEach((tag) => {
+        if (!next.includes(tag) && next.length < 12) {
+          next.push(tag);
+        }
+      });
+      return next;
+    })();
+
+    const manualRecordId = `mm-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const participants = form.participants
+      .split(',')
+      .map((name) => name.trim())
+      .filter(Boolean);
+    const meetingDate = formatStorageDate(form.date);
+    const normalizedKeywords = mergedKeywords;
+
+    const manualRecord = {
+      id: manualRecordId,
+      projectId: projectId ? String(projectId) : '',
+      projectName,
+      title: form.title.trim(),
+      date: meetingDate,
+      rawDate: form.date,
+      type: form.type,
+      participants,
+      summary: form.summary.trim(),
+      keywords: normalizedKeywords,
+      decisions: mergedDecisionItems.map((item) => ({ text: item.text, checked: Boolean(item.checked) })),
+      actions: mergedActionItems.map((item) => ({
+        text: item.text,
+        assignee: item.assignee,
+        dueDate: item.dueDate,
+        checked: Boolean(item.checked),
+      })),
+      issues: mergedIssueItems.map((item) => ({ text: item.text, priority: item.priority })),
+      nextAgenda: form.nextAgenda.trim(),
+      createdAt: new Date().toISOString(),
+    };
+
+    const nextManualRecords = readManualMeetingRecords();
+    nextManualRecords[manualRecordId] = manualRecord;
+    writeManualMeetingRecords(nextManualRecords);
+
+    if (projectId) {
+      const nextOverrides = readProjectOverrides();
+      const key = String(projectId);
+      const prev = nextOverrides[key] && typeof nextOverrides[key] === 'object' ? nextOverrides[key] : {};
+      const prevMeetings = Array.isArray(prev.meetings) ? prev.meetings : [];
+      const meetingRow = {
+        id: manualRecordId,
+        date: meetingDate,
+        title: manualRecord.title,
+        status: '완료',
+        type: form.type,
+        tags: normalizedKeywords.slice(0, 4).map((tag) => `#${tag}`),
+        participants: participants.length > 0 ? participants : ['미지정'],
+        summary: manualRecord.summary || '직접 작성된 회의록입니다.',
+        actionItems: mergedActionItems.length,
+        jiraLinked: 0,
+        detailType: 'manual',
+        detailRecordId: manualRecordId,
+      };
+
+      nextOverrides[key] = {
+        ...prev,
+        meetings: [meetingRow, ...prevMeetings],
+      };
+      writeProjectOverrides(nextOverrides);
+    }
+
     saveTimerRef.current = setTimeout(() => {
       setIsSaving(false);
       showToast('저장되었습니다.', '#10B981');
-    }, 1100);
+      navigate('/meeting-manual-detail', {
+        state: {
+          recordId: manualRecordId,
+          projectId: projectId ? String(projectId) : '',
+          projectName,
+        },
+      });
+    }, 500);
   };
 
   return (
@@ -512,6 +768,12 @@ export default function MeetingMinutesCreate() {
                         <input
                           value={actionInput.assignee}
                           onChange={(e) => updateActionInput('assignee', e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              addAction();
+                            }
+                          }}
                           placeholder="담당자"
                           className="w-full min-w-0 px-3 py-2.5 text-sm bg-[#F8FAFF] border border-[rgba(0,100,180,0.12)] rounded-xl focus:outline-none focus:border-[#0099CC]"
                         />
@@ -521,6 +783,12 @@ export default function MeetingMinutesCreate() {
                             type="date"
                             value={actionInput.dueDate}
                             onChange={(e) => updateActionInput('dueDate', e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault();
+                                addAction();
+                              }
+                            }}
                             className="w-full min-w-0 px-3 py-2.5 text-sm bg-[#F8FAFF] border border-[rgba(0,100,180,0.12)] rounded-xl focus:outline-none focus:border-[#0099CC] cursor-pointer"
                           />
                         </div>
@@ -535,45 +803,116 @@ export default function MeetingMinutesCreate() {
                     </div>
                     <div className="space-y-1.5 max-h-[240px] overflow-y-auto pr-1">
                       {actionItems.length === 0 && (
-                        <p className="text-xs text-[#7C8EA6] px-1 py-2">추가된 액션 아이템이 없습니다.</p>
+                        <p className="text-xs text-[#7C8EA6] px-1 py-2">추가된 해야 할 일이 없습니다.</p>
                       )}
-                      {actionItems.map((item) => (
-                        <div
-                          key={item.id}
-                          className={`flex items-start gap-2.5 rounded-xl border px-3 py-2.5 ${
-                            item.checked ? 'border-[#A7E8C5] bg-[#ECFDF5]' : 'border-[rgba(0,100,180,0.12)] bg-white'
-                          }`}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={item.checked}
-                            onChange={() => toggleAction(item.id)}
-                            className="mt-0.5"
-                          />
-                          <div className="flex-1 min-w-0">
-                            <p className={`text-sm ${item.checked ? 'text-[#15803D] line-through' : 'text-[#0D1B2A]'}`}>{item.text}</p>
-                            {(item.assignee || item.dueDate || item.checked) && (
-                              <p className="text-xs text-[#7C8EA6] mt-0.5">
-                                {[item.assignee, item.checked ? '완료' : formatDate(item.dueDate)].filter(Boolean).join(' · ')}
-                              </p>
-                            )}
-                          </div>
-                          <span
-                            className={`shrink-0 px-2 py-1 rounded-full text-[11px] font-semibold ${
-                              item.checked ? 'bg-[#D1FAE5] text-[#15803D]' : 'bg-[#EEF3FF] text-[#0099CC]'
+                      {actionItems.map((item) => {
+                        const isEditing = editingActionId === item.id;
+
+                        return (
+                          <div
+                            key={item.id}
+                            className={`rounded-xl border px-3 py-2.5 ${
+                              item.checked ? 'border-[#A7E8C5] bg-[#ECFDF5]' : 'border-[rgba(0,100,180,0.12)] bg-white'
                             }`}
                           >
-                            {item.checked ? '완료' : '진행 중'}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => removeAction(item.id)}
-                            className="text-xs text-[#9AAAC0] hover:text-[#EF4444] shrink-0"
-                          >
-                            삭제
-                          </button>
-                        </div>
-                      ))}
+                            {isEditing ? (
+                              <div className="space-y-2">
+                                <input
+                                  value={actionEditInput.title}
+                                  onChange={(e) => updateActionEditInput('title', e.target.value)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') {
+                                      e.preventDefault();
+                                      saveEditAction();
+                                    }
+                                  }}
+                                  className="w-full min-w-0 px-3 py-2 text-sm bg-white border border-[rgba(0,100,180,0.12)] rounded-lg focus:outline-none focus:border-[#0099CC]"
+                                />
+                                <div className="grid grid-cols-1 sm:grid-cols-[1fr_1fr] gap-2">
+                                  <input
+                                    value={actionEditInput.assignee}
+                                    onChange={(e) => updateActionEditInput('assignee', e.target.value)}
+                                    placeholder="담당자"
+                                    className="w-full min-w-0 px-3 py-2 text-sm bg-white border border-[rgba(0,100,180,0.12)] rounded-lg focus:outline-none focus:border-[#0099CC]"
+                                  />
+                                  <input
+                                    type="date"
+                                    value={actionEditInput.dueDate}
+                                    onChange={(e) => updateActionEditInput('dueDate', e.target.value)}
+                                    className="w-full min-w-0 px-3 py-2 text-sm bg-white border border-[rgba(0,100,180,0.12)] rounded-lg focus:outline-none focus:border-[#0099CC]"
+                                  />
+                                </div>
+                                <div className="flex justify-end gap-2 pt-0.5">
+                                  <button
+                                    type="button"
+                                    onClick={cancelEditAction}
+                                    className="px-3 py-1.5 rounded-lg border border-[rgba(0,100,180,0.14)] text-[#5A6F8A] text-xs font-semibold hover:bg-[#F8FAFF]"
+                                  >
+                                    취소
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={saveEditAction}
+                                    className="px-3 py-1.5 rounded-lg bg-[#0099CC] text-white text-xs font-semibold hover:bg-[#007EA7]"
+                                  >
+                                    저장
+                                  </button>
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="flex items-start gap-2.5">
+                                <input
+                                  type="checkbox"
+                                  checked={item.checked}
+                                  onChange={() => toggleAction(item.id)}
+                                  className="mt-0.5"
+                                />
+                                <div className="flex-1 min-w-0">
+                                  <p className={`text-sm ${item.checked ? 'text-[#15803D] line-through' : 'text-[#0D1B2A]'}`}>{item.text}</p>
+                                  {(item.assignee || item.dueDate || item.checked) && (
+                                    <p className="text-xs text-[#7C8EA6] mt-0.5">
+                                      {[item.assignee, item.checked ? '완료' : formatDate(item.dueDate)].filter(Boolean).join(' · ')}
+                                    </p>
+                                  )}
+                                </div>
+                                <span
+                                  className={`shrink-0 px-2 py-1 rounded-full text-[11px] font-semibold ${
+                                    item.checked ? 'bg-[#D1FAE5] text-[#15803D]' : 'bg-[#EEF3FF] text-[#0099CC]'
+                                  }`}
+                                >
+                                  {item.checked ? '완료' : '진행 중'}
+                                </span>
+                                <div className="shrink-0 flex items-center gap-1.5">
+                                  <button
+                                    type="button"
+                                    onClick={() => startEditAction(item)}
+                                    className="w-7 h-7 rounded-lg border border-[rgba(0,100,180,0.14)] text-[#5A6F8A] hover:bg-[#F8FAFF] hover:text-[#0D1B2A] flex items-center justify-center transition-colors"
+                                    aria-label="해야 할 일 수정"
+                                  >
+                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                                      <path d="m16.5 3.5 4 4L8 20l-4 1 1-4 11.5-13.5Z" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                                    </svg>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => requestRemoveAction(item.id)}
+                                    className="w-7 h-7 rounded-lg border border-[rgba(0,100,180,0.14)] text-[#7C8EA6] hover:bg-[#FEF2F2] hover:text-[#EF4444] hover:border-[rgba(239,68,68,0.3)] flex items-center justify-center transition-colors"
+                                    aria-label="해야 할 일 삭제"
+                                  >
+                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                                      <path d="M3 6h18" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                                      <path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                                      <path d="M19 6l-1 14a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1L5 6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                                      <path d="M10 11v6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                                      <path d="M14 11v6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                                    </svg>
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
 
@@ -687,6 +1026,13 @@ export default function MeetingMinutesCreate() {
       {!isMobile && <Footer />}
       {isMobile && <MobileTab active={activeTab} onChange={setActiveTab} />}
       {isSaving && <LoadingOverlay />}
+      <ConfirmDeleteModal
+        open={Boolean(pendingDeleteActionId)}
+        title="해야 할 일을 삭제할까요?"
+        description="삭제한 항목은 되돌릴 수 없습니다."
+        onCancel={cancelRemoveAction}
+        onConfirm={confirmRemoveAction}
+      />
       <Toast msg={toast.msg} color={toast.color} />
     </div>
   );

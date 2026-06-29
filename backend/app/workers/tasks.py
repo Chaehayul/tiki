@@ -6,7 +6,7 @@ from uuid import UUID
 
 from app.db.database import SessionLocal
 from app.models.analysis import AnalysisResult
-from app.models.enums import ProcessingStatus
+from app.models.enums import FileKind, ProcessingStatus
 from app.models.file import ExtractedContent, UploadedFile
 from app.models.ticket import Ticket
 from app.services.ai_engine import get_default_ai_engine
@@ -34,15 +34,25 @@ def _run_pipeline(db, file_id: UUID) -> None:
     uploaded_file.started_at = datetime.now(UTC)
     db.commit()
 
-    result = get_default_ai_engine().process_audio_parallel(
-        uploaded_file.storage_path, n_workers=2
-    )
+    engine = get_default_ai_engine()
+    if uploaded_file.file_kind == FileKind.AUDIO:
+        result = engine.process_audio_parallel(uploaded_file.storage_path, n_workers=2)
+        extraction_method = "whisper"
+    elif uploaded_file.file_kind in {FileKind.DOCUMENT, FileKind.TEXT}:
+        result = engine.process_document(uploaded_file.storage_path)
+        extraction_method = result.analysis.extra_data.get("document_extraction", {}).get(
+            "extraction_method",
+            "document",
+        )
+        uploaded_file.page_count = result.analysis.extra_data.get("document_extraction", {}).get("page_count")
+    else:
+        raise ValueError(f"Unsupported file kind: {uploaded_file.file_kind}")
 
     extracted_content = ExtractedContent(
         uploaded_file_id=uploaded_file.id,
         raw_text=result.transcript,
         masked_text=result.masked_transcript,
-        extraction_method="whisper",
+        extraction_method=extraction_method,
     )
     db.add(extracted_content)
     db.flush()

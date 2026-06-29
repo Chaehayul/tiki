@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import Header from '../components/Header';
 import Footer from '../components/Footer';
@@ -535,39 +535,6 @@ function Icon({ name, size = 20, className = '' }) {
     return icons[name] || null;
 }
 
-function CountUp({ end, suffix = '', duration = 2000 }) {
-    const [count, setCount] = useState(0);
-    const ref = useRef(null);
-    const started = useRef(false);
-    useEffect(() => {
-        const observer = new IntersectionObserver(
-            ([entry]) => {
-                if (entry.isIntersecting && !started.current) {
-                    started.current = true;
-                    let start = 0;
-                    const step = end / (duration / 16);
-                    const timer = setInterval(() => {
-                        start += step;
-                        if (start >= end) {
-                            setCount(end);
-                            clearInterval(timer);
-                        } else setCount(Math.floor(start));
-                    }, 16);
-                }
-            },
-            { threshold: 0.5 }
-        );
-        if (ref.current) observer.observe(ref.current);
-        return () => observer.disconnect();
-    }, [end, duration]);
-    return (
-        <span ref={ref}>
-            {count}
-            {suffix}
-        </span>
-    );
-}
-
 function FloatingOrb({ className, style }) {
     return <div className={`absolute rounded-full pointer-events-none ${className}`} style={style} />;
 }
@@ -613,7 +580,7 @@ export default function TikiLandingPage() {
             glow: 'shadow-[0_0_30px_rgba(0,153,204,0.15)]',
             title: '자동 받아쓰기',
             sub: '소음 속에서도 명확하게',
-            desc: 'Whisper 엔진 기반의 고정밀 STT로 어떤 환경의 녹음 파일도 오탈자 없이 완벽하게 텍스트로 변환합니다.',
+            desc: 'Whisper 엔진 기반의 고정밀 STT로 어떤 환경의 파일도 오탈자 없이 완벽하게 텍스트로 변환합니다.',
             badge: 'STT 정확도 94%',
         },
         {
@@ -624,7 +591,7 @@ export default function TikiLandingPage() {
             glow: 'shadow-[0_0_30px_rgba(124,58,237,0.15)]',
             title: '스마트 요약',
             sub: '긴 회의도 3줄로 핵심만',
-            desc: 'LLM이 대화의 맥락과 의도를 분석하여 실행 가능한 액션 아이템만 정밀하게 추출합니다.',
+            desc: 'LLM이 대화의 맥락과 의도를 분석하여 실행 가능한 해야 할 일만 정밀하게 추출합니다.',
             badge: '평균 3초 추출',
         },
         {
@@ -646,23 +613,22 @@ export default function TikiLandingPage() {
             glow: 'shadow-[0_0_30px_rgba(245,158,11,0.15)]',
             title: '원클릭 연동',
             sub: 'Jira · Notion 즉시 전송',
-            desc: '승인 버튼 하나로 추출된 태스크가 Jira 티켓으로 자동 생성됩니다. 복사·붙여넣기는 영원히 안녕.',
+            desc: '승인 버튼 하나로 추출된 태스크가 Jira에 자동 연동됩니다. 복사·붙여넣기는 영원히 안녕.',
             badge: '2종 툴 지원',
         },
     ];
 
     const steps = [
-        { icon: 'upload', label: '녹음 파일 업로드', desc: '.mp3 / .wav / .m4a 지원', color: '#0099CC', num: '01' },
+        {
+            icon: 'upload',
+            label: '파일 업로드',
+            desc: '.mp3 / .wav / .m4a / .txt / 한글 / PDF / Word 지원',
+            color: '#0099CC',
+            num: '01',
+        },
         { icon: 'cpu', label: 'AI 엔진 분석', desc: 'Whisper + LLM 처리', color: '#7C3AED', num: '02' },
         { icon: 'shield', label: '보안 마스킹', desc: '민감 정보 자동 필터링', color: '#10B981', num: '03' },
         { icon: 'link', label: '툴 연동 완료', desc: 'Jira · Notion 전송', color: '#F59E0B', num: '04' },
-    ];
-
-    const stats = [
-        { value: 94, suffix: '%', label: 'STT 정확도', icon: 'trendingUp', color: '#0099CC' },
-        { value: 3, suffix: '초', label: '평균 추출 시간', icon: 'clock', color: '#7C3AED' },
-        { value: 100, suffix: '%', label: '데이터 온프레미스', icon: 'shield', color: '#10B981' },
-        { value: 2, suffix: '종', label: '연동 툴 지원', icon: 'link', color: '#F59E0B' },
     ];
 
     const whyItems = [
@@ -696,7 +662,6 @@ export default function TikiLandingPage() {
         { name: 'LangChain', category: 'LLM Orch.', color: '#10B981', abbr: 'LC' },
         { name: 'PostgreSQL', category: 'Database', color: '#F59E0B', abbr: 'PG' },
         { name: 'Supabase', category: 'Auth & Storage', color: '#EF4444', abbr: 'SB' },
-        { name: 'Redis', category: 'Session Cache', color: '#0099CC', abbr: 'RD' },
         { name: 'React', category: 'Frontend', color: '#7C3AED', abbr: 'RE' },
         { name: 'Tailwind', category: 'Styling', color: '#10B981', abbr: 'TW' },
     ];
@@ -709,7 +674,7 @@ export default function TikiLandingPage() {
             color: '#10B981',
             bg: 'from-[#10B981]/10 to-[#10B981]/5',
             border: 'border-[#10B981]/30',
-            items: ['사후 오디오 업로드 분석', 'LLM 액션 아이템 추출', 'Jira 원클릭 연동', '보안 마스킹 시스템'],
+            items: ['사후 파일 업로드 분석', 'LLM 해야 할 일 추출', 'Jira 원클릭 연동', '보안 마스킹 시스템'],
         },
         {
             phase: 'v1.5',
@@ -786,7 +751,7 @@ export default function TikiLandingPage() {
                     </h1>
 
                     <p className="max-w-2xl mx-auto text-base sm:text-xl text-[#5A6F8A] leading-relaxed mb-10">
-                        회의가 끝나는 순간, AI가 모든 대화를 분석하여 실행 가능한 업무 티켓을 자동으로 만들어 드립니다.
+                        회의가 끝나는 순간, AI가 모든 대화를 분석하여 실행 가능한 업무를 자동으로 연동해 드립니다.
                     </p>
 
                     <div className="flex flex-col sm:flex-row justify-center items-center gap-4 mb-16">
@@ -839,7 +804,7 @@ export default function TikiLandingPage() {
                                             네오테크 6월 3주차 스프린트 회의
                                         </p>
                                         <p className="text-xs text-[#5A6F8A] mt-0.5">
-                                            참여자 4명 · 녹화 시간 38분 · 액션아이템 7개 추출
+                                            참여자 4명 · 녹화 시간 38분 · 해야 할 일 7개 추출
                                         </p>
                                     </div>
                                     <button className="shrink-0 px-4 py-2 bg-[#0099CC] text-white text-xs font-bold rounded-xl hover:bg-[#0086b3] transition-colors">
@@ -915,35 +880,6 @@ export default function TikiLandingPage() {
                 </div>
             </section>
 
-            {/* ─── 통계 ─── */}
-            <section className="relative py-12 overflow-hidden">
-                <div className="absolute inset-0 bg-gradient-to-r from-[#0099CC] via-[#7C3AED] to-[#10B981]" />
-                <div className="absolute inset-0 bg-[#0D1B2A]/70" />
-                <div
-                    className="absolute inset-0 opacity-10"
-                    style={{
-                        backgroundImage:
-                            'linear-gradient(rgba(255,255,255,0.5) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.5) 1px, transparent 1px)',
-                        backgroundSize: '40px 40px',
-                    }}
-                />
-                <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-6 sm:gap-10">
-                        {stats.map((s, i) => (
-                            <div key={i} className="text-center group">
-                                <div className="inline-flex items-center justify-center w-12 h-12 rounded-2xl bg-white/10 mb-3 group-hover:bg-white/20 transition-colors">
-                                    <Icon name={s.icon} size={22} className="text-white" />
-                                </div>
-                                <p className="text-4xl sm:text-5xl font-extrabold text-white mb-1">
-                                    <CountUp end={s.value} suffix={s.suffix} />
-                                </p>
-                                <p className="text-sm text-white/70 font-medium">{s.label}</p>
-                            </div>
-                        ))}
-                    </div>
-                </div>
-            </section>
-
             {/* ─── 문제 제기 ─── */}
             <section className="py-20 sm:py-28 bg-[#F8FAFF] relative overflow-hidden">
                 <FloatingOrb className="w-96 h-96 bg-[#EF4444]/5 blur-[80px] -right-20 top-10" style={{}} />
@@ -967,9 +903,9 @@ export default function TikiLandingPage() {
                         {problems.map((item, i) => (
                             <div
                                 key={i}
-                                className="group bg-white border border-[rgba(0,100,180,0.1)] hover:border-[rgba(239,68,68,0.3)] rounded-2xl p-5 flex items-start gap-4 transition-all hover:shadow-lg hover:shadow-[#EF4444]/5 hover:-translate-y-0.5"
+                                className="group bg-white border border-[rgba(0,100,180,0.1)] hover:border-[rgba(239,68,68,0.3)] rounded-2xl p-5 flex items-center text-left gap-4 transition-all hover:shadow-lg hover:shadow-[#EF4444]/5 hover:-translate-y-0.5"
                             >
-                                <span className="shrink-0 mt-0.5 w-9 h-9 rounded-xl bg-[rgba(0,100,180,0.06)] flex items-center justify-center">
+                                <span className="shrink-0 w-9 h-9 rounded-xl bg-[rgba(0,100,180,0.06)] flex items-center justify-center">
                                     {/* 문제 아이콘 → Icon 컴포넌트 */}
                                     <Icon
                                         name={item.icon}
@@ -1000,7 +936,7 @@ export default function TikiLandingPage() {
                             4단계 자동화 파이프라인
                         </h2>
                         <p className="text-[#5A6F8A] text-base sm:text-lg">
-                            업로드 하나로 시작해서 Jira 티켓 생성까지 전 과정이 자동입니다.
+                            업로드 하나로 시작해서 Jira 연동까지 전 과정이 자동입니다.
                         </p>
                     </div>
 
@@ -1258,7 +1194,6 @@ export default function TikiLandingPage() {
                                 '오디오 수신',
                                 'Whisper STT',
                                 'LangChain LLM',
-                                'Redis 캐싱',
                                 'PostgreSQL',
                                 'Supabase 인증',
                                 'Jira · Notion',
@@ -1393,7 +1328,7 @@ export default function TikiLandingPage() {
                     <p className="text-white/75 text-base sm:text-xl mb-12 max-w-xl mx-auto leading-relaxed">
                         신용카드 없이, 설치 없이.
                         <br />
-                        오디오 파일 하나만 있으면 됩니다.
+                        파일 하나만 있으면 됩니다.
                     </p>
                     <div className="flex flex-col sm:flex-row justify-center items-center gap-4">
                         <Link

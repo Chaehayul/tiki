@@ -18,7 +18,11 @@ GENERIC_SPEAKER_LABEL_PREFIX = "팀원"
 MIN_MINOR_SPEAKER_TURN_SECONDS = 4.0
 MIN_MINOR_SPEAKER_RATIO = 0.02
 MIN_MINOR_SPEAKER_COUNT_TRIGGER = 5
-TranscriptionProfile = Literal["light", "balanced", "premium"]
+MIN_MINOR_SPEAKER_MULTI_TURN_SECONDS = 4.5
+MIN_MINOR_SPEAKER_MULTI_TURN_RATIO = 0.04
+MIN_MINOR_SPEAKER_MULTI_TURN_MAX_COUNT = 2
+LIGHT_PROFILE_MAX_DURATION_SECONDS = 90.0
+TranscriptionProfile = Literal["light", "balanced", "premium", "small", "medium", "large"]
 DEFAULT_TRANSCRIPTION_PROFILE: TranscriptionProfile = "balanced"
 TRANSCRIPTION_PROFILE_SETTINGS: dict[TranscriptionProfile, dict[str, Any]] = {
     "light": {
@@ -93,11 +97,21 @@ TRANSCRIPTION_PROFILE_SETTINGS: dict[TranscriptionProfile, dict[str, Any]] = {
     },
 }
 
+TRANSCRIPTION_PROFILE_ALIASES: dict[str, TranscriptionProfile] = {
+    "small": "light",
+    "light": "light",
+    "medium": "balanced",
+    "balanced": "balanced",
+    "large": "premium",
+    "premium": "premium",
+}
+
 
 def _normalize_transcription_profile(value: Any | None) -> TranscriptionProfile:
     normalized = re.sub(r"\s+", " ", str(value or "")).strip().lower()
-    if normalized in TRANSCRIPTION_PROFILE_SETTINGS:
-        return normalized  # type: ignore[return-value]
+    aliased = TRANSCRIPTION_PROFILE_ALIASES.get(normalized, normalized)
+    if aliased in TRANSCRIPTION_PROFILE_SETTINGS:
+        return aliased  # type: ignore[return-value]
     return DEFAULT_TRANSCRIPTION_PROFILE
 
 
@@ -198,7 +212,14 @@ def _is_minor_speaker_bucket(
         return False
 
     if turn_count > 1:
-        return False
+        if turn_count > MIN_MINOR_SPEAKER_MULTI_TURN_MAX_COUNT:
+            return False
+        if speech_seconds > MIN_MINOR_SPEAKER_MULTI_TURN_SECONDS:
+            return False
+        if total_speech_seconds <= 0:
+            return False
+        return (speech_seconds / total_speech_seconds) <= MIN_MINOR_SPEAKER_MULTI_TURN_RATIO
+
     if speech_seconds > MIN_MINOR_SPEAKER_TURN_SECONDS:
         return False
     if total_speech_seconds <= 0:
@@ -480,6 +501,7 @@ class WhisperSpeechToTextService(SpeechToTextService):
         transcription_profile: TranscriptionProfile | str | None = None,
     ) -> None:
         self.model_name = model_name or settings.whisper_model
+        self.medium_model_name = settings.whisper_medium_model or self.model_name
         self.light_model_name = settings.whisper_light_model
         self.language = language
         self.transcription_profile = _normalize_transcription_profile(transcription_profile)
@@ -737,14 +759,16 @@ class WhisperSpeechToTextService(SpeechToTextService):
         return self._last_diarization_summary
 
     def _select_model_name(self, preprocessing: AudioPreprocessingResult) -> str:
-        # Large-only policy: keep one transcription model and tune chunking/decoding
-        # around it instead of switching to a smaller Whisper model.
+        if self.transcription_profile == "light":
+            if preprocessing.duration_seconds >= LIGHT_PROFILE_MAX_DURATION_SECONDS or preprocessing.chunking_enabled:
+                return self._resolve_available_model_name(self.medium_model_name)
+            return self._resolve_available_model_name(self.light_model_name)
+        if self.transcription_profile == "balanced":
+            return self._resolve_available_model_name(self.medium_model_name)
         return self._resolve_available_model_name(self.model_name)
 
     def _select_chunk_model_name(self, preprocessing: AudioPreprocessingResult, chunk: Any) -> str:
-        # Chunk-level model selection stays fixed to the large model; quality is
-        # controlled by chunk boundaries and decoding options, not model swapping.
-        return self._resolve_available_model_name(self.model_name)
+        return self._select_model_name(preprocessing)
 
     @staticmethod
     def _is_model_cached(model_name: str) -> bool:

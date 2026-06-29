@@ -14,10 +14,18 @@ if str(BACKEND_ROOT) not in sys.path:
 
 from app.services.ai.audio_preprocessing import WhisperAudioPreprocessor
 from app.services.ai.diarization import _normalize_diarization_turns
+from app.services.ai.document_ingestion import load_document_file
+from app.services.ai.llm_analysis import _estimate_model_tier
+from app.services.ai.llm_analysis import _resolve_model_name_for_tier
+from app.services.ai.llm_analysis import LangChainAnalysisService
+from app.services.ai.llm_analysis import OpenAIAnalysisService
+from app.services.ai.llm_analysis import build_llm_analysis_service
 from app.services.ai.stt import _attach_speaker_labels
 from app.services.ai.stt import WhisperSpeechToTextService
 from app.services.ai.llm_analysis import HeuristicLLMAnalysisService
 from app.services.ai.llm_analysis import _build_issue_sentence
+from app.schemas.ai_input import build_ai_input_contract
+from app.schemas.ai_input import normalize_source_kind
 from app.services.ai.text_normalization import normalize_meeting_terms
 from app.services.ai_engine import AIEngine
 from app.services.ai_engine import (
@@ -34,6 +42,30 @@ from app.services.ai_engine import (
 class HeuristicMeetingAnalysisTests(unittest.TestCase):
     def setUp(self) -> None:
         self.service = HeuristicLLMAnalysisService()
+
+    def test_build_llm_analysis_service_prefers_langchain_when_available(self) -> None:
+        with patch("app.services.ai.llm_analysis.settings.llm_analysis_provider", "langchain"), patch(
+            "app.services.ai.llm_analysis.settings.openai_api_key",
+            "test-key",
+        ), patch(
+            "app.services.ai.llm_analysis._langchain_dependencies_available",
+            return_value=True,
+        ):
+            service = build_llm_analysis_service()
+
+        self.assertIsInstance(service, LangChainAnalysisService)
+
+    def test_build_llm_analysis_service_falls_back_to_openai_when_langchain_missing(self) -> None:
+        with patch("app.services.ai.llm_analysis.settings.llm_analysis_provider", "langchain"), patch(
+            "app.services.ai.llm_analysis.settings.openai_api_key",
+            "test-key",
+        ), patch(
+            "app.services.ai.llm_analysis._langchain_dependencies_available",
+            return_value=False,
+        ):
+            service = build_llm_analysis_service()
+
+        self.assertIsInstance(service, OpenAIAnalysisService)
 
     def test_dialogue_normalization_strips_speakers_and_fillers(self) -> None:
         text = """
@@ -124,20 +156,32 @@ class HeuristicMeetingAnalysisTests(unittest.TestCase):
         self.assertTrue(all(segment["speaker_display_name"] is None for segment in segments))
         self.assertTrue(all(segment["speaker_kind"] == "unknown" for segment in segments))
 
-    def test_whisper_model_selection_stays_large_only(self) -> None:
-        service = WhisperSpeechToTextService(model_name="large", language="ko")
+    def test_whisper_model_selection_routes_by_profile(self) -> None:
+        service = WhisperSpeechToTextService(language="ko")
         preprocessing = SimpleNamespace(
             is_noisy=False,
-            chunking_enabled=True,
-            duration_seconds=360.0,
+            chunking_enabled=False,
+            duration_seconds=45.0,
         )
         chunk = SimpleNamespace(start_seconds=0.0, end_seconds=120.0)
 
-        with patch.object(service, "_resolve_available_model_name", return_value="large") as resolver:
-            self.assertEqual(service._select_model_name(preprocessing), "large")
-            self.assertEqual(service._select_chunk_model_name(preprocessing, chunk), "large")
+        with patch("app.services.ai.stt.settings.whisper_light_model", "small-model"), patch(
+            "app.services.ai.stt.settings.whisper_medium_model",
+            "medium-model",
+        ), patch(
+            "app.services.ai.stt.settings.whisper_model",
+            "large-model",
+        ):
+            small_service = WhisperSpeechToTextService(language="ko", transcription_profile="small")
+            medium_service = WhisperSpeechToTextService(language="ko", transcription_profile="medium")
+            large_service = WhisperSpeechToTextService(language="ko", transcription_profile="large")
 
-        resolver.assert_any_call("large")
+            self.assertEqual(small_service._select_model_name(preprocessing), "small-model")
+            self.assertEqual(small_service._select_chunk_model_name(preprocessing, chunk), "small-model")
+            self.assertEqual(medium_service._select_model_name(preprocessing), "medium-model")
+            self.assertEqual(medium_service._select_chunk_model_name(preprocessing, chunk), "medium-model")
+            self.assertEqual(large_service._select_model_name(preprocessing), "large-model")
+            self.assertEqual(large_service._select_chunk_model_name(preprocessing, chunk), "large-model")
 
     def test_transcription_profiles_adjust_decoding_budget(self) -> None:
         light_service = WhisperSpeechToTextService(model_name="large", language="ko", transcription_profile="light")
@@ -166,6 +210,43 @@ class HeuristicMeetingAnalysisTests(unittest.TestCase):
         self.assertEqual(premium_service.preprocessor.transcription_overlap_seconds, 1.0)
         self.assertEqual(premium_options["beam_size"], 5)
         self.assertEqual(premium_options["best_of"], 5)
+
+    def test_transcription_profile_accepts_small_medium_large_aliases(self) -> None:
+        small_service = WhisperSpeechToTextService(model_name="large", language="ko", transcription_profile="small")
+        medium_service = WhisperSpeechToTextService(model_name="large", language="ko", transcription_profile="medium")
+        large_service = WhisperSpeechToTextService(model_name="large", language="ko", transcription_profile="large")
+
+        self.assertEqual(small_service.transcription_profile, "light")
+        self.assertEqual(medium_service.transcription_profile, "balanced")
+        self.assertEqual(large_service.transcription_profile, "premium")
+
+    def test_light_profile_promotes_long_meeting_audio_to_medium_model(self) -> None:
+        service = WhisperSpeechToTextService(model_name="large-model", language="ko", transcription_profile="light")
+        preprocessing = SimpleNamespace(duration_seconds=707.869, chunking_enabled=True)
+
+        self.assertEqual(service._select_model_name(preprocessing), "large-model")
+
+    def test_llm_tier_estimation_routes_short_and_long_inputs(self) -> None:
+        short_tier = _estimate_model_tier("회의를 시작하겠습니다. 결제 기능을 우선 보겠습니다.")
+        long_tier = _estimate_model_tier(
+            " ".join(["오늘은 사내 업무관리시스템 구축과 로그인, 결제, 일정, 리스크, 테스트, 배포를 순차적으로 점검합니다."] * 60),
+            context={"extra": {"audio_preprocessing": {"raw_noisy": True}}},
+        )
+
+        self.assertEqual(short_tier, "small")
+        self.assertEqual(long_tier, "large")
+
+    def test_resolve_model_name_for_tier_prefers_tier_specific_settings(self) -> None:
+        with patch("app.services.ai.llm_analysis.settings.openai_small_model", "model-small"), patch(
+            "app.services.ai.llm_analysis.settings.openai_medium_model",
+            "model-medium",
+        ), patch(
+            "app.services.ai.llm_analysis.settings.openai_large_model",
+            "model-large",
+        ):
+            self.assertEqual(_resolve_model_name_for_tier("small"), "model-small")
+            self.assertEqual(_resolve_model_name_for_tier("medium"), "model-medium")
+            self.assertEqual(_resolve_model_name_for_tier("large"), "model-large")
 
     def test_tx_rows_keep_speaker_columns_even_without_diarization(self) -> None:
         rows = _build_tx_rows(
@@ -244,6 +325,81 @@ class HeuristicMeetingAnalysisTests(unittest.TestCase):
         ]
 
         annotated, summary = _attach_speaker_labels(segments, turns, meeting_duration_seconds=243.0)
+
+        self.assertEqual(summary["speaker_count"], 4)
+        self.assertEqual(summary["raw_speaker_count"], 5)
+        self.assertEqual(summary["discarded_speaker_count"], 1)
+        self.assertIn("SPEAKER_04", summary["ignored_speaker_ids"])
+        self.assertEqual(annotated[-1]["speaker_label"], "기타")
+        self.assertEqual(annotated[-1]["speaker_kind"], "minor")
+
+    def test_attach_speaker_labels_discards_short_two_turn_extra_speaker(self) -> None:
+        segments = [
+            {
+                "index": 0,
+                "start_seconds": 0.0,
+                "end_seconds": 40.0,
+                "speaker": None,
+                "speaker_id": None,
+                "speaker_label": None,
+                "text": "첫 번째 발화입니다.",
+            },
+            {
+                "index": 1,
+                "start_seconds": 40.0,
+                "end_seconds": 80.0,
+                "speaker": None,
+                "speaker_id": None,
+                "speaker_label": None,
+                "text": "두 번째 발화입니다.",
+            },
+            {
+                "index": 2,
+                "start_seconds": 80.0,
+                "end_seconds": 120.0,
+                "speaker": None,
+                "speaker_id": None,
+                "speaker_label": None,
+                "text": "세 번째 발화입니다.",
+            },
+            {
+                "index": 3,
+                "start_seconds": 120.0,
+                "end_seconds": 160.0,
+                "speaker": None,
+                "speaker_id": None,
+                "speaker_label": None,
+                "text": "네 번째 발화입니다.",
+            },
+            {
+                "index": 4,
+                "start_seconds": 160.0,
+                "end_seconds": 164.0,
+                "speaker": None,
+                "speaker_id": None,
+                "speaker_label": None,
+                "text": "짧은 두 번 발화입니다.",
+            },
+            {
+                "index": 5,
+                "start_seconds": 164.0,
+                "end_seconds": 167.2,
+                "speaker": None,
+                "speaker_id": None,
+                "speaker_label": None,
+                "text": "짧은 두 번째 발화입니다.",
+            },
+        ]
+        turns = [
+            {"start_seconds": 0.0, "end_seconds": 40.0, "speaker_id": "SPEAKER_00"},
+            {"start_seconds": 40.0, "end_seconds": 80.0, "speaker_id": "SPEAKER_01"},
+            {"start_seconds": 80.0, "end_seconds": 120.0, "speaker_id": "SPEAKER_02"},
+            {"start_seconds": 120.0, "end_seconds": 160.0, "speaker_id": "SPEAKER_03"},
+            {"start_seconds": 160.0, "end_seconds": 162.0, "speaker_id": "SPEAKER_04"},
+            {"start_seconds": 165.0, "end_seconds": 167.2, "speaker_id": "SPEAKER_04"},
+        ]
+
+        annotated, summary = _attach_speaker_labels(segments, turns, meeting_duration_seconds=167.2)
 
         self.assertEqual(summary["speaker_count"], 4)
         self.assertEqual(summary["raw_speaker_count"], 5)
@@ -426,9 +582,19 @@ class HeuristicMeetingAnalysisTests(unittest.TestCase):
             "정아름: 회의를 시작하겠습니다. 김소현: 네, 준비됐습니다."
         )
 
+        ai_input_contract = result.analysis.extra_data.get("ai_input_contract", {})
         script_segments = result.analysis.extra_data.get("script_segments", [])
         tx_rows = result.analysis.extra_data.get("tx", [])
 
+        self.assertTrue(ai_input_contract)
+        self.assertEqual(ai_input_contract["contract_version"], "v1")
+        self.assertEqual(ai_input_contract["source_kind"], "text")
+        self.assertEqual(
+            ai_input_contract["source_text"],
+            "정아름: 회의를 시작하겠습니다. 김소현: 네, 준비됐습니다.",
+        )
+        self.assertTrue(ai_input_contract["chunks"])
+        self.assertEqual(ai_input_contract["chunks"][0]["chunk_kind"], "segment")
         self.assertTrue(script_segments)
         self.assertTrue(tx_rows)
         self.assertEqual(script_segments[0]["contract_version"], "v1")
@@ -446,6 +612,116 @@ class HeuristicMeetingAnalysisTests(unittest.TestCase):
         self.assertEqual(tx_rows[0]["txt"], "정아름: 회의를 시작하겠습니다.")
         self.assertEqual(tx_rows[0]["segment_label"], "[SEGMENT 1]")
         self.assertEqual(tx_rows[0]["source"], "text")
+
+    def test_ai_input_contract_normalizes_source_kind_and_chunks(self) -> None:
+        contract = build_ai_input_contract(
+            source_kind="  DOCUMENT  ",
+            source_text="  문서 원문  ",
+            masked_source_text="  문서 마스킹  ",
+            source_name="  report.pdf  ",
+            source_path="  /tmp/report.pdf  ",
+            source_title="  주간 보고서  ",
+            chunks=[
+                {
+                    "index": 0,
+                    "chunk_kind": " section ",
+                    "title": "  개요  ",
+                    "text": "  1. 개요  ",
+                    "masked_text": "  1. 개요  ",
+                    "metadata": {"page": 1, "note": ""},
+                }
+            ],
+            context={"project_name": "  TIKI  ", "empty": ""},
+            metadata={"source": "  upload  ", "unused": None},
+        )
+
+        self.assertEqual(normalize_source_kind("DOCUMENT"), "document")
+        self.assertEqual(contract.contract_version, "v1")
+        self.assertEqual(contract.source_kind, "document")
+        self.assertEqual(contract.source_name, "report.pdf")
+        self.assertEqual(contract.source_path, "/tmp/report.pdf")
+        self.assertEqual(contract.source_title, "주간 보고서")
+        self.assertEqual(contract.source_text, "문서 원문")
+        self.assertEqual(contract.masked_source_text, "문서 마스킹")
+        self.assertEqual(contract.context, {"project_name": "  TIKI  "})
+        self.assertEqual(contract.metadata, {"source": "  upload  "})
+        self.assertEqual(contract.chunks[0].chunk_kind, "section")
+        self.assertEqual(contract.chunks[0].title, "개요")
+        self.assertEqual(contract.chunks[0].text, "1. 개요")
+        self.assertEqual(contract.chunks[0].masked_text, "1. 개요")
+        self.assertEqual(contract.chunks[0].metadata, {"page": 1})
+
+    def test_document_loader_extracts_pdf_text_and_chunks(self) -> None:
+        sample_path = Path(
+            "/Users/jiyoung/문서/내파일/study/내 문서/협업/최종프로젝트/데이터소스/문서파일/sample_meeting_ops_easy.pdf"
+        )
+
+        result = load_document_file(sample_path)
+
+        self.assertEqual(result.source_kind, "document")
+        self.assertEqual(result.extraction_method, "document_pdf")
+        self.assertEqual(result.page_count, 2)
+        self.assertGreaterEqual(len(result.chunks), 2)
+        self.assertIn("운영팀 주간 회의록", result.text)
+        self.assertIn("AI 회의록 솔루션", result.text)
+        self.assertIn("Jira", result.text)
+
+    def test_document_processing_uses_document_contract(self) -> None:
+        sample_path = Path(
+            "/Users/jiyoung/문서/내파일/study/내 문서/협업/최종프로젝트/데이터소스/문서파일/sample_meeting_ops_easy.pdf"
+        )
+        service = AIEngine(llm_service=HeuristicLLMAnalysisService())
+
+        result = service.process_document(str(sample_path))
+        analysis_dict = result.analysis.to_dict()
+        ai_input_contract = analysis_dict["extra_data"]["ai_input_contract"]
+
+        self.assertEqual(analysis_dict["contract_version"], "v1")
+        self.assertEqual(ai_input_contract["source_kind"], "document")
+        self.assertEqual(analysis_dict["extra_data"]["document_extraction"]["page_count"], 2)
+        self.assertIn("운영팀 주간 회의록", result.transcript)
+        self.assertTrue(analysis_dict["extra_data"]["search_document"]["sections"])
+
+    def test_ai_output_contract_includes_summary_request_and_fixed_fields(self) -> None:
+        service = AIEngine(llm_service=HeuristicLLMAnalysisService())
+        result = service.process_text(
+            "정아름: 회의를 시작하겠습니다. 김소현: 네, 준비됐습니다.",
+            rag_context={
+                "summary_request": {
+                    "focus": "주요 결정",
+                    "prompt": "5줄 이내로 정리해줘",
+                    "length": "간결",
+                }
+            },
+        )
+
+        analysis_dict = result.analysis.to_dict()
+        result_dict = result.to_dict()
+        summary_request = analysis_dict["summary_request"]
+        extra_data = analysis_dict["extra_data"]
+
+        self.assertEqual(analysis_dict["contract_version"], "v1")
+        self.assertEqual(result_dict["analysis_contract_version"], "v1")
+        self.assertEqual(summary_request["contract_version"], "v1")
+        self.assertEqual(summary_request["focus"], "주요 결정")
+        self.assertEqual(summary_request["prompt"], "5줄 이내로 정리해줘")
+        self.assertEqual(summary_request["length"], "간결")
+        self.assertIn("summary", extra_data)
+        self.assertIn("keywords", extra_data)
+        self.assertIn("decisions", extra_data)
+        self.assertIn("action_items", extra_data)
+        self.assertIn("issues", extra_data)
+        self.assertIn("next_agenda", extra_data)
+        self.assertIn("search_document", extra_data)
+        self.assertEqual(
+            extra_data["analysis_output_fields"],
+            ["meeting_title", "summary", "keywords", "decisions", "action_items", "issues", "next_agenda", "search_document"],
+        )
+        self.assertEqual(result_dict["meeting_minutes"]["summary_request"]["focus"], "주요 결정")
+        self.assertEqual(result_dict["meeting_minutes"]["search_document"]["contract_version"], "v2")
+        self.assertIn("meeting_title", extra_data["analysis_output_fields"])
+        self.assertEqual(extra_data["analysis_output_fields"][0], "meeting_title")
+        self.assertTrue(result_dict["meeting_minutes"]["meeting_title"])
 
     def test_meeting_term_normalization_corrects_common_whisper_misreads(self) -> None:
         text = "산의 업무 관리 시스템에서 데시보드와 결지 요청, 디자인 시한, 우성 검토, 정관리 기능과 노구인, 담당자 지적, 중간 시암을 확인합니다."
@@ -509,6 +785,7 @@ class HeuristicMeetingAnalysisTests(unittest.TestCase):
         result = self.service.summarize_and_extract_tickets(transcript)
 
         self.assertTrue(result["summary"].startswith("회의에서는"))
+        self.assertIn("업무관리시스템", result["meeting_title"])
         self.assertIn("기능 우선순위", result["summary"])
         self.assertIn("후속", result["summary"])
         self.assertNotIn("회의 시작하겠습니다", result["summary"])
@@ -819,8 +1096,8 @@ class HeuristicMeetingAnalysisTests(unittest.TestCase):
 
         self.assertFalse(forced)
 
-    def test_noisy_meeting_uses_noisy_model_selection(self) -> None:
-        service = WhisperSpeechToTextService(model_name="large", language="ko")
+    def test_noisy_meeting_keeps_profile_based_model_selection(self) -> None:
+        service = WhisperSpeechToTextService(language="ko", transcription_profile="small")
         noisy_preprocessing = type(
             "Preprocessing",
             (),
@@ -846,8 +1123,7 @@ class HeuristicMeetingAnalysisTests(unittest.TestCase):
             self.assertEqual(service._select_model_name(noisy_preprocessing), "large")
             self.assertEqual(service._select_model_name(calm_preprocessing), "large")
 
-    def test_chunk_model_selection_stays_large_only(self) -> None:
-        service = WhisperSpeechToTextService(model_name="large", language="ko")
+    def test_chunk_model_selection_tracks_profile(self) -> None:
         preprocessing = type(
             "Preprocessing",
             (),
@@ -879,9 +1155,10 @@ class HeuristicMeetingAnalysisTests(unittest.TestCase):
             },
         )()
 
-        with patch.object(WhisperSpeechToTextService, "_is_model_cached", return_value=True):
-            self.assertEqual(service._select_chunk_model_name(preprocessing, easy_chunk), "large")
-            self.assertEqual(service._select_chunk_model_name(preprocessing, hard_chunk), "large")
+        with patch("app.services.ai.stt.settings.whisper_model", "large-model"):
+            service = WhisperSpeechToTextService(language="ko", transcription_profile="large")
+            self.assertEqual(service._select_chunk_model_name(preprocessing, easy_chunk), "large-model")
+            self.assertEqual(service._select_chunk_model_name(preprocessing, hard_chunk), "large-model")
 
     def test_segment_core_region_filter_uses_midpoint(self) -> None:
         self.assertTrue(WhisperSpeechToTextService._is_segment_in_core_region(29.0, 31.0, 30.0, 60.0))

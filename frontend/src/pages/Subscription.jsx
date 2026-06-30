@@ -1,5 +1,5 @@
-import { useState, useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState, useEffect, useLayoutEffect, useRef } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import Header from '../components/Header';
 import Footer from '../components/Footer';
 import MobileTab from '../components/MobileTab';
@@ -364,6 +364,7 @@ function FaqItem({ q, a }) {
 // ── Main Page ──────────────────────────────────────────────────────────────
 export default function Subscription() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
   const [billing, setBilling] = useState('monthly');
   const [alreadyMsg, setAlreadyMsg] = useState('');
@@ -399,6 +400,23 @@ export default function Subscription() {
     window.addEventListener('resize', h);
     return () => window.removeEventListener('resize', h);
   }, []);
+
+  useLayoutEffect(() => {
+    const resetTop = () => {
+      window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+      document.documentElement.scrollTop = 0;
+      document.body.scrollTop = 0;
+    };
+
+    resetTop();
+    const raf = requestAnimationFrame(resetTop);
+    const timer = setTimeout(resetTop, 0);
+
+    return () => {
+      cancelAnimationFrame(raf);
+      clearTimeout(timer);
+    };
+  }, [location.key]);
 
   // 로그인 상태면 API에서 실제 플랜 조회
   useEffect(() => {

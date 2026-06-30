@@ -3,6 +3,7 @@ import { useLocation } from "react-router-dom";
 import Header from "../components/Header";
 import Footer from "../components/Footer";
 import MobileTab from "../components/MobileTab";
+import ToastPopup from "../components/toastpopup";
 import { clearAuthSession } from "../api/apiClient";
 
 /* ─── 데이터 ─────────────────────────────────────────── */
@@ -672,19 +673,6 @@ function AgendaCompletionSection({ actions, onToggleAction }) {
       </div>
       )}
     </section>
-  );
-}
-
-/* ─── Toast ──────────────────────────────────────────── */
-function Toast({ msg, color }) {
-  if (!msg) return null;
-  return (
-    <div
-      className="fixed bottom-20 left-1/2 -translate-x-1/2 z-50 w-fit max-w-[calc(100vw-2rem)] px-4 py-2.5 rounded-full text-white text-xs font-semibold shadow-lg pointer-events-none whitespace-nowrap overflow-hidden text-ellipsis"
-      style={{ background: color }}
-    >
-      {msg}
-    </div>
   );
 }
 
@@ -2733,7 +2721,9 @@ function AudioPlayer({ curTime, playing, spdIdx, onSeek, onTogglePlay, onCycleSp
 function IntegrationControlTower({ services, auditLog, onBadgeClick, onIssueOpen, isMobile }) {
   const totalDone = services.reduce((sum, s) => sum + s.tickets.filter(t => t.status === "done").length, 0);
   const totalTickets = services.reduce((sum, s) => sum + s.tickets.length, 0);
-  const latestLog = auditLog[auditLog.length - 1] || null;
+  const generatedLogs = auditLog.filter((log) => /^\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}$/.test(String(log?.time || "").trim()));
+  const latestGeneratedLog = generatedLogs[generatedLogs.length - 1] || null;
+  const hasGenerated = Boolean(latestGeneratedLog);
 
   return (
     <div
@@ -2746,15 +2736,23 @@ function IntegrationControlTower({ services, auditLog, onBadgeClick, onIssueOpen
           <span
             className="text-xs font-bold px-2 py-0.5 rounded-full"
             style={{
-              background: totalDone === totalTickets ? "rgba(16,185,129,0.1)" : "rgba(0,153,204,0.1)",
-              color: totalDone === totalTickets ? "#10B981" : "#0099CC",
+              background: hasGenerated
+                ? totalDone === totalTickets
+                  ? "rgba(16,185,129,0.1)"
+                  : "rgba(0,153,204,0.1)"
+                : "rgba(0,153,204,0.1)",
+              color: hasGenerated
+                ? totalDone === totalTickets
+                  ? "#10B981"
+                  : "#0099CC"
+                : "#0099CC",
             }}
           >
-            {totalDone}/{totalTickets} 완료
+            {hasGenerated ? `${totalDone}/${totalTickets} 연동 완료` : `0/${totalTickets}`}
           </span>
         </div>
 
-        {!isMobile && latestLog && (
+        {!isMobile && latestGeneratedLog && (
           <div className="flex items-center gap-1.5 flex-shrink-0">
             <span
               className="w-1.5 h-1.5 rounded-full flex-shrink-0"
@@ -2762,9 +2760,7 @@ function IntegrationControlTower({ services, auditLog, onBadgeClick, onIssueOpen
             />
             <span className="text-xs text-slate-400">
               최근 생성일:&nbsp;
-              <span className="font-semibold text-slate-600">{fmtAuditTime(latestLog.time)}</span>
-              &nbsp;
-              <span className="text-slate-400">({latestLog.user})</span>
+              <span className="font-semibold text-slate-600">{fmtAuditTime(latestGeneratedLog.time)}</span>
             </span>
           </div>
         )}
@@ -2780,11 +2776,10 @@ function IntegrationControlTower({ services, auditLog, onBadgeClick, onIssueOpen
         <IssueButton onClick={onIssueOpen} />
       </div>
 
-      {isMobile && latestLog && (
+      {isMobile && latestGeneratedLog && (
         <p className="text-xs text-slate-400 mt-2.5 flex items-center gap-1.5">
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 flex-shrink-0" />
-          최근 생성일: <span className="font-semibold text-slate-600">{fmtAuditTime(latestLog.time)}</span>
-          &nbsp;({latestLog.user})
+          최근 생성일: <span className="font-semibold text-slate-600">{fmtAuditTime(latestGeneratedLog.time)}</span>
         </p>
       )}
     </div>
@@ -2830,7 +2825,7 @@ export default function TikiSprint12() {
   const [bmFilter, setBmFilter] = useState(false);
   const [searchQ, setSearchQ] = useState("");
   const [shownCount, setShownCount] = useState(PAGE_SIZE);
-  const [toast, setToast] = useState({ msg: "", color: "#10B981" });
+  const [toast, setToast] = useState({ show: false, message: "", type: "success" });
 
   const [services, setServices] = useState(INITIAL_INTEGRATION_SERVICES);
   const [auditLog, setAuditLog] = useState([
@@ -3012,9 +3007,9 @@ export default function TikiSprint12() {
     };
   }, [isAnyModalOpen]);
 
-  const showToast = useCallback((msg, color = "#10B981") => {
-    setToast({ msg, color });
-    setTimeout(() => setToast({ msg: "", color }), 2800);
+  const showToast = useCallback((message, type = "success") => {
+    setToast({ show: true, message, type });
+    setTimeout(() => setToast({ show: false, message: "", type }), 2200);
   }, []);
 
   useEffect(() => {
@@ -3077,7 +3072,7 @@ export default function TikiSprint12() {
     const timeStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2,"0")}-${String(now.getDate()).padStart(2,"0")} ${String(now.getHours()).padStart(2,"0")}:${String(now.getMinutes()).padStart(2,"0")}`;
     setAuditLog(prev => [...prev, { svcId, label, time: timeStr, user }]);
 
-    showToast(`[${svcName}] ${label}`, "#10B981");
+    showToast(svcName === "Jira" ? "Jira에 연동되었습니다." : "Notion에 연동되었습니다.");
   }, [showToast]);
 
   const txData = TX
@@ -3144,7 +3139,7 @@ export default function TikiSprint12() {
         user={sessionUser}
         onLogout={() => {
           clearAuthSession();
-          showToast("로그아웃 되었습니다.", "#7C3AED");
+          showToast("로그아웃 되었습니다.");
         }}
       />
 
@@ -3231,7 +3226,7 @@ export default function TikiSprint12() {
               onSaveSummaryEdit={(nextData) => {
                 setSummaryData(nextData);
                 setSummaryActions(nextData.actions.map((a) => ({ ...a })));
-                showToast("AI 요약 내용이 수정되었습니다.", "#0099CC");
+                showToast("AI 요약 내용이 수정되었습니다.");
               }}
               actions={summaryActions}
               onToggleAction={handleToggleAction}
@@ -3502,13 +3497,13 @@ export default function TikiSprint12() {
               keywords: nextKeywords,
             };
           });
-          showToast("다시 생성한 설정이 AI 요약에 반영되었습니다.", "#7C3AED");
+          showToast("다시 생성한 설정이 AI 요약에 반영되었습니다.");
         }}
       />
 
       {!isMobile && <Footer />}
 
-      <Toast msg={toast.msg} color={toast.color} />
+      <ToastPopup show={toast.show} message={toast.message} type={toast.type} />
     </div>
   );
 }

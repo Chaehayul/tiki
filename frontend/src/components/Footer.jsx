@@ -1,10 +1,17 @@
+import { Link } from "react-router-dom";
+
 const icons = {
   fileAudio: ["M17.5 22h.5a2 2 0 0 0 2-2V7l-5-5H6a2 2 0 0 0-2 2v3", "M14 2v4a2 2 0 0 0 2 2h4", "M9 17v-5", "M12 17v-3", "M15 17v-1"],
-  twitter: ["M23 3a10.9 10.9 0 0 1-3.14 1.53 4.48 4.48 0 0 0-7.86 3v1A10.66 10.66 0 0 1 3 4s-4 9 5 13a11.64 11.64 0 0 1-7 2c9 5 20 0 20-11.5a4.5 4.5 0 0 0-.08-.83A7.72 7.72 0 0 0 23 3z"],
   github: ["M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"],
   mail: ["M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z", "M22 6l-10 7L2 6"],
   shieldCheck: ["M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z", "M9 12l2 2 4-4"],
   globe: ["M12 2a10 10 0 1 0 0 20A10 10 0 0 0 12 2z", "M2 12h20", "M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"],
+};
+
+const FOOTER_LINK_ROUTES = {
+  "기능 소개": "/landing",
+  "요금제": "/subscription",
+  "고객센터": "/contact",
 };
 
 function IIcon({ name, size = 16, color = "currentColor", sw = 2 }) {
@@ -38,7 +45,6 @@ export default function Footer() {
           </p>
           <div className="flex gap-2">
             {[
-              { icon: "twitter", label: "Twitter" },
               { icon: "github", label: "GitHub" },
               { icon: "mail", label: "Email" },
             ].map(({ icon, label }) => (
@@ -59,9 +65,19 @@ export default function Footer() {
             <ul className="m-0 flex list-none flex-col gap-2.5 p-0">
               {links.map((link) => (
                 <li key={link}>
-                  <a href="#" className="text-[13px] text-[#5A6F8A] no-underline transition-colors duration-200 hover:text-[#0D1B2A]">
-                    {link}
-                  </a>
+                  {FOOTER_LINK_ROUTES[link] ? (
+                    <Link to={FOOTER_LINK_ROUTES[link]} className="text-[13px] text-[#5A6F8A] no-underline transition-colors duration-200 hover:text-[#0D1B2A]">
+                      {link}
+                    </Link>
+                  ) : (
+                    <a
+                      href="#"
+                      onClick={(e) => e.preventDefault()}
+                      className="text-[13px] text-[#5A6F8A] no-underline transition-colors duration-200 hover:text-[#0D1B2A]"
+                    >
+                      {link}
+                    </a>
+                  )}
                 </li>
               ))}
             </ul>

@@ -24,16 +24,19 @@ from app.services.ai.stt import _attach_speaker_labels
 from app.services.ai.stt import WhisperSpeechToTextService
 from app.services.ai.llm_analysis import HeuristicLLMAnalysisService
 from app.services.ai.llm_analysis import _build_issue_sentence
+from app.services.ai.llm_analysis import _apply_audio_batch_conservative_filters
 from app.schemas.ai_input import build_ai_input_contract
 from app.schemas.ai_input import normalize_source_kind
 from app.services.ai.text_normalization import normalize_meeting_terms
 from app.services.ai_engine import AIEngine
+from app.services.ai.stt import detect_whisper_runtime_config
 from app.services.ai_engine import (
     _augment_context_with_audio_quality,
     _build_sentence_segments,
     _build_meeting_search_document,
     _build_speaker_fields,
     _build_tx_rows,
+    _derive_batch_source_title,
     _summarize_audio_preprocessing,
     _summarize_stt_routing,
 )
@@ -184,41 +187,35 @@ class HeuristicMeetingAnalysisTests(unittest.TestCase):
             self.assertEqual(large_service._select_chunk_model_name(preprocessing, chunk), "large-model")
 
     def test_whisper_device_resolution_prefers_cuda_then_mps_then_cpu(self) -> None:
-        cuda_torch = SimpleNamespace(
-            cuda=SimpleNamespace(is_available=lambda: True),
-            backends=SimpleNamespace(mps=SimpleNamespace(is_available=lambda: True)),
-        )
-        mps_torch = SimpleNamespace(
-            cuda=SimpleNamespace(is_available=lambda: False),
-            backends=SimpleNamespace(mps=SimpleNamespace(is_available=lambda: True)),
-        )
-        cpu_torch = SimpleNamespace(
-            cuda=SimpleNamespace(is_available=lambda: False),
-            backends=SimpleNamespace(mps=SimpleNamespace(is_available=lambda: False)),
-        )
+        cuda_torch = SimpleNamespace(cuda=SimpleNamespace(is_available=lambda: True))
+        cpu_torch = SimpleNamespace(cuda=SimpleNamespace(is_available=lambda: False))
 
-        with patch.dict("sys.modules", {"torch": cuda_torch}):
+        with patch("app.services.ai.stt.platform.system", return_value="Windows"), patch.dict(
+            "sys.modules", {"torch": cuda_torch}
+        ):
             self.assertEqual(WhisperSpeechToTextService._resolve_device_name(), "cuda")
 
-        with patch.dict("sys.modules", {"torch": mps_torch}):
-            self.assertEqual(WhisperSpeechToTextService._resolve_device_name(), "mps")
+        with patch("app.services.ai.stt.platform.system", return_value="Windows"), patch.dict(
+            "sys.modules", {"torch": cpu_torch}
+        ):
+            self.assertEqual(WhisperSpeechToTextService._resolve_device_name(), "cpu")
 
-        with patch.dict("sys.modules", {"torch": cpu_torch}):
+        with patch("app.services.ai.stt.platform.system", return_value="Darwin"), patch.dict(
+            "sys.modules", {"torch": cuda_torch}
+        ):
             self.assertEqual(WhisperSpeechToTextService._resolve_device_name(), "cpu")
 
     def test_whisper_load_model_forwards_device_name(self) -> None:
         fake_whisper = SimpleNamespace(load_model=SimpleNamespace())
         fake_whisper.load_model = unittest.mock.MagicMock(return_value="loaded-model")
-        fake_torch = SimpleNamespace(
-            cuda=SimpleNamespace(is_available=lambda: False),
-            backends=SimpleNamespace(mps=SimpleNamespace(is_available=lambda: False)),
-        )
 
-        with patch.dict("sys.modules", {"whisper": fake_whisper, "torch": fake_torch}):
-            model = WhisperSpeechToTextService._load_model("small", "mps")
+        with patch("app.services.ai.stt.settings.whisper_engine", "openai-whisper"), patch.dict(
+            "sys.modules", {"whisper": fake_whisper}
+        ):
+            model = WhisperSpeechToTextService._load_model("small", "cpu")
 
         self.assertEqual(model, "loaded-model")
-        fake_whisper.load_model.assert_called_once_with("small", device="mps")
+        fake_whisper.load_model.assert_called_once_with("small", device="cpu")
 
     def test_faster_whisper_adapter_normalizes_output(self) -> None:
         fake_segment = SimpleNamespace(
@@ -243,8 +240,8 @@ class HeuristicMeetingAnalysisTests(unittest.TestCase):
 
         self.assertEqual(adapter.model_name, "small")
         self.assertEqual(adapter.device_name, "cuda")
-        self.assertEqual(adapter.compute_type, "float16")
-        fake_whisper_module.WhisperModel.assert_called_once_with("small", device="cuda", compute_type="float16")
+        self.assertEqual(adapter.compute_type, "int8")
+        fake_whisper_module.WhisperModel.assert_called_once_with("small", device="cuda", compute_type="int8")
 
         result = adapter.transcribe(np.zeros(16_000, dtype=np.float32), fp16=True, logprob_threshold=-1.0, verbose=False)
         self.assertEqual(result["text"], "안녕하세요")
@@ -270,6 +267,28 @@ class HeuristicMeetingAnalysisTests(unittest.TestCase):
         self.assertTrue(cuda_options["fp16"])
         self.assertFalse(mps_options["fp16"])
         self.assertFalse(cpu_options["fp16"])
+
+    def test_detect_whisper_runtime_config_windows_uses_cuda_when_available(self) -> None:
+        with patch("app.services.ai.stt.platform.system", return_value="Windows"), patch(
+            "app.services.ai.stt._has_cuda_gpu",
+            return_value=True,
+        ):
+            config = detect_whisper_runtime_config()
+
+        self.assertEqual(config.device, "cuda")
+        self.assertEqual(config.compute_type, "float16")
+
+    def test_detect_whisper_runtime_config_windows_falls_back_to_cpu_without_cuda(self) -> None:
+        with patch("app.services.ai.stt.platform.system", return_value="Windows"), patch(
+            "app.services.ai.stt._has_cuda_gpu",
+            return_value=False,
+        ):
+            config = detect_whisper_runtime_config()
+
+        self.assertEqual(config.device, "cpu")
+        self.assertEqual(config.compute_type, "int8")
+        self.assertEqual(config.cpu_threads, 8)
+        self.assertEqual(config.num_workers, 4)
 
     def test_transcription_profiles_adjust_decoding_budget(self) -> None:
         light_service = WhisperSpeechToTextService(model_name="large", language="ko", transcription_profile="light")
@@ -313,6 +332,68 @@ class HeuristicMeetingAnalysisTests(unittest.TestCase):
         preprocessing = SimpleNamespace(duration_seconds=707.869, chunking_enabled=True)
 
         self.assertEqual(service._select_model_name(preprocessing), "medium")
+
+    def test_batch_title_derivation_uses_first_file_stem(self) -> None:
+        title = _derive_batch_source_title(
+            [
+                "/tmp/마케팅회의_1.mp3",
+                "/tmp/마케팅회의_2.mp3",
+                "/tmp/마켓팅회의_3.mp3",
+            ]
+        )
+
+        self.assertEqual(title, "마케팅회의")
+
+    def test_batch_conservative_filters_drop_junk_items(self) -> None:
+        transcript = "브랜드 캠페인 영상 예산 광고 일정"
+        summary = "회의에서는 브랜드 캠페인과 영상 예산을 정리했다."
+        action_items = [
+            {
+                "title": "일정 정리",
+                "description": "그럼 일정 논의부터 하고 최종 확정 사항 정리하죠.",
+                "priority": "medium",
+                "status": "draft",
+                "assignee": "미정",
+                "due_at": None,
+            },
+            {
+                "title": "영상 촬영 준비",
+                "description": "영상 촬영 포함하면 최소 4주 정도는 필요합니다.",
+                "priority": "medium",
+                "status": "draft",
+                "assignee": "김소현",
+                "due_at": "2026-07-01",
+            },
+        ]
+        decisions = [
+            "좋습니다 동의합니다 그럼 마지막으로 현재까지 결정된 내용만 다시 확인",
+            "광고비 예산은 1300만원으로 확정하기로 했다.",
+        ]
+        issues = [
+            {"level": "medium", "text": "우리 브랜드가 지금 가장 부족한 건 인지도에요."},
+            {"level": "medium", "text": "가장 부족 왜요."},
+        ]
+        next_agenda = [
+            "다음 회의에서 감성 캠페인 방향을 논의한다.",
+            "다음 회의에서 다시 보죠.",
+        ]
+
+        filtered_summary, filtered_action_items, filtered_decisions, filtered_issues, filtered_next_agenda = _apply_audio_batch_conservative_filters(
+            transcript=transcript,
+            context={"meeting_title": "마케팅회의"},
+            summary=summary,
+            keywords=[],
+            decisions=decisions,
+            action_items=action_items,
+            issues=issues,
+            next_agenda=next_agenda,
+        )
+
+        self.assertEqual(filtered_summary, summary)
+        self.assertEqual([item["title"] for item in filtered_action_items], ["영상 촬영 준비"])
+        self.assertEqual(filtered_decisions, ["광고비 예산은 1300만원으로 확정하기로 했다"])
+        self.assertEqual([item["text"] for item in filtered_issues], ["우리 브랜드가 지금 가장 부족한 건 인지도에요."])
+        self.assertEqual(filtered_next_agenda, ["다음 회의에서 감성 캠페인 방향을 논의한다."])
 
     def test_llm_tier_estimation_routes_short_and_long_inputs(self) -> None:
         short_tier = _estimate_model_tier("회의를 시작하겠습니다. 결제 기능을 우선 보겠습니다.")

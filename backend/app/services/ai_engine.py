@@ -1099,6 +1099,17 @@ def _merge_audio_files_for_transcription(file_paths: list[str]) -> Path | None:
 
     return output_path
 
+
+def _derive_batch_source_title(file_paths: list[str]) -> str | None:
+    if not file_paths:
+        return None
+
+    stem = Path(file_paths[0]).stem
+    stem = re.sub(r"[_\-\s]*\d+$", "", stem).strip(" _-")
+    stem = re.sub(r"[_\-]+", " ", stem).strip()
+    stem = re.sub(r"\s+", " ", stem).strip()
+    return stem or None
+
 def _augment_context_with_audio_quality(context: Any | None, preprocessing: Any | None) -> dict[str, Any] | Any | None:
     audio_summary = _summarize_audio_preprocessing(preprocessing)
     if not audio_summary:
@@ -1648,6 +1659,7 @@ class AIEngine:
 
         merged_audio_path = _merge_audio_files_for_transcription(file_paths)
         cleanup_merged_audio = len(file_paths) > 1 and merged_audio_path is not None
+        batch_source_title = _derive_batch_source_title(file_paths)
 
         try:
             if merged_audio_path is not None:
@@ -1659,6 +1671,18 @@ class AIEngine:
                     merged_segments = []
 
                 combined_masked_transcript = mask_personal_information(combined_transcript)
+                get_last_diarization = getattr(self.stt_service, "get_last_diarization", None)
+                if callable(get_last_diarization):
+                    diarization_summary = get_last_diarization()
+                    if diarization_summary:
+                        diarization_summaries.append(
+                            {
+                                "file_index": 0,
+                                "file_path": str(merged_audio_path),
+                                "file_count": len(file_paths),
+                                **diarization_summary,
+                            }
+                        )
 
                 def _resolve_file_window(segment_start: Any, segment_end: Any) -> dict[str, Any]:
                     if not file_windows:
@@ -1833,6 +1857,8 @@ class AIEngine:
                     "source_kind": "audio_batch",
                     "strategy": "merged_audio_batch" if len(file_paths) > 1 else "single_file",
                     "batch_file_count": len(file_paths),
+                    "meeting_title": batch_source_title,
+                    "source_title": batch_source_title,
                     "batch_files": [
                         {
                             "index": window["index"],
@@ -1855,13 +1881,17 @@ class AIEngine:
                     "note": "같은 회의의 순차 분할 파일이므로 한 번의 회의로 합쳐서 요약하라.",
                 },
             )
+            batch_context = dict(batch_context or {})
+            if batch_source_title:
+                batch_context.setdefault("meeting_title", batch_source_title)
+                batch_context.setdefault("source_title", batch_source_title)
             ai_input_contract = _build_ai_input_contract(
                 source_kind="audio_batch",
                 source_text=combined_transcript,
                 masked_source_text=combined_masked_transcript,
                 segments=timeline_segments,
                 context_snapshot=batch_context,
-                source_title=batch_context.get("meeting_title") if batch_context else None,
+                source_title=(batch_context.get("meeting_title") if batch_context else None) or batch_source_title,
                 metadata={
                     "source": "audio_batch",
                     "file_count": len(file_paths),

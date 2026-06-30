@@ -3130,6 +3130,21 @@ class OpenAIAnalysisService(LLMAnalysisService):
                 if _is_followup_agenda_text(item)
             ]
             normalized_next_agenda = _normalize_next_agenda_value(next_agenda_candidates, MAX_NEXT_AGENDA)
+            if source_kind == "audio_batch":
+                normalized_summary, normalized_action_items, normalized_decisions, normalized_issues, normalized_next_agenda = _apply_audio_batch_conservative_filters(
+                    transcript=normalized,
+                    context=context,
+                    summary=normalized_summary,
+                    keywords=normalized_keywords,
+                    decisions=normalized_decisions,
+                    action_items=normalized_action_items,
+                    issues=normalized_issues,
+                    next_agenda=normalized_next_agenda,
+                )
+                normalized_keywords = _normalize_keywords_value(
+                    normalized_keywords
+                    + [{"text": text, "type": "cyan"} for text in _extract_batch_content_terms(normalized)]
+                )
             meeting_title = _build_meeting_title(
                 transcript=normalized,
                 summary=normalized_summary,
@@ -3417,6 +3432,21 @@ class LangChainAnalysisService(LLMAnalysisService):
                 if _is_followup_agenda_text(item)
             ]
             normalized_next_agenda = _normalize_next_agenda_value(next_agenda_candidates, MAX_NEXT_AGENDA)
+            if source_kind == "audio_batch":
+                normalized_summary, normalized_action_items, normalized_decisions, normalized_issues, normalized_next_agenda = _apply_audio_batch_conservative_filters(
+                    transcript=normalized,
+                    context=context,
+                    summary=normalized_summary,
+                    keywords=normalized_keywords,
+                    decisions=normalized_decisions,
+                    action_items=normalized_action_items,
+                    issues=normalized_issues,
+                    next_agenda=normalized_next_agenda,
+                )
+                normalized_keywords = _normalize_keywords_value(
+                    normalized_keywords
+                    + [{"text": text, "type": "cyan"} for text in _extract_batch_content_terms(normalized)]
+                )
 
             normalizer = HeuristicLLMAnalysisService()
             summary, action_items = normalizer._normalize_analysis_output(normalized_summary, normalized_action_items)

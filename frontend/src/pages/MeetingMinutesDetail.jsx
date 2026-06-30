@@ -286,10 +286,24 @@ function normalizeInlineAgendaDateLabel(text) {
   });
 }
 
-function formatNextAgendaItem(item) {
+function normalizeFullDateLabel(text) {
+  const normalized = normalizeInlineAgendaDateLabel(text);
+  return normalized.replace(/(\d{1,2})\s*월\s*(\d{1,2})\s*일/g, (matched, month, day, offset, input) => {
+    const prefix = input.slice(Math.max(0, offset - 8), offset);
+    if (/\d{4}년\s*$/.test(prefix)) return matched;
+    const dateStr = parseDueToDateStr(`${month}/${day}`);
+    return dateStr ? formatDueFromDateStr(dateStr) : matched;
+  });
+}
+
+function normalizeMobileAgendaDateLabel(text) {
+  return normalizeFullDateLabel(text);
+}
+
+function formatNextAgendaItem(item, useMobileFormat = false) {
   const topic = (item?.topic || "").trim();
   if (!topic) return "";
-  return normalizeInlineAgendaDateLabel(topic);
+  return useMobileFormat ? normalizeMobileAgendaDateLabel(topic) : normalizeInlineAgendaDateLabel(topic);
 }
 
 function DueDateCalendar({ value, onSelect, onClose, placement = "bottom" }) {
@@ -672,40 +686,26 @@ function AgendaCompletionSection({ actions, onToggleAction }) {
 /* ─── Modal Wrapper ──────────────────────────────────── */
 function Modal({ open, onClose, title, children, footer, maxWidth = 448, bodyOverflowY = "auto", bodyHeight }) {
   if (!open) return null;
+
   return (
     <div
       className="fixed inset-0 z-50 flex justify-center p-4"
-      style={{
-        alignItems: "center",
-        paddingBottom: "76px",
-      }}
+      style={{ alignItems: "center", paddingBottom: "76px" }}
     >
       <div
         className="absolute inset-0"
         style={{ backdropFilter: "blur(8px)", background: "rgba(13,27,42,0.4)" }}
         onClick={onClose}
       />
-      <div
-        className="relative bg-white border border-slate-200 rounded-2xl w-full shadow-xl flex flex-col"
-        style={{
-          maxWidth,
-          maxHeight: "min(560px, calc(100vh - 92px))",
-        }}
-      >
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 flex-shrink-0">
-          <span className="font-bold text-sm text-slate-900">{title}</span>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-700 leading-none cursor-pointer">
-            <LucideIcon name="x" size={18} />
+      <div className="relative self-center w-full rounded-2xl bg-white border border-[rgba(0,100,180,0.12)] shadow-[0_18px_50px_rgba(13,27,42,0.22)]" style={{ maxWidth }}>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-[rgba(0,100,180,0.08)]">
+          <h3 className="text-base font-bold text-[#0D1B2A]">{title}</h3>
+          <button type="button" onClick={onClose} className="w-8 h-8 rounded-lg hover:bg-[#F8FAFF] text-[#5A6F8A] flex items-center justify-center">
+            <LucideIcon name="x" size={16} />
           </button>
         </div>
-        <div className={`px-6 py-5 ${bodyHeight ? "" : "flex-1"}`} style={{ overflowY: bodyOverflowY, height: bodyHeight }}>
-          {children}
-        </div>
-        {footer && (
-          <div className="px-6 pb-5 pt-2 flex justify-end gap-2 border-t border-slate-100 flex-shrink-0">
-            {footer}
-          </div>
-        )}
+        <div className="px-5 py-4" style={{ overflowY: bodyOverflowY, height: bodyHeight }}>{children}</div>
+        {footer && <div className="px-5 py-4 border-t border-[rgba(0,100,180,0.08)] flex items-center justify-end gap-2">{footer}</div>}
       </div>
     </div>
   );
@@ -1021,7 +1021,7 @@ function IndividualTicketRow({ item, index }) {
 }
 
 /* ─── 2단계 발행 모달 (로딩 스피너 + 에러 핸들링 포함) ─ */
-function IssueModal({ open, onClose, onIssued, services }) {
+function IssueModal({ open, onClose, onIssued, services, isMobile }) {
   const [step, setStep] = useState(1);
   const [selectedSvc, setSelectedSvc] = useState(null);
   const [checkedItems, setCheckedItems] = useState(new Set());
@@ -1168,7 +1168,7 @@ function IssueModal({ open, onClose, onIssued, services }) {
       title="업무 보내기"
       maxWidth={500}
       bodyOverflowY="auto"
-      bodyHeight="min(460px, 56vh)"
+      bodyHeight={isMobile ? "56vh" : "460px"}
       footer={
         step === 1 ? (
           <>
@@ -1265,7 +1265,7 @@ function IssueModal({ open, onClose, onIssued, services }) {
                 <span className="ml-2 text-cyan-500 normal-case">({checkedItems.size}개 선택됨)</span>
               )}
             </p>
-            <div className="space-y-1.5 max-h-52 overflow-y-auto">
+            <div className="space-y-1.5">
               {ACTION_ITEMS_FOR_ISSUE.map((item, idx) => {
                 const checked = checkedItems.has(idx);
                 return (
@@ -1289,10 +1289,7 @@ function IssueModal({ open, onClose, onIssued, services }) {
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="text-sm text-slate-800 leading-snug">{item.text}</p>
-                      <div className="mt-0.5 flex items-center justify-between gap-2">
-                        <p className="text-xs text-slate-400">{item.assignee || "미정"}</p>
-                        <span className="text-xs text-slate-400">{getDueLabel(idx)}</span>
-                      </div>
+                      <p className="text-xs text-slate-400 mt-0.5">{item.assignee || "미정"} · {getDueLabel(idx)}</p>
                     </div>
                   </div>
                 );
@@ -1419,7 +1416,7 @@ function IssueModal({ open, onClose, onIssued, services }) {
                   onBlur={e => (e.target.style.borderColor = "rgba(0,100,180,0.12)")}
                 />
               </div>
-              <div className="grid gap-3 sm:grid-cols-2">
+              <div className="grid grid-cols-2 gap-3">
                 <div className="min-w-0">
                   <label className="text-xs font-semibold text-slate-400 block mb-1.5">담당자</label>
                   <CustomDropdown
@@ -1446,7 +1443,7 @@ function IssueModal({ open, onClose, onIssued, services }) {
                     disabled={issuing}
                   />
                 </div>
-                <div className="min-w-0 sm:col-span-2">
+                <div className="min-w-0 col-span-2">
                   <label className="text-xs font-semibold text-slate-400 block mb-1.5">마감일</label>
                   <div ref={mergedDuePickerRef} className="relative" data-due-picker-root>
                     <button
@@ -1679,7 +1676,12 @@ function EditableDecision({ text, onSave }) {
           />
           <div className="flex gap-1.5 mt-1.5">
             <button
-              onClick={() => { onSave(val); setEditing(false); }}
+              onClick={() => {
+                const normalized = normalizeFullDateLabel(val);
+                setVal(normalized);
+                onSave(normalized);
+                setEditing(false);
+              }}
               className="text-xs font-bold px-2.5 py-1 rounded text-white bg-cyan-500"
             >
               저장
@@ -1812,7 +1814,7 @@ function Divider({ label }) {
 
 /* ─── AI Summary Panel ───────────────────────────────── */
 function SummaryPanel({ summaryData, onOpenRegen, onSaveSummaryEdit, transcriptVisible, onToggleTranscript, transcriptEnabled, isMobile, summaryCollapsed, onToggleSummary, actions, onToggleAction }) {
-  const [decisions, setDecisions] = useState(summaryData.decisions);
+  const [decisions, setDecisions] = useState((summaryData.decisions || []).map((item) => normalizeFullDateLabel(item)));
   const [isMoreOpen, setIsMoreOpen] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [keywordsText, setKeywordsText] = useState("");
@@ -1838,13 +1840,18 @@ function SummaryPanel({ summaryData, onOpenRegen, onSaveSummaryEdit, transcriptV
   const resetEditDraft = useCallback(() => {
     setKeywordsText((summaryData.keywords || []).map((k) => k.text).join(", "));
     setSummaryText(summaryData.summary || "");
-    setDecisionsDraft([...(summaryData.decisions || [])]);
+    setDecisionsDraft((summaryData.decisions || []).map((item) => normalizeFullDateLabel(item)));
     setActionsDraft((summaryData.actions || []).map((a) => ({
       ...a,
       due: normalizeDueLabel(a.due),
     })));
     setIssuesDraft((summaryData.issues || []).map((i) => ({ ...i })));
-    setNextAgendaDraft((summaryData.next_agenda || []).map((item) => parseNextAgendaItem(item)));
+    setNextAgendaDraft(
+      (summaryData.next_agenda || []).map((item) => {
+        const parsed = parseNextAgendaItem(item);
+        return { ...parsed, topic: normalizeFullDateLabel(parsed.topic) };
+      })
+    );
   }, [summaryData]);
 
   const buildKeywordItems = useCallback(() => {
@@ -1857,7 +1864,7 @@ function SummaryPanel({ summaryData, onOpenRegen, onSaveSummaryEdit, transcriptV
 
   const buildDecisions = useCallback(() => {
     return decisionsDraft
-      .map((v) => (v || "").trim())
+      .map((v) => normalizeFullDateLabel(v || "").trim())
       .filter(Boolean);
   }, [decisionsDraft]);
 
@@ -1883,7 +1890,7 @@ function SummaryPanel({ summaryData, onOpenRegen, onSaveSummaryEdit, transcriptV
 
   const buildNextAgenda = useCallback(() => {
     return nextAgendaDraft
-      .map((v) => formatNextAgendaItem(v))
+      .map((v) => formatNextAgendaItem(v, true))
       .filter(Boolean);
   }, [nextAgendaDraft]);
 
@@ -1929,7 +1936,7 @@ function SummaryPanel({ summaryData, onOpenRegen, onSaveSummaryEdit, transcriptV
   }, [resetEditDraft]);
 
   useEffect(() => {
-    setDecisions(summaryData.decisions);
+    setDecisions((summaryData.decisions || []).map((item) => normalizeFullDateLabel(item)));
   }, [summaryData.decisions]);
 
   useEffect(() => {
@@ -2134,6 +2141,9 @@ function SummaryPanel({ summaryData, onOpenRegen, onSaveSummaryEdit, transcriptV
                         onChange={(e) =>
                           setDecisionsDraft((prev) => prev.map((v, i) => (i === idx ? e.target.value : v)))
                         }
+                        onBlur={(e) =>
+                          setDecisionsDraft((prev) => prev.map((v, i) => (i === idx ? normalizeFullDateLabel(e.target.value) : v)))
+                        }
                         className={EDIT_INPUT_CLS}
                         style={{ fontFamily: "inherit" }}
                         placeholder={`주요 결정 ${idx + 1}`}
@@ -2315,6 +2325,9 @@ function SummaryPanel({ summaryData, onOpenRegen, onSaveSummaryEdit, transcriptV
                           onChange={(e) =>
                             setNextAgendaDraft((prev) => prev.map((v, i) => (i === idx ? { ...v, topic: e.target.value } : v)))
                           }
+                          onBlur={(e) =>
+                            setNextAgendaDraft((prev) => prev.map((v, i) => (i === idx ? { ...v, topic: normalizeFullDateLabel(e.target.value) } : v)))
+                          }
                           className={`${EDIT_INPUT_CLS} bg-white`}
                           style={{ fontFamily: "inherit" }}
                           placeholder={`다음 회의 안건 ${idx + 1}`}
@@ -2474,7 +2487,7 @@ function SummaryPanel({ summaryData, onOpenRegen, onSaveSummaryEdit, transcriptV
                         >
                           {i + 1}
                         </span>
-                        <p className="text-sm text-slate-800 leading-relaxed">{normalizeInlineAgendaDateLabel(item)}</p>
+                        <p className="text-sm text-slate-800 leading-relaxed">{isMobile ? normalizeMobileAgendaDateLabel(item) : normalizeInlineAgendaDateLabel(item)}</p>
                       </div>
                     ))}
                   </div>
@@ -3329,7 +3342,7 @@ export default function TikiSprint12() {
         onSeek={v => setCurTime(v)}
         onTogglePlay={() => setPlaying(p => !p)}
         onCycleSpeed={() => setSpdIdx(i => (i + 1) % SPEEDS.length)}
-        bottomOffset={isMobile ? 96 : 0}
+        bottomOffset={isMobile ? "calc(74px + env(safe-area-inset-bottom, 0px))" : 0}
       />
 
       {isMobile && <MobileTab active={activeTab} onChange={setActiveTab} />}
@@ -3346,6 +3359,7 @@ export default function TikiSprint12() {
         onClose={() => setIssueOpen(false)}
         onIssued={handleIssued}
         services={services}
+        isMobile={isMobile}
       />
 
       <Modal open={modal === "participants"} onClose={() => setModal(null)} title="회의 참여자">

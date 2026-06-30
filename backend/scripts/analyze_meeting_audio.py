@@ -50,7 +50,12 @@ def _print_section(title: str, value: Any) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Analyze a meeting audio file and print a readable report.")
-    parser.add_argument("audio_path", type=Path, help="Path to the meeting audio file")
+    parser.add_argument(
+        "audio_paths",
+        type=Path,
+        nargs="+",
+        help="One or more meeting audio files. Multiple files are merged and summarized as a single meeting.",
+    )
     parser.add_argument(
         "--mode",
         choices=("heuristic", "default"),
@@ -72,12 +77,16 @@ def main() -> int:
     args = parser.parse_args()
 
     engine = _build_engine(args.mode, args.profile)
-    result = engine.process_audio(str(args.audio_path))
+    audio_paths = [str(path) for path in args.audio_paths]
+    result = engine.process_audio(audio_paths[0]) if len(audio_paths) == 1 else engine.process_audio_batch(audio_paths)
 
     audio_summary = result.analysis.extra_data.get("audio_preprocessing", {})
     stt_routing = result.analysis.extra_data.get("stt_routing", [])
 
-    print(f"FILE: {args.audio_path}")
+    print(f"FILE_COUNT: {len(audio_paths)}")
+    print("FILES:")
+    for path in audio_paths:
+        print(f"- {path}")
     print(f"MODE: {args.mode}")
     print(f"PROFILE: {args.profile}")
     print(f"TRANSCRIPT_LEN: {len(result.transcript)}")

@@ -116,13 +116,54 @@ class WhisperAudioPreprocessor:
     @lru_cache(maxsize=1)
     def _load_audio_loader():
         try:
+            import numpy as np
+        except ImportError as exc:  # pragma: no cover - optional in local dev env
+            raise RuntimeError(
+                "numpy is required for audio chunking. Install backend dependencies to enable STT preprocessing."
+            ) from exc
+
+        ffmpeg = shutil.which("ffmpeg")
+        if ffmpeg:
+            def _load_audio_from_ffmpeg(audio_path: str, sample_rate: int) -> np.ndarray:
+                command = [
+                    ffmpeg,
+                    "-nostdin",
+                    "-threads",
+                    "0",
+                    "-i",
+                    audio_path,
+                    "-f",
+                    "s16le",
+                    "-ac",
+                    "1",
+                    "-acodec",
+                    "pcm_s16le",
+                    "-ar",
+                    str(sample_rate),
+                    "-",
+                ]
+                completed = subprocess.run(command, check=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+                samples = np.frombuffer(completed.stdout, np.int16).astype(np.float32, copy=False)
+                return samples / 32768.0
+
+            return _load_audio_from_ffmpeg
+
+        try:
             from whisper.audio import load_audio
         except ImportError as exc:  # pragma: no cover - dependency should exist in backend env
             raise RuntimeError(
-                "openai-whisper is not installed. Add it to backend requirements before using STT."
+                "ffmpeg is required for audio decoding. Add it to PATH or install openai-whisper as a fallback."
             ) from exc
 
-        return load_audio
+        def _load_audio_from_whisper(audio_path: str, sample_rate: int) -> np.ndarray:
+            samples = load_audio(audio_path)
+            if sample_rate != 16_000:
+                # whisper.audio.load_audio always returns 16 kHz audio, so this path
+                # keeps the current contract while avoiding extra resampling work.
+                logger.debug("Using whisper.audio.load_audio at 16 kHz for %s", audio_path)
+            return samples
+
+        return _load_audio_from_whisper
 
     @staticmethod
     @lru_cache(maxsize=1)
@@ -143,7 +184,7 @@ class WhisperAudioPreprocessor:
             raise FileNotFoundError(f"Audio file not found: {audio_path}")
 
         load_audio = self._load_audio_loader()
-        samples = load_audio(str(path))
+        samples = load_audio(str(path), self.sample_rate)
         if not isinstance(samples, np.ndarray):
             samples = np.asarray(samples, dtype=np.float32)
 
@@ -159,7 +200,7 @@ class WhisperAudioPreprocessor:
             denoised_path = self._try_ffmpeg_denoise(path)
             if denoised_path is not None:
                 try:
-                    samples = load_audio(str(denoised_path))
+                    samples = load_audio(str(denoised_path), self.sample_rate)
                     if not isinstance(samples, np.ndarray):
                         samples = np.asarray(samples, dtype=np.float32)
                     if samples.ndim != 1:

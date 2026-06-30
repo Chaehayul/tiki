@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import logging
 import re
 from abc import ABC, abstractmethod
@@ -13,6 +14,8 @@ import numpy as np
 
 from app.core.config import settings
 from app.services.ai.audio_preprocessing import WhisperAudioPreprocessor
+
+os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
 
 logger = logging.getLogger(__name__)
 DIARIZATION_MERGE_GAP_SECONDS = 0.6

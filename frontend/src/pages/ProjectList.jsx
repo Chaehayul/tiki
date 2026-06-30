@@ -436,6 +436,10 @@ export default function ProjectList() {
   const [projects, setProjects] = useState([]);
   const [deletedProjectIds, setDeletedProjectIds] = useState([]);
 
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, []);
+
   const fetchProjects = useCallback(() => {
     return listProjects()
       .then((data) => {

@@ -72,6 +72,31 @@ const formatDisplayDate = (raw) => {
   return value;
 };
 
+const formatPublishedDate = (raw) => {
+  const value = String(raw || '').trim();
+  if (!value) return '-';
+
+  if (/^\d{4}년\s*\d{1,2}월\s*\d{1,2}일$/.test(value)) return value;
+
+  const ymd = value.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (ymd) {
+    return `${Number(ymd[1])}년 ${Number(ymd[2])}월 ${Number(ymd[3])}일`;
+  }
+
+  const mdhm = value.match(/^(\d{2})-(\d{2})\s+\d{2}:\d{2}$/);
+  if (mdhm) {
+    const year = new Date().getFullYear();
+    return `${year}년 ${Number(mdhm[1])}월 ${Number(mdhm[2])}일`;
+  }
+
+  const parsed = new Date(value);
+  if (!Number.isNaN(parsed.getTime())) {
+    return `${parsed.getFullYear()}년 ${parsed.getMonth() + 1}월 ${parsed.getDate()}일`;
+  }
+
+  return value;
+};
+
 const ASSIGNEE_OPTIONS = ['김지훈', '박소현', '이민준', '최아로미', '정다은', '한유진', '전체'];
 const WEEKDAY_LABELS = ['일', '월', '화', '수', '목', '금', '토'];
 
@@ -224,7 +249,7 @@ function Spinner({ size = 14, color = '#fff' }) {
   );
 }
 
-function Modal({ open, onClose, title, children, footer, maxWidth = 448, bodyOverflowY = 'auto' }) {
+function Modal({ open, onClose, title, children, footer, maxWidth = 448, bodyOverflowY = 'auto', bodyHeight }) {
   if (!open) return null;
 
   return (
@@ -244,7 +269,7 @@ function Modal({ open, onClose, title, children, footer, maxWidth = 448, bodyOve
             <LucideIcon name="x" size={16} />
           </button>
         </div>
-        <div className="px-5 py-4" style={{ overflowY: bodyOverflowY }}>{children}</div>
+        <div className="px-5 py-4" style={{ overflowY: bodyOverflowY, height: bodyHeight }}>{children}</div>
         {footer && <div className="px-5 py-4 border-t border-[rgba(0,100,180,0.08)] flex items-center justify-end gap-2">{footer}</div>}
       </div>
     </div>
@@ -326,7 +351,7 @@ function CustomDropdown({
   );
 }
 
-function DueDateCalendar({ value, onSelect, onClose }) {
+function DueDateCalendar({ value, onSelect, onClose, placement = 'bottom' }) {
   const today = new Date();
   const todayStr = toDateStr(today.getFullYear(), today.getMonth(), today.getDate());
   const parsedValue = parseDateStr(value) || parseDateStr(todayStr);
@@ -344,7 +369,7 @@ function DueDateCalendar({ value, onSelect, onClose }) {
 
   return (
     <div
-      className="absolute z-20 top-full mt-2 left-0 w-[280px] max-w-[88vw] box-border overflow-hidden rounded-xl border border-[rgba(0,100,180,0.14)] bg-white shadow-[0_10px_28px_rgba(0,100,180,0.16)] p-3.5"
+      className={`absolute z-20 left-0 w-[280px] max-w-[88vw] box-border overflow-hidden rounded-xl border border-[rgba(0,100,180,0.14)] bg-white shadow-[0_10px_28px_rgba(0,100,180,0.16)] p-3.5 ${placement === 'top' ? 'bottom-full mb-2' : 'top-full mt-2'}`}
       onClick={(e) => e.stopPropagation()}
     >
       <div className="flex items-center justify-between mb-2.5">
@@ -521,7 +546,7 @@ function ServiceDetailModal({ open, onClose, svc, auditLog }) {
             <div key={`${log.time}-${idx}`} className="flex items-center gap-2 text-xs">
               <span className="text-emerald-500 flex-shrink-0"><LucideIcon name="arrow-up" size={12} /></span>
               <span className="text-slate-600 flex-1 truncate">{log.label}</span>
-              <span className="text-slate-400 flex-shrink-0">{log.time}</span>
+              <span className="text-slate-400 flex-shrink-0">{formatPublishedDate(log.time)}</span>
             </div>
           ))}
         </div>
@@ -574,7 +599,7 @@ function IntegrationControlTower({ services, auditLog, onBadgeClick, onIssueOpen
               color: totalDone === totalTickets ? '#10B981' : '#0099CC',
             }}
           >
-            {totalDone}/{totalTickets} 완료
+            {totalDone}/{totalTickets} 연동 완료
           </span>
         </div>
 
@@ -582,10 +607,8 @@ function IntegrationControlTower({ services, auditLog, onBadgeClick, onIssueOpen
           <div className="flex items-center gap-1.5 flex-shrink-0">
             <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: '#10B981' }} />
             <span className="text-xs text-slate-400">
-              최근 생성일:&nbsp;
-              <span className="font-semibold text-slate-600">{latestLog.time}</span>
-              &nbsp;
-              <span className="text-slate-400">({latestLog.user})</span>
+              최근 발행일:&nbsp;
+              <span className="font-semibold text-slate-600">{formatPublishedDate(latestLog.time)}</span>
             </span>
           </div>
         )}
@@ -604,8 +627,7 @@ function IntegrationControlTower({ services, auditLog, onBadgeClick, onIssueOpen
       {isMobile && latestLog && (
         <p className="text-xs text-slate-400 mt-2.5 flex items-center gap-1.5">
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 flex-shrink-0" />
-          최근 생성일: <span className="font-semibold text-slate-600">{latestLog.time}</span>
-          &nbsp;({latestLog.user})
+          최근 발행일: <span className="font-semibold text-slate-600">{formatPublishedDate(latestLog.time)}</span>
         </p>
       )}
     </div>
@@ -901,14 +923,14 @@ function buildInitialServices(minutes) {
     id: `MAN-${idx + 1}`,
     title: item.text || '액션 아이템',
     assignee: item.assignee || '미지정',
-    status: item.checked ? 'done' : 'todo',
+    status: 'todo',
   }));
 
   const notionTickets = (baseDecisions.length > 0 ? baseDecisions : [{ text: '결정 사항 없음' }]).map((item, idx) => ({
     id: `DOC-${idx + 1}`,
     title: item.text || '결정 사항',
     assignee: '회의록',
-    status: item.checked ? 'done' : 'progress',
+    status: 'progress',
   }));
 
   return [
@@ -947,9 +969,12 @@ export default function MeetingManualDetail() {
   const [issueDesc, setIssueDesc] = useState('회의에서 논의된 항목입니다. 내용을 확인하고 처리해주세요.');
   const [issuePriority, setIssuePriority] = useState('보통');
   const [issueAssignee, setIssueAssignee] = useState('');
+  const [issueDueDate, setIssueDueDate] = useState('미정');
   const [issueIndividualDrafts, setIssueIndividualDrafts] = useState([]);
   const [issuing, setIssuing] = useState(false);
   const [openDuePickerIdx, setOpenDuePickerIdx] = useState(null);
+  const [isIssueDuePickerOpen, setIsIssueDuePickerOpen] = useState(false);
+  const [issueIndividualDuePickerIdx, setIssueIndividualDuePickerIdx] = useState(null);
   const [isParticipantsModalOpen, setIsParticipantsModalOpen] = useState(false);
   const [participantsModalMembers, setParticipantsModalMembers] = useState([]);
   const [collapsedSections, setCollapsedSections] = useState({
@@ -969,6 +994,10 @@ export default function MeetingManualDetail() {
   });
 
   const isAnyModalOpen = Boolean(detailSvc || issueOpen || isParticipantsModalOpen);
+
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, []);
 
   const recordId = location.state?.recordId || location.state?.meetingId || '';
 
@@ -1011,11 +1040,7 @@ export default function MeetingManualDetail() {
 
   const [minutes, setMinutes] = useState(initialRecord);
   const [services, setServices] = useState(() => (initialRecord ? buildInitialServices(initialRecord) : []));
-  const [auditLog, setAuditLog] = useState(() => (
-    initialRecord
-      ? [{ svcId: 'notion', label: '직접 작성 회의록 저장', time: formatDisplayDate(initialRecord.date || initialRecord.rawDate), user: '작성자' }]
-      : []
-  ));
+  const [auditLog, setAuditLog] = useState([]);
 
   const summaryActions = useMemo(
     () => (Array.isArray(minutes?.actions) ? minutes.actions : []).map((action) => ({
@@ -1074,6 +1099,30 @@ export default function MeetingManualDetail() {
     return () => document.removeEventListener('mousedown', handleOutsideClick);
   }, [openDuePickerIdx]);
 
+  useEffect(() => {
+    if (!isIssueDuePickerOpen) return;
+
+    const handleOutsideClick = (event) => {
+      if (event.target instanceof Element && event.target.closest('[data-issue-due-picker-root]')) return;
+      setIsIssueDuePickerOpen(false);
+    };
+
+    document.addEventListener('mousedown', handleOutsideClick);
+    return () => document.removeEventListener('mousedown', handleOutsideClick);
+  }, [isIssueDuePickerOpen]);
+
+  useEffect(() => {
+    if (issueIndividualDuePickerIdx === null) return;
+
+    const handleOutsideClick = (event) => {
+      if (event.target instanceof Element && event.target.closest('[data-issue-individual-due-picker-root]')) return;
+      setIssueIndividualDuePickerIdx(null);
+    };
+
+    document.addEventListener('mousedown', handleOutsideClick);
+    return () => document.removeEventListener('mousedown', handleOutsideClick);
+  }, [issueIndividualDuePickerIdx]);
+
   const showToast = useCallback((message, type = 'success') => {
     setToast({ show: true, message, type });
     setTimeout(() => setToast({ show: false, message: '', type }), 2200);
@@ -1099,18 +1148,6 @@ export default function MeetingManualDetail() {
       return next;
     });
 
-    setServices((prev) =>
-      prev.map((svc) => {
-        if (svc.id !== 'jira') return svc;
-        return {
-          ...svc,
-          tickets: svc.tickets.map((ticket, idx) => {
-            if (idx !== index) return ticket;
-            return { ...ticket, status: ticket.status === 'done' ? 'todo' : 'done' };
-          }),
-        };
-      })
-    );
   }, [persistMinutes]);
 
   const backToMeetings = () => {
@@ -1142,9 +1179,12 @@ export default function MeetingManualDetail() {
     const first = issueActionItems[0];
     setIssueTitle(first?.text || '');
     setIssueAssignee(first?.assignee || '');
+    setIssueDueDate(first?.due || '미정');
     setIssueDesc('회의에서 논의된 항목입니다. 내용을 확인하고 처리해주세요.');
     setIssuePriority('보통');
     setIssueIndividualDrafts([]);
+    setIsIssueDuePickerOpen(false);
+    setIssueIndividualDuePickerIdx(null);
     setIssueOpen(true);
   }, [issueActionItems]);
 
@@ -1156,11 +1196,13 @@ export default function MeetingManualDetail() {
       : `${items[0]?.text || '업무'} 외 ${items.length - 1}건`;
     setIssueTitle(autoTitle);
     setIssueAssignee(items.length === 1 ? (items[0]?.assignee || '') : '');
+    setIssueDueDate(items.length === 1 ? (items[0]?.due || '미정') : '미정');
     setIssueIndividualDrafts(items.map((item) => ({
       title: item.text,
       assignee: item.assignee,
       due: item.due,
     })));
+    setIssueIndividualDuePickerIdx(null);
     setIssueStep(2);
   }, [issueActionItems, issueCheckedItems, selectedIssueSvc]);
 
@@ -1254,7 +1296,7 @@ export default function MeetingManualDetail() {
           id: `MAN-${idx + 1}`,
           title: item.text || '액션 아이템',
           assignee: item.assignee || '미지정',
-          status: item.checked ? 'done' : 'todo',
+          status: 'todo',
         }));
         return { ...svc, tickets };
       }
@@ -1263,7 +1305,7 @@ export default function MeetingManualDetail() {
           id: `DOC-${idx + 1}`,
           title: item.text || '결정 사항',
           assignee: '회의록',
-          status: item.checked ? 'done' : 'progress',
+          status: 'progress',
         }));
         return { ...svc, tickets };
       }
@@ -1296,7 +1338,7 @@ export default function MeetingManualDetail() {
         id: `DOC-${idx + 1}`,
         title: item.text || '결정 사항',
         assignee: '회의록',
-        status: item.checked ? 'done' : 'progress',
+        status: 'progress',
       }));
       return { ...svc, tickets };
     }));
@@ -1432,7 +1474,7 @@ export default function MeetingManualDetail() {
         id: `MAN-${idx + 1}`,
         title: item.text || '액션 아이템',
         assignee: item.assignee || '미지정',
-        status: item.checked ? 'done' : 'todo',
+        status: 'todo',
       }));
       return { ...svc, tickets };
     }));
@@ -1502,8 +1544,8 @@ export default function MeetingManualDetail() {
     );
 
     const now = new Date();
-    const time = `${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-    setAuditLog((prev) => [...prev, { svcId: targetSvc, label: `직접 작성 항목 연동 (${issueCheckedItems.size}건)`, time, user: '작성자' }]);
+    const time = `${now.getFullYear()}년 ${now.getMonth() + 1}월 ${now.getDate()}일`;
+    setAuditLog((prev) => [...prev, { svcId: targetSvc, label: `직접 작성 항목 연동 (${issueCheckedItems.size}건)`, time }]);
 
     setIssuing(false);
     setIssueOpen(false);
@@ -2122,7 +2164,8 @@ export default function MeetingManualDetail() {
         onClose={issuing ? undefined : () => setIssueOpen(false)}
         title="업무 보내기"
         maxWidth={500}
-        bodyOverflowY={issueStep === 1 ? 'hidden' : 'auto'}
+        bodyOverflowY="auto"
+        bodyHeight={isMobile ? '56vh' : '460px'}
         footer={(
           issueStep === 1 ? (
             <>
@@ -2319,7 +2362,7 @@ export default function MeetingManualDetail() {
                 </span>
                 <span className="text-xs font-bold" style={{ color: '#0099CC' }}>
                   {selectedIssueSvcObj?.name} 생성 예정 · {issueCheckedItems.size}건
-                  {issueMode === 'individual' && <span className="ml-1.5 text-purple-500">→ {issueCheckedItems.size}개 티켓</span>}
+                  {issueMode === 'individual' && <span className="ml-1.5 text-purple-500">→ {issueCheckedItems.size}개 업무</span>}
                 </span>
               </div>
               <div className="space-y-1">
@@ -2382,6 +2425,31 @@ export default function MeetingManualDetail() {
                     />
                   </div>
                 </div>
+                <div className="relative" data-issue-due-picker-root>
+                  <label className="text-xs font-semibold text-slate-400 block mb-1.5">마감일</label>
+                  <button
+                    type="button"
+                    onClick={() => !issuing && setIsIssueDuePickerOpen((prev) => !prev)}
+                    disabled={issuing}
+                    className="w-full text-sm px-3 py-2.5 rounded-lg border outline-none transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer text-left flex items-center justify-between gap-2"
+                    style={{ borderColor: 'rgba(0,100,180,0.12)', background: '#F8FAFF', color: '#0D1B2A', fontFamily: 'inherit' }}
+                  >
+                    <span className={`${issueDueDate && issueDueDate !== '미정' ? 'text-slate-700' : 'text-slate-400'}`}>
+                      {issueDueDate || '마감일'}
+                    </span>
+                    <LucideIcon name="chevron-down" size={14} color={PROJECTLIST_CHEVRON_COLOR} strokeWidth={2} />
+                  </button>
+                  {isIssueDuePickerOpen && (
+                    <DueDateCalendar
+                      value={parseDueToDateStr(issueDueDate) || toDateStr(new Date().getFullYear(), new Date().getMonth(), new Date().getDate())}
+                      onSelect={(dateStr) => {
+                        setIssueDueDate(formatDueFromDateStr(dateStr) || '미정');
+                      }}
+                      onClose={() => setIsIssueDuePickerOpen(false)}
+                      placement="top"
+                    />
+                  )}
+                </div>
               </div>
             )}
 
@@ -2422,6 +2490,31 @@ export default function MeetingManualDetail() {
                         options={ASSIGNEE_OPTIONS}
                         placeholder="담당자 선택"
                       />
+                    </div>
+                    <div className="relative" data-issue-individual-due-picker-root>
+                      <label className="text-xs font-semibold text-slate-400 block mb-1">마감일</label>
+                      <button
+                        type="button"
+                        onClick={() => setIssueIndividualDuePickerIdx((prev) => (prev === idx ? null : idx))}
+                        className="w-full text-xs px-2.5 py-1.5 rounded-lg border outline-none transition-colors cursor-pointer text-left flex items-center justify-between gap-2"
+                        style={{ borderColor: 'rgba(0,100,180,0.12)', background: '#fff', color: '#0D1B2A', fontFamily: 'inherit' }}
+                      >
+                        <span className={`${item.due && item.due !== '미정' ? 'text-slate-700' : 'text-slate-400'}`}>
+                          {item.due || '마감일'}
+                        </span>
+                        <LucideIcon name="chevron-down" size={12} color={PROJECTLIST_CHEVRON_COLOR} strokeWidth={2} />
+                      </button>
+                      {issueIndividualDuePickerIdx === idx && (
+                        <DueDateCalendar
+                          value={parseDueToDateStr(item.due) || toDateStr(new Date().getFullYear(), new Date().getMonth(), new Date().getDate())}
+                          onSelect={(dateStr) => {
+                            const nextDue = formatDueFromDateStr(dateStr) || '미정';
+                            setIssueIndividualDrafts((prev) => prev.map((draft, i) => (i === idx ? { ...draft, due: nextDue } : draft)));
+                          }}
+                          onClose={() => setIssueIndividualDuePickerIdx(null)}
+                          placement="top"
+                        />
+                      )}
                     </div>
                   </div>
                 ))}

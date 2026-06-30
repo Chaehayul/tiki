@@ -988,6 +988,10 @@ export default function ProjectMeetings() {
     const actionDescriptionRef = useRef(null);
 
     useEffect(() => {
+        window.scrollTo(0, 0);
+    }, []);
+
+    useEffect(() => {
         const handleResize = () => setIsMobile(window.innerWidth < 768);
         window.addEventListener('resize', handleResize);
         return () => window.removeEventListener('resize', handleResize);
@@ -1587,10 +1591,15 @@ export default function ProjectMeetings() {
         toDateLabel(projectCatalog.find((item) => isSameProjectId(item?.id, project.id))?.createdAt) ||
         new Date().toISOString().slice(0, 10);
 
-    // ✅ 수정된 그리드 컬럼 비율 — 각 컬럼이 컨텐츠에 맞게 배분
+    // 데스크톱 해야 할 일 표 컬럼 비율 (체크 3%, 해야 할 일 50%, 담당자 10%, 상태 10%, 출처 15%, 마감일 10%, 더보기 2%)
     const actionTableGridStyle = {
         gridTemplateColumns:
-            '36px minmax(220px, 2.4fr) minmax(120px, 1fr) minmax(112px, 1fr) minmax(150px, 1.4fr) minmax(96px, 0.9fr) minmax(96px, 0.9fr)',
+            '3% 50% 10% 10% 15% 10% 2%',
+    };
+
+    // 데스크톱 회의기록 표 컬럼 비율 (날짜/제목/상태/태그/더보기)
+    const meetingTableGridStyle = {
+        gridTemplateColumns: '16% 34% 16% 27% 7%',
     };
 
     const actionCompactFilterButtonClass = (isOpen) =>
@@ -2024,12 +2033,15 @@ export default function ProjectMeetings() {
                                             </div>
                                         ) : (
                                             <>
-                                                <div className="hidden md:grid grid-cols-12 px-4 py-3 text-xs font-bold text-[#5A6F8A] bg-[#F8FAFF] border-b border-[rgba(0,100,180,0.1)] rounded-t-2xl">
-                                                    <div className="col-span-2">회의 날짜</div>
-                                                    <div className="col-span-3">회의 제목</div>
-                                                    <div className="col-span-2">상태</div>
-                                                    <div className="col-span-4">주요 태그</div>
-                                                    <div className="col-span-1" />
+                                                <div
+                                                    className="hidden md:grid px-4 py-3 text-xs font-bold text-[#5A6F8A] bg-[#F8FAFF] border-b border-[rgba(0,100,180,0.1)] rounded-t-2xl"
+                                                    style={meetingTableGridStyle}
+                                                >
+                                                    <div className="text-left">회의 날짜</div>
+                                                    <div className="text-left">회의 제목</div>
+                                                    <div className="text-left">상태</div>
+                                                    <div className="text-left">주요 태그</div>
+                                                    <div />
                                                 </div>
                                                 <div className="hidden md:block">
                                                     {visibleMeetings.map((meeting) => {
@@ -2057,9 +2069,10 @@ export default function ProjectMeetings() {
                                                         return (
                                                             <div
                                                                 key={meeting.id}
-                                                                className="grid grid-cols-12 px-4 py-3 items-center border-b border-[rgba(0,100,180,0.08)] last:border-b-0"
+                                                                className="grid px-4 py-3 items-center border-b border-[rgba(0,100,180,0.08)] last:border-b-0"
+                                                                style={meetingTableGridStyle}
                                                             >
-                                                                <div className="col-span-2 text-sm text-[#5A6F8A]">
+                                                                <div className="text-left text-sm text-[#5A6F8A]">
                                                                     {formatDueDateDisplay(meeting.date)}
                                                                 </div>
                                                                 {isEditing ? (
@@ -2070,7 +2083,7 @@ export default function ProjectMeetings() {
                                                                             setEditMeetingTitle(e.target.value)
                                                                         }
                                                                         onKeyDown={onTitleKeyDown}
-                                                                        className="col-span-3 w-full pr-3 px-2.5 py-1.5 text-sm rounded-lg border border-[rgba(0,100,180,0.16)] bg-white focus:outline-none focus:border-[#0099CC]"
+                                                                        className="w-full pr-4 px-2.5 py-1.5 text-sm rounded-lg border border-[rgba(0,100,180,0.16)] bg-white focus:outline-none focus:border-[#0099CC]"
                                                                     />
                                                                 ) : (
                                                                     <button
@@ -2094,21 +2107,20 @@ export default function ProjectMeetings() {
                                                                                 }
                                                                             )
                                                                         }
-                                                                        className="col-span-3 text-left text-sm font-semibold text-[#0D1B2A] hover:text-[#0099CC]"
+                                                                        title={meeting.title}
+                                                                        className="w-full pr-4 text-left text-sm font-semibold text-[#0D1B2A] hover:text-[#0099CC] leading-snug line-clamp-2 break-all"
                                                                     >
                                                                         {meeting.title}
                                                                     </button>
                                                                 )}
-                                                                <div
-                                                                    className={`col-span-2 ${isEditing ? 'pl-2' : ''}`}
-                                                                >
+                                                                <div className="text-left">
                                                                     <span
                                                                         className={`px-2 py-0.5 rounded-full text-xs font-semibold ${statusBadgeClass(meeting.status)}`}
                                                                     >
                                                                         {meeting.status}
                                                                     </span>
                                                                 </div>
-                                                                <div className="col-span-4 flex flex-wrap gap-1">
+                                                                <div className="flex flex-wrap gap-1 text-left">
                                                                     {isEditing ? (
                                                                         <div className="w-full min-h-[36px] px-2 py-1 rounded-lg border border-[rgba(0,100,180,0.16)] bg-white flex flex-wrap items-center gap-1">
                                                                             {editMeetingTagsDraft.map((tag) => (
@@ -2154,7 +2166,7 @@ export default function ProjectMeetings() {
                                                                     )}
                                                                 </div>
                                                                 <div
-                                                                    className="col-span-1 flex justify-end"
+                                                                    className="flex justify-end"
                                                                     data-more-menu-root
                                                                 >
                                                                     {isEditing ? (
@@ -2419,7 +2431,8 @@ export default function ProjectMeetings() {
                                                                                     }
                                                                                 )
                                                                             }
-                                                                            className="text-left text-sm font-semibold text-[#0D1B2A] leading-snug"
+                                                                            title={meeting.title}
+                                                                            className="w-full text-left text-sm font-semibold text-[#0D1B2A] leading-snug line-clamp-2 break-all"
                                                                         >
                                                                             {meeting.title}
                                                                         </button>
@@ -2646,11 +2659,11 @@ export default function ProjectMeetings() {
                                                 style={actionTableGridStyle}
                                             >
                                                 <div />
-                                                <div>해야 할 일</div>
-                                                <div>담당자</div>
-                                                <div>상태</div>
-                                                <div>회의록 출처</div>
-                                                <div>마감일</div>
+                                                <div className="text-left">해야 할 일</div>
+                                                <div className="text-left">담당자</div>
+                                                <div className="text-left">상태</div>
+                                                <div className="text-left">회의록 출처</div>
+                                                <div className="text-left">마감일</div>
                                                 <div />
                                             </div>
 
@@ -2680,21 +2693,21 @@ export default function ProjectMeetings() {
                                                             </div>
 
                                                             {/* 해야 할일 텍스트 */}
-                                                            <div className="flex items-center min-h-[44px] pr-0.5">
+                                                            <div className="flex items-center justify-start min-h-[44px] pr-10 text-left">
                                                                 <span className="text-sm font-medium text-[#0D1B2A] leading-snug line-clamp-2">
                                                                     {item.text}
                                                                 </span>
                                                             </div>
 
                                                             {/* 담당자 */}
-                                                            <div className="flex items-center min-h-[44px]">
+                                                            <div className="flex items-center justify-start min-h-[44px] text-left">
                                                                 <span className="text-sm text-[#0D1B2A]">
                                                                     {item.assignee}
                                                                 </span>
                                                             </div>
 
                                                             {/* 상태 배지 (수동 변경 금지) */}
-                                                            <div className="flex items-center">
+                                                            <div className="flex items-center justify-start text-left">
                                                                 <span
                                                                     className="inline-flex items-center px-2 py-1 rounded-lg text-xs font-semibold border"
                                                                     style={{
@@ -2708,7 +2721,7 @@ export default function ProjectMeetings() {
                                                             </div>
 
                                                             {/* ✅ 회의록 출처 */}
-                                                            <div className="flex items-center min-h-[44px] pr-1">
+                                                            <div className="flex items-center justify-start min-h-[44px] pr-4 text-left">
                                                                 <span
                                                                     className="text-sm text-[#5A6F8A] truncate"
                                                                     title={item.source}
@@ -2718,7 +2731,7 @@ export default function ProjectMeetings() {
                                                             </div>
 
                                                             {/* 마감일 */}
-                                                            <div className="flex items-center min-h-[44px]">
+                                                            <div className="flex items-center justify-start min-h-[44px] text-left">
                                                                 <span className="text-sm text-[#0D1B2A]">
                                                                     {formatDueDateDisplay(item.due)}
                                                                 </span>

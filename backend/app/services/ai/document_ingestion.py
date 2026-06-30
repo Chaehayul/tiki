@@ -43,6 +43,26 @@ def _normalize_paragraph(text: str) -> str:
     return text.strip()
 
 
+def _infer_document_title(pages: list[str], metadata: dict[str, Any], path: Path) -> str:
+    explicit_title = _normalize_text(metadata.get("source_title"))
+    if explicit_title:
+        return explicit_title
+
+    for page in pages:
+        for line in page.splitlines():
+            candidate = _normalize_text(line)
+            if not candidate:
+                continue
+            candidate = re.sub(r"^[\s\-\*\d\.\)\(\[\]#]+", "", candidate).strip()
+            if not candidate:
+                continue
+            if len(candidate) <= 60 and not candidate.endswith((".", ":", ";")):
+                return candidate
+            break
+
+    return path.stem
+
+
 def _decode_pdf_literal_string(token: bytes) -> bytes:
     if not token or len(token) < 2 or token[:1] != b"(" or token[-1:] != b")":
         return token
@@ -487,7 +507,7 @@ def load_document_file(file_path: str | Path) -> DocumentExtractionResult:
     pages, metadata = _extract_document_pages(path)
     text = _normalize_paragraph("\n\n".join(page for page in pages if page.strip()))
     chunks = _split_text_into_chunks(pages)
-    source_title = metadata.get("source_title") or path.stem
+    source_title = _infer_document_title(pages, metadata, path)
     masked_text = text
 
     return DocumentExtractionResult(

@@ -677,7 +677,7 @@ function AgendaCompletionSection({ actions, onToggleAction }) {
 }
 
 /* ─── Modal Wrapper ──────────────────────────────────── */
-function Modal({ open, onClose, title, children, footer, maxWidth = 448, bodyOverflowY = "auto" }) {
+function Modal({ open, onClose, title, children, footer, maxWidth = 448, bodyOverflowY = "auto", bodyHeight }) {
   if (!open) return null;
   return (
     <div
@@ -705,7 +705,7 @@ function Modal({ open, onClose, title, children, footer, maxWidth = 448, bodyOve
             <LucideIcon name="x" size={18} />
           </button>
         </div>
-        <div className="px-6 py-5 flex-1" style={{ overflowY: bodyOverflowY }}>
+        <div className={`px-6 py-5 ${bodyHeight ? "" : "flex-1"}`} style={{ overflowY: bodyOverflowY, height: bodyHeight }}>
           {children}
         </div>
         {footer && (
@@ -1170,7 +1170,8 @@ function IssueModal({ open, onClose, onIssued, services }) {
       onClose={issuing ? undefined : handleClose}
       title="업무 보내기"
       maxWidth={500}
-      bodyOverflowY={step === 1 ? "hidden" : "auto"}
+      bodyOverflowY="auto"
+      bodyHeight="min(460px, 56vh)"
       footer={
         step === 1 ? (
           <>
@@ -1291,10 +1292,9 @@ function IssueModal({ open, onClose, onIssued, services }) {
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="text-sm text-slate-800 leading-snug">{item.text}</p>
-                      <div className="mt-0.5 flex items-center gap-1.5 text-xs text-slate-400">
-                        <span>{item.assignee}</span>
-                        <span aria-hidden="true">·</span>
-                        <span>{getDueLabel(idx)}</span>
+                      <div className="mt-0.5 flex items-center justify-between gap-2">
+                        <p className="text-xs text-slate-400">{item.assignee || "미정"}</p>
+                        <span className="text-xs text-slate-400">{getDueLabel(idx)}</span>
                       </div>
                     </div>
                   </div>
@@ -1389,7 +1389,7 @@ function IssueModal({ open, onClose, onIssued, services }) {
                 <p key={i} className="text-xs text-slate-500 flex items-center gap-1.5">
                   <span className="text-cyan-400">·</span>
                   {item.text}
-                  <span className="text-slate-400">({item.assignee})</span>
+                  <span className="text-slate-400">({item.assignee || "미정"})</span>
                 </p>
               ))}
             </div>
@@ -1725,7 +1725,7 @@ function ActionItem({ item, checked, onToggle }) {
           {item.text}
         </p>
         <p className="text-xs text-slate-400 mt-0.5">
-          {item.assignee}{checked ? " · 완료" : item.due ? ` · ${normalizeDueLabel(item.due) || item.due}` : ""}
+          {item.assignee || "미정"}{checked ? " · 완료" : item.due ? ` · ${normalizeDueLabel(item.due) || item.due}` : ""}
         </p>
       </div>
       {checked && (

@@ -341,7 +341,7 @@ export default function TikiApp() {
       return;
     }
 
-    setFiles((currentFiles) => [...acceptedFiles, ...currentFiles]);
+    setFiles((currentFiles) => [...currentFiles, ...acceptedFiles]);
     setPhase("IDLE");
     setError(
       skippedCount > 0

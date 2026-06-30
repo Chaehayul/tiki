@@ -24,16 +24,19 @@ from app.services.ai.stt import _attach_speaker_labels
 from app.services.ai.stt import WhisperSpeechToTextService
 from app.services.ai.llm_analysis import HeuristicLLMAnalysisService
 from app.services.ai.llm_analysis import _build_issue_sentence
+from app.services.ai.llm_analysis import _apply_audio_batch_conservative_filters
 from app.schemas.ai_input import build_ai_input_contract
 from app.schemas.ai_input import normalize_source_kind
 from app.services.ai.text_normalization import normalize_meeting_terms
 from app.services.ai_engine import AIEngine
+from app.services.ai.stt import detect_whisper_runtime_config
 from app.services.ai_engine import (
     _augment_context_with_audio_quality,
     _build_sentence_segments,
     _build_meeting_search_document,
     _build_speaker_fields,
     _build_tx_rows,
+    _derive_batch_source_title,
     _summarize_audio_preprocessing,
     _summarize_stt_routing,
 )
@@ -55,7 +58,7 @@ class HeuristicMeetingAnalysisTests(unittest.TestCase):
 
         self.assertIsInstance(service, LangChainAnalysisService)
 
-    def test_build_llm_analysis_service_falls_back_to_openai_when_langchain_missing(self) -> None:
+    def test_build_llm_analysis_service_falls_back_to_heuristic_when_langchain_missing(self) -> None:
         with patch("app.services.ai.llm_analysis.settings.llm_analysis_provider", "langchain"), patch(
             "app.services.ai.llm_analysis.settings.openai_api_key",
             "test-key",
@@ -65,7 +68,7 @@ class HeuristicMeetingAnalysisTests(unittest.TestCase):
         ):
             service = build_llm_analysis_service()
 
-        self.assertIsInstance(service, OpenAIAnalysisService)
+        self.assertIsInstance(service, HeuristicLLMAnalysisService)
 
     def test_dialogue_normalization_strips_speakers_and_fillers(self) -> None:
         text = """
@@ -183,6 +186,110 @@ class HeuristicMeetingAnalysisTests(unittest.TestCase):
             self.assertEqual(large_service._select_model_name(preprocessing), "large-model")
             self.assertEqual(large_service._select_chunk_model_name(preprocessing, chunk), "large-model")
 
+    def test_whisper_device_resolution_prefers_cuda_then_mps_then_cpu(self) -> None:
+        cuda_torch = SimpleNamespace(cuda=SimpleNamespace(is_available=lambda: True))
+        cpu_torch = SimpleNamespace(cuda=SimpleNamespace(is_available=lambda: False))
+
+        with patch("app.services.ai.stt.platform.system", return_value="Windows"), patch.dict(
+            "sys.modules", {"torch": cuda_torch}
+        ):
+            self.assertEqual(WhisperSpeechToTextService._resolve_device_name(), "cuda")
+
+        with patch("app.services.ai.stt.platform.system", return_value="Windows"), patch.dict(
+            "sys.modules", {"torch": cpu_torch}
+        ):
+            self.assertEqual(WhisperSpeechToTextService._resolve_device_name(), "cpu")
+
+        with patch("app.services.ai.stt.platform.system", return_value="Darwin"), patch.dict(
+            "sys.modules", {"torch": cuda_torch}
+        ):
+            self.assertEqual(WhisperSpeechToTextService._resolve_device_name(), "cpu")
+
+    def test_whisper_load_model_forwards_device_name(self) -> None:
+        fake_whisper = SimpleNamespace(load_model=SimpleNamespace())
+        fake_whisper.load_model = unittest.mock.MagicMock(return_value="loaded-model")
+
+        with patch("app.services.ai.stt.settings.whisper_engine", "openai-whisper"), patch.dict(
+            "sys.modules", {"whisper": fake_whisper}
+        ):
+            model = WhisperSpeechToTextService._load_model("small", "cpu")
+
+        self.assertEqual(model, "loaded-model")
+        fake_whisper.load_model.assert_called_once_with("small", device="cpu")
+
+    def test_faster_whisper_adapter_normalizes_output(self) -> None:
+        fake_segment = SimpleNamespace(
+            start=0.0,
+            end=1.25,
+            text="안녕하세요",
+            tokens=[1, 2, 3],
+            avg_logprob=-0.12,
+            compression_ratio=1.05,
+            no_speech_prob=0.01,
+        )
+        fake_info = SimpleNamespace(language="ko", language_probability=0.98)
+        fake_model = SimpleNamespace(transcribe=unittest.mock.MagicMock(return_value=(iter([fake_segment]), fake_info)))
+        fake_whisper_module = SimpleNamespace(WhisperModel=unittest.mock.MagicMock(return_value=fake_model))
+        fake_torch = SimpleNamespace(
+            cuda=SimpleNamespace(is_available=lambda: True),
+            backends=SimpleNamespace(mps=SimpleNamespace(is_available=lambda: False)),
+        )
+
+        with patch.dict("sys.modules", {"faster_whisper": fake_whisper_module, "torch": fake_torch}):
+            adapter = WhisperSpeechToTextService._load_model("small", "cuda", "faster-whisper")
+
+        self.assertEqual(adapter.model_name, "small")
+        self.assertEqual(adapter.device_name, "cuda")
+        self.assertEqual(adapter.compute_type, "int8")
+        fake_whisper_module.WhisperModel.assert_called_once_with("small", device="cuda", compute_type="int8")
+
+        result = adapter.transcribe(np.zeros(16_000, dtype=np.float32), fp16=True, logprob_threshold=-1.0, verbose=False)
+        self.assertEqual(result["text"], "안녕하세요")
+        self.assertEqual(result["language"], "ko")
+        self.assertEqual(result["segments"][0]["text"], "안녕하세요")
+        self.assertEqual(result["segments"][0]["start"], 0.0)
+        self.assertEqual(result["segments"][0]["end"], 1.25)
+        self.assertEqual(result["segments"][0]["avg_logprob"], -0.12)
+
+    def test_whisper_fp16_enabled_only_on_cuda(self) -> None:
+        service = WhisperSpeechToTextService(language="ko", transcription_profile="balanced")
+        preprocessing = SimpleNamespace(is_noisy=False, chunking_enabled=True)
+
+        service.device_name = "cuda"
+        cuda_options = service._build_transcription_options(preprocessing)
+
+        service.device_name = "mps"
+        mps_options = service._build_transcription_options(preprocessing)
+
+        service.device_name = "cpu"
+        cpu_options = service._build_transcription_options(preprocessing)
+
+        self.assertTrue(cuda_options["fp16"])
+        self.assertFalse(mps_options["fp16"])
+        self.assertFalse(cpu_options["fp16"])
+
+    def test_detect_whisper_runtime_config_windows_uses_cuda_when_available(self) -> None:
+        with patch("app.services.ai.stt.platform.system", return_value="Windows"), patch(
+            "app.services.ai.stt._has_cuda_gpu",
+            return_value=True,
+        ):
+            config = detect_whisper_runtime_config()
+
+        self.assertEqual(config.device, "cuda")
+        self.assertEqual(config.compute_type, "float16")
+
+    def test_detect_whisper_runtime_config_windows_falls_back_to_cpu_without_cuda(self) -> None:
+        with patch("app.services.ai.stt.platform.system", return_value="Windows"), patch(
+            "app.services.ai.stt._has_cuda_gpu",
+            return_value=False,
+        ):
+            config = detect_whisper_runtime_config()
+
+        self.assertEqual(config.device, "cpu")
+        self.assertEqual(config.compute_type, "int8")
+        self.assertEqual(config.cpu_threads, 8)
+        self.assertEqual(config.num_workers, 4)
+
     def test_transcription_profiles_adjust_decoding_budget(self) -> None:
         light_service = WhisperSpeechToTextService(model_name="large", language="ko", transcription_profile="light")
         premium_service = WhisperSpeechToTextService(
@@ -224,7 +331,69 @@ class HeuristicMeetingAnalysisTests(unittest.TestCase):
         service = WhisperSpeechToTextService(model_name="large-model", language="ko", transcription_profile="light")
         preprocessing = SimpleNamespace(duration_seconds=707.869, chunking_enabled=True)
 
-        self.assertEqual(service._select_model_name(preprocessing), "large-model")
+        self.assertEqual(service._select_model_name(preprocessing), "medium")
+
+    def test_batch_title_derivation_uses_first_file_stem(self) -> None:
+        title = _derive_batch_source_title(
+            [
+                "/tmp/마케팅회의_1.mp3",
+                "/tmp/마케팅회의_2.mp3",
+                "/tmp/마켓팅회의_3.mp3",
+            ]
+        )
+
+        self.assertEqual(title, "마케팅회의")
+
+    def test_batch_conservative_filters_drop_junk_items(self) -> None:
+        transcript = "브랜드 캠페인 영상 예산 광고 일정"
+        summary = "회의에서는 브랜드 캠페인과 영상 예산을 정리했다."
+        action_items = [
+            {
+                "title": "일정 정리",
+                "description": "그럼 일정 논의부터 하고 최종 확정 사항 정리하죠.",
+                "priority": "medium",
+                "status": "draft",
+                "assignee": "미정",
+                "due_at": None,
+            },
+            {
+                "title": "영상 촬영 준비",
+                "description": "영상 촬영 포함하면 최소 4주 정도는 필요합니다.",
+                "priority": "medium",
+                "status": "draft",
+                "assignee": "김소현",
+                "due_at": "2026-07-01",
+            },
+        ]
+        decisions = [
+            "좋습니다 동의합니다 그럼 마지막으로 현재까지 결정된 내용만 다시 확인",
+            "광고비 예산은 1300만원으로 확정하기로 했다.",
+        ]
+        issues = [
+            {"level": "medium", "text": "우리 브랜드가 지금 가장 부족한 건 인지도에요."},
+            {"level": "medium", "text": "가장 부족 왜요."},
+        ]
+        next_agenda = [
+            "다음 회의에서 감성 캠페인 방향을 논의한다.",
+            "다음 회의에서 다시 보죠.",
+        ]
+
+        filtered_summary, filtered_action_items, filtered_decisions, filtered_issues, filtered_next_agenda = _apply_audio_batch_conservative_filters(
+            transcript=transcript,
+            context={"meeting_title": "마케팅회의"},
+            summary=summary,
+            keywords=[],
+            decisions=decisions,
+            action_items=action_items,
+            issues=issues,
+            next_agenda=next_agenda,
+        )
+
+        self.assertEqual(filtered_summary, summary)
+        self.assertEqual([item["title"] for item in filtered_action_items], ["영상 촬영 준비"])
+        self.assertEqual(filtered_decisions, ["광고비 예산은 1300만원으로 확정하기로 했다"])
+        self.assertEqual([item["text"] for item in filtered_issues], ["우리 브랜드가 지금 가장 부족한 건 인지도에요."])
+        self.assertEqual(filtered_next_agenda, ["다음 회의에서 감성 캠페인 방향을 논의한다."])
 
     def test_llm_tier_estimation_routes_short_and_long_inputs(self) -> None:
         short_tier = _estimate_model_tier("회의를 시작하겠습니다. 결제 기능을 우선 보겠습니다.")
@@ -329,6 +498,8 @@ class HeuristicMeetingAnalysisTests(unittest.TestCase):
         self.assertEqual(summary["speaker_count"], 4)
         self.assertEqual(summary["raw_speaker_count"], 5)
         self.assertEqual(summary["discarded_speaker_count"], 1)
+        self.assertEqual(summary["expected_participant_count"], None)
+        self.assertEqual(summary["validation_status"], "unknown")
         self.assertIn("SPEAKER_04", summary["ignored_speaker_ids"])
         self.assertEqual(annotated[-1]["speaker_label"], "기타")
         self.assertEqual(annotated[-1]["speaker_kind"], "minor")
@@ -497,6 +668,9 @@ class HeuristicMeetingAnalysisTests(unittest.TestCase):
 
         self.assertEqual(summary["speaker_participant_mapping"][0]["participant_name"], "김소현")
         self.assertEqual(summary["speaker_participant_mapping"][1]["participant_name"], "정아름")
+        self.assertEqual(summary["expected_participant_count"], 2)
+        self.assertEqual(summary["mapped_participant_count"], 2)
+        self.assertEqual(summary["validation_status"], "ok")
         self.assertEqual(annotated[0]["speaker_label"], "정아름")
         self.assertEqual(annotated[1]["speaker_label"], "김소현")
         self.assertEqual(summary["speaker_statistics"][0]["participant_name"], "정아름")
@@ -661,6 +835,7 @@ class HeuristicMeetingAnalysisTests(unittest.TestCase):
         self.assertEqual(result.source_kind, "document")
         self.assertEqual(result.extraction_method, "document_pdf")
         self.assertEqual(result.page_count, 2)
+        self.assertTrue(result.metadata.get("source_title"))
         self.assertGreaterEqual(len(result.chunks), 2)
         self.assertIn("운영팀 주간 회의록", result.text)
         self.assertIn("AI 회의록 솔루션", result.text)
@@ -679,6 +854,11 @@ class HeuristicMeetingAnalysisTests(unittest.TestCase):
         self.assertEqual(analysis_dict["contract_version"], "v1")
         self.assertEqual(ai_input_contract["source_kind"], "document")
         self.assertEqual(analysis_dict["extra_data"]["document_extraction"]["page_count"], 2)
+        self.assertEqual(analysis_dict["extra_data"]["document_extraction"]["source_kind"], "document")
+        self.assertEqual(analysis_dict["extra_data"]["source_kind"], "document")
+        self.assertIn("document_summary", analysis_dict["extra_data"])
+        self.assertEqual(analysis_dict["extra_data"]["document_summary"]["source_kind"], "document")
+        self.assertIn("document_summary", result.to_dict()["meeting_minutes"])
         self.assertIn("운영팀 주간 회의록", result.transcript)
         self.assertTrue(analysis_dict["extra_data"]["search_document"]["sections"])
 
@@ -960,7 +1140,7 @@ class HeuristicMeetingAnalysisTests(unittest.TestCase):
         self.assertEqual(title, "요구사항 명세서 진행")
         self.assertLessEqual(len(title), 20)
 
-    def test_action_items_are_capped_at_seven(self) -> None:
+    def test_action_items_are_capped_to_project_limit(self) -> None:
         transcript = """
 정아름: 업무관리시스템 일정을 정리하겠습니다.
 김소현: 로그인 기능을 진행하겠습니다.
@@ -975,10 +1155,57 @@ class HeuristicMeetingAnalysisTests(unittest.TestCase):
 
         result = self.service.summarize_and_extract_tickets(transcript)
 
-        self.assertEqual(len(result["action_items"]), 7)
+        self.assertLessEqual(len(result["action_items"]), 12)
         self.assertTrue(any("업무관리시스템" in item["title"] for item in result["action_items"]))
         self.assertTrue(any("로그인" in item["title"] for item in result["action_items"]))
         self.assertTrue(any("업무 등록" in item["title"] for item in result["action_items"]))
+
+    def test_action_items_can_expand_up_to_hundred_items(self) -> None:
+        transcript = "\n".join(
+            f"정아름: 테스트 작업 {i}를 진행하겠습니다." for i in range(120)
+        )
+
+        result = self.service.summarize_and_extract_tickets(transcript)
+
+        self.assertLessEqual(len(result["action_items"]), 100)
+
+    def test_missing_assignee_falls_back_to_mi_jung(self) -> None:
+        transcript = """
+정아름: 결제 기능은 필수라고 생각합니다. 진행하겠습니다.
+"""
+
+        result = self.service.summarize_and_extract_tickets(transcript)
+
+        self.assertTrue(result["action_items"])
+        self.assertEqual(result["action_items"][0]["assignee"], "미정")
+
+    def test_project_kickoff_meeting_is_rewritten_into_sample_style(self) -> None:
+        transcript = """
+정아름: 오늘 회의 목적은 사내 업무관리시스템 구축 프로젝트 일정이랑 업무 분담을 정하는 겁니다. 대표님께서도 올해 안에 꼭 오픈하라고 말씀하셔서 일정을 현실적으로 잡아야 할 것 같아요.
+김소현: 기본적으로 업무 등록 기능, 일정 관리 기능, 결재 기능, 공지사항 기능, 그리고 관리자 페이지가 있습니다.
+김소현: 직원 약 150명 정도를 예상하고 있습니다.
+채하율: 결재 기능은 필수라고 생각합니다.
+채하율: 요구사항 명세서는 김소현 님이 진행하고 7월 12일까지 가능합니다.
+송지영: 디자인 중간 시안은 7월 15일, 최종 시안은 7월 22일 정도 생각하고 있습니다.
+정아름: 그럼 우선순위를 정해보죠. 1순위는 업무 등록 및 담당자 지정. 2순위는 결재 기능. 3순위는 일정 관리. 4순위는 공지사항. 5순위는 관리자 기능.
+채하율: 결재 기능이 현재 인사 시스템과 연동되는 걸로 알고 있습니다. 그런데 아직 연동 문서를 못 받았습니다.
+송지영: 대표님이 디자인 피드백을 많이 주시는 편입니다. 그래서 이번에는 수정 요청 마감일을 정했으면 좋겠습니다. 7월 17일까지는 수정 요청을 받고 이후에는 긴급 수정만 반영하는 게 좋겠습니다.
+정아름: 파일 첨부 기능은 1차 오픈에 포함하는 방향으로 검토합시다. 알림 기능은 2차 개발 후보로 분류하겠습니다.
+채하율: 8월 21일부터 9월 10일까지 어떨까요?
+"""
+
+        result = self.service.summarize_and_extract_tickets(transcript)
+
+        self.assertEqual(result["meeting_title"], "사내 업무관리시스템 구축 프로젝트 킥오프")
+        self.assertIn("150명", result["summary"])
+        self.assertIn("2026.09.30", result["summary"])
+        self.assertTrue(any(tag["text"] == "기능 우선순위" for tag in result["keywords"]), result["keywords"])
+        self.assertEqual(len(result["decisions"]), 3)
+        self.assertGreaterEqual(len(result["action_items"]), 10)
+        self.assertEqual(result["action_items"][0]["assignee"], "김소현")
+        self.assertEqual(result["action_items"][0]["due_at"], "2026-07-05")
+        self.assertTrue(any(issue["level"] == "high" for issue in result["issues"]), result["issues"])
+        self.assertTrue(any("통합 테스트" in item for item in result["next_agenda"]), result["next_agenda"])
 
     def test_issues_are_compacted_into_short_risk_titles(self) -> None:
         transcript = """
@@ -1115,13 +1342,8 @@ class HeuristicMeetingAnalysisTests(unittest.TestCase):
             },
         )()
 
-        with patch.object(WhisperSpeechToTextService, "_is_model_cached", return_value=True):
-            self.assertEqual(service._select_model_name(noisy_preprocessing), "large")
-            self.assertEqual(service._select_model_name(calm_preprocessing), "large")
-
-        with patch.object(WhisperSpeechToTextService, "_is_model_cached", return_value=False):
-            self.assertEqual(service._select_model_name(noisy_preprocessing), "large")
-            self.assertEqual(service._select_model_name(calm_preprocessing), "large")
+        self.assertEqual(service._select_model_name(noisy_preprocessing), "medium")
+        self.assertEqual(service._select_model_name(calm_preprocessing), "medium")
 
     def test_chunk_model_selection_tracks_profile(self) -> None:
         preprocessing = type(

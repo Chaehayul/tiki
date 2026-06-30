@@ -2,16 +2,21 @@
 
 from __future__ import annotations
 
+import os
 import logging
+import platform
 import re
 from abc import ABC, abstractmethod
 from functools import lru_cache
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
 from app.core.config import settings
 from app.services.ai.audio_preprocessing import AudioPreprocessingResult, WhisperAudioPreprocessor
 from app.services.ai.text_normalization import normalize_meeting_terms
+
+os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
 
 logger = logging.getLogger(__name__)
 GENERIC_SPEAKER_LABEL_PREFIX = "팀원"
@@ -106,6 +111,30 @@ TRANSCRIPTION_PROFILE_ALIASES: dict[str, TranscriptionProfile] = {
     "premium": "premium",
 }
 
+WHISPER_ENGINE_AUTO = "auto"
+WHISPER_ENGINE_OPENAI = "openai-whisper"
+WHISPER_ENGINE_FASTER = "faster-whisper"
+WHISPER_ENGINE_ALIASES: dict[str, str] = {
+    "auto": WHISPER_ENGINE_AUTO,
+    "openai": WHISPER_ENGINE_OPENAI,
+    "openai-whisper": WHISPER_ENGINE_OPENAI,
+    "whisper": WHISPER_ENGINE_OPENAI,
+    "faster": WHISPER_ENGINE_FASTER,
+    "faster-whisper": WHISPER_ENGINE_FASTER,
+}
+
+WhisperDevice = Literal["cuda", "cpu"]
+
+
+@dataclass(frozen=True)
+class WhisperRuntimeConfig:
+    """WhisperModel 로딩에 필요한 실행 환경 설정."""
+
+    device: WhisperDevice
+    compute_type: str
+    cpu_threads: int | None = None
+    num_workers: int | None = None
+
 
 def _normalize_transcription_profile(value: Any | None) -> TranscriptionProfile:
     normalized = re.sub(r"\s+", " ", str(value or "")).strip().lower()
@@ -117,6 +146,107 @@ def _normalize_transcription_profile(value: Any | None) -> TranscriptionProfile:
 
 def _build_generic_speaker_label(index: int) -> str:
     return f"{GENERIC_SPEAKER_LABEL_PREFIX} {index}"
+
+
+def _normalize_whisper_engine(value: Any | None) -> str:
+    normalized = re.sub(r"\s+", "-", str(value or "")).strip().lower()
+    return WHISPER_ENGINE_ALIASES.get(normalized, WHISPER_ENGINE_AUTO)
+
+
+def _has_cuda_gpu() -> bool:
+    """NVIDIA CUDA GPU 사용 가능 여부를 확인한다."""
+    try:
+        import torch
+    except ImportError:
+        return False
+
+    try:
+        return bool(torch.cuda.is_available())
+    except Exception:
+        return False
+
+
+def detect_whisper_runtime_config() -> WhisperRuntimeConfig:
+    """
+    현재 하드웨어 환경에 맞는 WhisperModel 실행 설정을 반환한다.
+
+    우선순위:
+    1) macOS(Darwin) -> cpu / int8, cpu_threads=8, num_workers=4
+    2) Windows/Linux + CUDA 가능 -> cuda / float16
+    3) 그 외 -> cpu / int8, cpu_threads=8, num_workers=4
+    """
+    if platform.system() in {"Windows", "Linux"} and _has_cuda_gpu():
+        return WhisperRuntimeConfig(device="cuda", compute_type="float16")
+
+    return WhisperRuntimeConfig(device="cpu", compute_type="int8", cpu_threads=8, num_workers=4)
+
+
+class _FasterWhisperTranscriptionAdapter:
+    """Normalize faster-whisper output to the same dict shape as openai-whisper."""
+
+    _OPTION_KEY_MAP = {
+        "logprob_threshold": "log_prob_threshold",
+        "fp16": None,
+        "verbose": None,
+    }
+
+    def __init__(self, model: Any, *, model_name: str, device_name: str, compute_type: str) -> None:
+        self._model = model
+        self.model_name = model_name
+        self.device_name = device_name
+        self.compute_type = compute_type
+
+    @staticmethod
+    def _safe_float(value: Any | None) -> float | None:
+        try:
+            if value is None:
+                return None
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _normalize_options(self, options: dict[str, Any]) -> dict[str, Any]:
+        normalized: dict[str, Any] = {}
+        for key, value in options.items():
+            mapped_key = self._OPTION_KEY_MAP.get(key, key)
+            if mapped_key is None:
+                continue
+            normalized[mapped_key] = value
+
+        # Faster-whisper already supports VAD internally, but we keep it disabled here
+        # because this service pre-chunks meeting audio before inference.
+        normalized.setdefault("vad_filter", False)
+        return normalized
+
+    def transcribe(self, audio: Any, **options: Any) -> dict[str, Any]:
+        filtered_options = self._normalize_options(options)
+        segments, info = self._model.transcribe(audio, **filtered_options)
+
+        normalized_segments: list[dict[str, Any]] = []
+        normalized_texts: list[str] = []
+        for index, segment in enumerate(segments):
+            text = str(getattr(segment, "text", "") or "")
+            normalized_texts.append(text)
+            normalized_segments.append(
+                {
+                    "id": index,
+                    "seek": None,
+                    "start": self._safe_float(getattr(segment, "start", None)) or 0.0,
+                    "end": self._safe_float(getattr(segment, "end", None)) or 0.0,
+                    "text": text,
+                    "tokens": list(getattr(segment, "tokens", []) or []),
+                    "avg_logprob": self._safe_float(getattr(segment, "avg_logprob", None)),
+                    "compression_ratio": self._safe_float(getattr(segment, "compression_ratio", None)),
+                    "no_speech_prob": self._safe_float(getattr(segment, "no_speech_prob", None)),
+                }
+            )
+
+        return {
+            "text": " ".join(text.strip() for text in normalized_texts if text.strip()).strip(),
+            "segments": normalized_segments,
+            "language": getattr(info, "language", None),
+            "language_probability": getattr(info, "language_probability", None),
+        }
 
 
 class SpeechToTextService(ABC):
@@ -445,11 +575,15 @@ def _attach_speaker_labels(
 
     speaker_statistics: list[dict[str, Any]] = []
     active_turn_count = 0
+    expected_participant_count = len(participant_names_normalized)
+    mapped_participant_count = 0
     for speaker_id in active_speaker_ids:
         bucket = speaker_stats.get(speaker_id)
         if not bucket:
             continue
         speech_seconds = float(bucket.get("speech_seconds") or 0.0)
+        if bucket.get("participant_name"):
+            mapped_participant_count += 1
         active_turn_count += int(bucket.get("turn_count") or 0)
         speaker_statistics.append(
             {
@@ -469,6 +603,16 @@ def _attach_speaker_labels(
             }
         )
 
+    if expected_participant_count:
+        if len(active_speaker_ids) > expected_participant_count:
+            validation_status = "more_speakers_than_participants"
+        elif len(active_speaker_ids) < expected_participant_count:
+            validation_status = "fewer_speakers_than_participants"
+        else:
+            validation_status = "ok"
+    else:
+        validation_status = "unknown"
+
     summary = {
         "enabled": True,
         "status": "applied",
@@ -484,6 +628,13 @@ def _attach_speaker_labels(
         "total_speech_seconds": round(total_speech_seconds, 3),
         "meeting_duration_seconds": round(float(meeting_duration_seconds or 0.0), 3),
         "speaker_statistics": speaker_statistics,
+        "expected_participant_count": expected_participant_count or None,
+        "mapped_participant_count": mapped_participant_count,
+        "unmapped_speaker_count": max(0, len(active_speaker_ids) - mapped_participant_count),
+        "speaker_count_delta": (
+            len(active_speaker_ids) - expected_participant_count if expected_participant_count else None
+        ),
+        "validation_status": validation_status,
     }
     return annotated_segments, summary
 
@@ -505,6 +656,8 @@ class WhisperSpeechToTextService(SpeechToTextService):
         self.light_model_name = settings.whisper_light_model
         self.language = language
         self.transcription_profile = _normalize_transcription_profile(transcription_profile)
+        self.device_name = self._resolve_device_name()
+        self.whisper_engine = self._resolve_whisper_engine_name(self.device_name)
         profile_settings = TRANSCRIPTION_PROFILE_SETTINGS[self.transcription_profile]
         self.preprocessor = WhisperAudioPreprocessor(**profile_settings["preprocessor"])
         self._diarization_service: Any | None = None
@@ -512,8 +665,63 @@ class WhisperSpeechToTextService(SpeechToTextService):
         self._last_diarization_summary: dict[str, Any] | None = None
 
     @staticmethod
-    @lru_cache(maxsize=4)
-    def _load_model(model_name: str):
+    def _resolve_device_name() -> str:
+        return detect_whisper_runtime_config().device
+
+    @staticmethod
+    def _resolve_whisper_engine_name(device_name: str) -> str:
+        configured = _normalize_whisper_engine(settings.whisper_engine)
+        if configured != WHISPER_ENGINE_AUTO:
+            return configured
+
+        try:
+            import faster_whisper  # noqa: F401
+        except ImportError:
+            return WHISPER_ENGINE_OPENAI
+
+        return WHISPER_ENGINE_FASTER
+
+    @staticmethod
+    def _resolve_compute_type_name(device_name: str, whisper_engine: str) -> str:
+        if whisper_engine == WHISPER_ENGINE_FASTER:
+            return "int8"
+        return "float16" if device_name == "cuda" else "float32"
+
+    @staticmethod
+    @lru_cache(maxsize=8)
+    def _load_model(model_name: str, device_name: str | None = None, whisper_engine: str | None = None):
+        resolved_device_name = device_name or WhisperSpeechToTextService._resolve_device_name()
+        resolved_engine = whisper_engine or WhisperSpeechToTextService._resolve_whisper_engine_name(resolved_device_name)
+
+        if resolved_engine == WHISPER_ENGINE_FASTER:
+            try:
+                from faster_whisper import WhisperModel
+            except ImportError as exc:  # pragma: no cover - dependency should exist in backend env
+                raise RuntimeError(
+                    "faster-whisper is not installed. Add it to backend requirements before using the fast STT path."
+                ) from exc
+
+            runtime = detect_whisper_runtime_config()
+            compute_type = WhisperSpeechToTextService._resolve_compute_type_name(resolved_device_name, resolved_engine)
+            cpu_threads = runtime.cpu_threads if resolved_device_name == "cpu" else None
+            num_workers = runtime.num_workers if resolved_device_name == "cpu" else None
+            logger.info("Loading faster-whisper model: %s", model_name)
+            logger.info("Using Whisper device: %s (compute_type=%s)", resolved_device_name, compute_type)
+            model_kwargs: dict[str, Any] = {
+                "device": resolved_device_name,
+                "compute_type": compute_type,
+            }
+            if cpu_threads is not None:
+                model_kwargs["cpu_threads"] = cpu_threads
+            if num_workers is not None:
+                model_kwargs["num_workers"] = num_workers
+            return _FasterWhisperTranscriptionAdapter(
+                WhisperModel(model_name, **model_kwargs),
+                model_name=model_name,
+                device_name=resolved_device_name,
+                compute_type=compute_type,
+            )
+
         try:
             import whisper
         except ImportError as exc:  # pragma: no cover - dependency should exist in backend env
@@ -522,7 +730,8 @@ class WhisperSpeechToTextService(SpeechToTextService):
             ) from exc
 
         logger.info("Loading Whisper model: %s", model_name)
-        return whisper.load_model(model_name)
+        logger.info("Using Whisper device: %s", resolved_device_name)
+        return whisper.load_model(model_name, device=resolved_device_name)
 
     def transcribe(self, audio_path: str) -> str:
         path = Path(audio_path)
@@ -534,16 +743,32 @@ class WhisperSpeechToTextService(SpeechToTextService):
         self._last_preprocessing = preprocessing
         model_name = self._select_model_name(preprocessing)
         logger.info("Starting STT for %s using Whisper(%s)", path, model_name)
-        text, _segments = self._transcribe_preprocessed_with_segments(preprocessing)
-
-        logger.info(
-            "STT completed for %s (chars=%s, chunks=%s, strategy=%s)",
-            path.name,
-            len(text),
-            len(preprocessing.chunks),
-            preprocessing.strategy,
-        )
-        return text
+        try:
+            try:
+                text, _segments = self._transcribe_preprocessed_with_segments(preprocessing)
+            except Exception as exc:
+                if self.whisper_engine == WHISPER_ENGINE_OPENAI:
+                    raise
+                logger.error(
+                    "Whisper engine '%s' failed for %s; retrying with openai-whisper: %s",
+                    self.whisper_engine,
+                    path.name,
+                    exc,
+                )
+                text, _segments = self._transcribe_preprocessed_with_segments(
+                    preprocessing,
+                    whisper_engine=WHISPER_ENGINE_OPENAI,
+                )
+            logger.info(
+                "STT completed for %s (chars=%s, chunks=%s, strategy=%s)",
+                path.name,
+                len(text),
+                len(preprocessing.chunks),
+                preprocessing.strategy,
+            )
+            return text
+        finally:
+            self._clear_device_cache()
 
     def transcribe_with_segments(
         self,
@@ -559,25 +784,42 @@ class WhisperSpeechToTextService(SpeechToTextService):
         self._last_preprocessing = preprocessing
         model_name = self._select_model_name(preprocessing)
         logger.info("Starting STT with segments for %s using Whisper(%s)", path, model_name)
-        text, segments = self._transcribe_preprocessed_with_segments(preprocessing)
-        speaker_turns, diarization_summary = self._diarize_audio(path, preprocessing=preprocessing)
-        segments, attachment_summary = _attach_speaker_labels(
-            segments,
-            speaker_turns,
-            meeting_duration_seconds=preprocessing.duration_seconds,
-            participant_names=participant_names,
-        )
-        diarization_summary.update(attachment_summary)
-        self._last_diarization_summary = diarization_summary
+        try:
+            try:
+                text, segments = self._transcribe_preprocessed_with_segments(preprocessing)
+            except Exception as exc:
+                if self.whisper_engine == WHISPER_ENGINE_OPENAI:
+                    raise
+                logger.error(
+                    "Whisper engine '%s' failed for %s; retrying with openai-whisper: %s",
+                    self.whisper_engine,
+                    path.name,
+                    exc,
+                )
+                text, segments = self._transcribe_preprocessed_with_segments(
+                    preprocessing,
+                    whisper_engine=WHISPER_ENGINE_OPENAI,
+                )
+            speaker_turns, diarization_summary = self._diarize_audio(path, preprocessing=preprocessing)
+            segments, attachment_summary = _attach_speaker_labels(
+                segments,
+                speaker_turns,
+                meeting_duration_seconds=preprocessing.duration_seconds,
+                participant_names=participant_names,
+            )
+            diarization_summary.update(attachment_summary)
+            self._last_diarization_summary = diarization_summary
 
-        logger.info(
-            "STT segment output completed for %s (chars=%s, chunks=%s, strategy=%s)",
-            path.name,
-            len(text),
-            len(preprocessing.chunks),
-            preprocessing.strategy,
-        )
-        return text, segments
+            logger.info(
+                "STT segment output completed for %s (chars=%s, chunks=%s, strategy=%s)",
+                path.name,
+                len(text),
+                len(preprocessing.chunks),
+                preprocessing.strategy,
+            )
+            return text, segments
+        finally:
+            self._clear_device_cache()
 
     def _diarize_audio(
         self,
@@ -645,66 +887,97 @@ class WhisperSpeechToTextService(SpeechToTextService):
         preprocessing = self.preprocessor.prepare(path)
         self._last_preprocessing = preprocessing
         model_name = self._select_model_name(preprocessing)
+        use_openai_fallback = self.whisper_engine != WHISPER_ENGINE_OPENAI
 
-        if not preprocessing.chunking_enabled or len(preprocessing.chunks) <= 1:
-            logger.info("Parallel STT: single chunk, using sequential path for %s", path.name)
-            return self._transcribe_preprocessed_with_segments(preprocessing)
+        try:
+            if not preprocessing.chunking_enabled or len(preprocessing.chunks) <= 1:
+                logger.info("Parallel STT: single chunk, using sequential path for %s", path.name)
+                return self._transcribe_preprocessed_with_segments(preprocessing)
 
-        logger.info(
-            "Parallel STT starting for %s (chunks=%d, workers=%d, model=%s)",
-            path.name, len(preprocessing.chunks), n_workers, model_name,
-        )
+            logger.info(
+                "Parallel STT starting for %s (chunks=%d, workers=%d, model=%s)",
+                path.name, len(preprocessing.chunks), n_workers, model_name,
+            )
 
-        options = self._build_transcription_options(preprocessing)
+            options = self._build_transcription_options(preprocessing)
 
-        raw_results = transcribe_chunks_parallel(
-            preprocessing.chunks, model_name, options, n_workers=n_workers,
-        )
+            raw_results = transcribe_chunks_parallel(
+                preprocessing.chunks,
+                model_name,
+                options,
+                n_workers=n_workers,
+                device_name=self.device_name,
+            )
+            if use_openai_fallback and any(raw.get("error") for raw in raw_results.values()):
+                logger.error(
+                    "Parallel Whisper engine '%s' failed for %s; retrying with openai-whisper",
+                    self.whisper_engine,
+                    path.name,
+                )
+                raise RuntimeError("parallel transcription failed for one or more chunks")
 
-        # Assemble results in chunk order with the same filtering logic used
-        # by the sequential _transcribe_preprocessed_with_segments.
-        segments: list[str] = []
-        structured_segments: list[dict[str, Any]] = []
+            # Assemble results in chunk order with the same filtering logic used
+            # by the sequential _transcribe_preprocessed_with_segments.
+            segments: list[str] = []
+            structured_segments: list[dict[str, Any]] = []
 
-        for chunk in preprocessing.chunks:
-            raw = raw_results.get(chunk.index, {"text": "", "segments": []})
-            chunk_text = self._clean_transcript_text(raw.get("text") or "")
-            chunk_segments = list(raw.get("segments") or [])
-            core_start = chunk.core_start_seconds if chunk.core_start_seconds is not None else chunk.start_seconds
-            core_end = chunk.core_end_seconds if chunk.core_end_seconds is not None else chunk.end_seconds
-            chunk_kept_texts: list[str] = []
+            for chunk in preprocessing.chunks:
+                raw = raw_results.get(chunk.index, {"text": "", "segments": []})
+                chunk_text = self._clean_transcript_text(raw.get("text") or "")
+                chunk_segments = list(raw.get("segments") or [])
+                core_start = chunk.core_start_seconds if chunk.core_start_seconds is not None else chunk.start_seconds
+                core_end = chunk.core_end_seconds if chunk.core_end_seconds is not None else chunk.end_seconds
+                chunk_kept_texts: list[str] = []
 
-            if chunk_segments:
-                for local_index, segment in enumerate(chunk_segments):
-                    text = self._clean_transcript_text(segment.get("text") or "")
-                    segment_start = float(segment.get("start") or 0.0)
-                    segment_end = float(segment.get("end") or 0.0)
-                    if not self._should_keep_segment(text, segment, preprocessing):
-                        continue
-                    if not self._is_segment_in_core_region(segment_start, segment_end, core_start, core_end):
-                        continue
+                if chunk_segments:
+                    for local_index, segment in enumerate(chunk_segments):
+                        text = self._clean_transcript_text(segment.get("text") or "")
+                        segment_start = float(segment.get("start") or 0.0)
+                        segment_end = float(segment.get("end") or 0.0)
+                        if not self._should_keep_segment(text, segment, preprocessing):
+                            continue
+                        if not self._is_segment_in_core_region(segment_start, segment_end, core_start, core_end):
+                            continue
 
-                    start_seconds = chunk.start_seconds + segment_start
-                    end_seconds = chunk.start_seconds + segment_end
-                    confidence = self._segment_confidence(segment)
-                    chunk_kept_texts.append(text)
-                    segments.append(text)
-                    structured_segments.append(
-                        {
-                            "index": len(structured_segments),
-                            "chunk_index": chunk.index,
-                            "chunk_local_index": local_index,
-                            "start_seconds": round(start_seconds, 3),
-                            "end_seconds": round(end_seconds, 3),
-                            "duration_seconds": round(max(0.0, end_seconds - start_seconds), 3),
-                            "text": text,
-                            "confidence": confidence,
-                            "avg_logprob": segment.get("avg_logprob"),
-                            "no_speech_prob": segment.get("no_speech_prob"),
-                            "compression_ratio": segment.get("compression_ratio"),
-                        }
-                    )
-                if not chunk_kept_texts and chunk_text and not self._is_likely_noise_text(chunk_text):
+                        start_seconds = chunk.start_seconds + segment_start
+                        end_seconds = chunk.start_seconds + segment_end
+                        confidence = self._segment_confidence(segment)
+                        chunk_kept_texts.append(text)
+                        segments.append(text)
+                        structured_segments.append(
+                            {
+                                "index": len(structured_segments),
+                                "chunk_index": chunk.index,
+                                "chunk_local_index": local_index,
+                                "start_seconds": round(start_seconds, 3),
+                                "end_seconds": round(end_seconds, 3),
+                                "duration_seconds": round(max(0.0, end_seconds - start_seconds), 3),
+                                "text": text,
+                                "confidence": confidence,
+                                "avg_logprob": segment.get("avg_logprob"),
+                                "no_speech_prob": segment.get("no_speech_prob"),
+                                "compression_ratio": segment.get("compression_ratio"),
+                            }
+                        )
+                    if not chunk_kept_texts and chunk_text and not self._is_likely_noise_text(chunk_text):
+                        segments.append(chunk_text)
+                        structured_segments.append(
+                            {
+                                "index": len(structured_segments),
+                                "chunk_index": chunk.index,
+                                "start_seconds": round(chunk.start_seconds, 3),
+                                "end_seconds": round(chunk.end_seconds, 3),
+                                "duration_seconds": round(chunk.duration_seconds, 3),
+                                "text": chunk_text,
+                                "confidence": 0.45 if preprocessing.is_noisy else 0.7,
+                                "avg_logprob": None,
+                                "no_speech_prob": None,
+                                "compression_ratio": None,
+                            }
+                        )
+                    continue
+
+                if chunk_text and not self._is_likely_noise_text(chunk_text):
                     segments.append(chunk_text)
                     structured_segments.append(
                         {
@@ -714,39 +987,36 @@ class WhisperSpeechToTextService(SpeechToTextService):
                             "end_seconds": round(chunk.end_seconds, 3),
                             "duration_seconds": round(chunk.duration_seconds, 3),
                             "text": chunk_text,
-                            "confidence": 0.45 if preprocessing.is_noisy else 0.7,
+                            "confidence": 0.55 if preprocessing.is_noisy else 0.75,
                             "avg_logprob": None,
                             "no_speech_prob": None,
                             "compression_ratio": None,
                         }
                     )
-                continue
 
-            if chunk_text and not self._is_likely_noise_text(chunk_text):
-                segments.append(chunk_text)
-                structured_segments.append(
-                    {
-                        "index": len(structured_segments),
-                        "chunk_index": chunk.index,
-                        "start_seconds": round(chunk.start_seconds, 3),
-                        "end_seconds": round(chunk.end_seconds, 3),
-                        "duration_seconds": round(chunk.duration_seconds, 3),
-                        "text": chunk_text,
-                        "confidence": 0.55 if preprocessing.is_noisy else 0.75,
-                        "avg_logprob": None,
-                        "no_speech_prob": None,
-                        "compression_ratio": None,
-                    }
-                )
-
-        logger.info(
-            "Parallel STT completed for %s (chars=%d, chunks=%d, strategy=%s)",
-            path.name,
-            sum(len(s) for s in segments),
-            len(preprocessing.chunks),
-            preprocessing.strategy,
-        )
-        return " ".join(segments).strip(), structured_segments
+            logger.info(
+                "Parallel STT completed for %s (chars=%d, chunks=%d, strategy=%s)",
+                path.name,
+                sum(len(s) for s in segments),
+                len(preprocessing.chunks),
+                preprocessing.strategy,
+            )
+            return " ".join(segments).strip(), structured_segments
+        except Exception as exc:
+            if not use_openai_fallback:
+                raise
+            logger.warning(
+                "Parallel Whisper engine '%s' failed for %s; retrying with openai-whisper: %s",
+                self.whisper_engine,
+                path.name,
+                exc,
+            )
+            return self._transcribe_preprocessed_with_segments(
+                preprocessing,
+                whisper_engine=WHISPER_ENGINE_OPENAI,
+            )
+        finally:
+            self._clear_device_cache()
 
     def prepare_audio(self, audio_path: str) -> AudioPreprocessingResult:
         """Expose audio splitting metadata for debugging and future diarization."""
@@ -770,11 +1040,6 @@ class WhisperSpeechToTextService(SpeechToTextService):
     def _select_chunk_model_name(self, preprocessing: AudioPreprocessingResult, chunk: Any) -> str:
         return self._select_model_name(preprocessing)
 
-    @staticmethod
-    def _is_model_cached(model_name: str) -> bool:
-        cache_dir = Path.home() / ".cache" / "whisper"
-        return (cache_dir / f"{model_name}.pt").exists()
-
     def _resolve_available_model_name(self, preferred: str) -> str:
         return preferred
 
@@ -784,7 +1049,7 @@ class WhisperSpeechToTextService(SpeechToTextService):
             "task": "transcribe",
             "temperature": 0.0,
             "condition_on_previous_text": False,
-            "fp16": False,
+            "fp16": self.device_name == "cuda",
             "verbose": False,
             "initial_prompt": self._build_initial_prompt(preprocessing),
             **profile_settings["options"],
@@ -794,6 +1059,25 @@ class WhisperSpeechToTextService(SpeechToTextService):
         if self.language:
             options["language"] = self.language
         return options
+
+    @staticmethod
+    def _clear_device_cache() -> None:
+        try:
+            import torch
+        except ImportError:  # pragma: no cover - dependency should exist in backend env
+            return
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+        mps = getattr(torch, "mps", None)
+        if mps is None:
+            mps = getattr(torch.backends, "mps", None)
+        if mps is not None and hasattr(mps, "empty_cache"):
+            try:
+                mps.empty_cache()
+            except Exception:  # pragma: no cover - best effort cleanup
+                logger.debug("Failed to clear MPS cache", exc_info=True)
 
     def _get_diarization_service(self):
         if not settings.diarization_enabled:
@@ -807,18 +1091,21 @@ class WhisperSpeechToTextService(SpeechToTextService):
     def _transcribe_preprocessed_with_segments(
         self,
         preprocessing: AudioPreprocessingResult,
+        *,
+        whisper_engine: str | None = None,
     ) -> tuple[str, list[dict[str, Any]]]:
         options = self._build_transcription_options(preprocessing)
 
         segments: list[str] = []
         structured_segments: list[dict[str, Any]] = []
         loaded_models: dict[str, Any] = {}
+        resolved_whisper_engine = whisper_engine or self.whisper_engine
 
         def get_model(name: str):
             resolved_name = self._resolve_available_model_name(name)
             model = loaded_models.get(resolved_name)
             if model is None:
-                model = self._load_model(resolved_name)
+                model = self._load_model(resolved_name, self.device_name, resolved_whisper_engine)
                 loaded_models[resolved_name] = model
             return model
 

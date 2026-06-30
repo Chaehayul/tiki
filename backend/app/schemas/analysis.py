@@ -40,6 +40,7 @@ class AnalysisResultResponse(BaseModel):
     segments: list[dict[str, Any]] | None
     tx: list[dict[str, Any]] | None
     search_document: dict[str, Any] | None
+    document_summary: dict[str, Any] | None
     summary_request: SummaryRequestPayload | None
     extra_data: dict[str, Any] | None
     model_name: str | None

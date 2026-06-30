@@ -72,6 +72,31 @@ const formatDisplayDate = (raw) => {
   return value;
 };
 
+const formatPublishedDate = (raw) => {
+  const value = String(raw || '').trim();
+  if (!value) return '-';
+
+  if (/^\d{4}년\s*\d{1,2}월\s*\d{1,2}일$/.test(value)) return value;
+
+  const ymd = value.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (ymd) {
+    return `${Number(ymd[1])}년 ${Number(ymd[2])}월 ${Number(ymd[3])}일`;
+  }
+
+  const mdhm = value.match(/^(\d{2})-(\d{2})\s+\d{2}:\d{2}$/);
+  if (mdhm) {
+    const year = new Date().getFullYear();
+    return `${year}년 ${Number(mdhm[1])}월 ${Number(mdhm[2])}일`;
+  }
+
+  const parsed = new Date(value);
+  if (!Number.isNaN(parsed.getTime())) {
+    return `${parsed.getFullYear()}년 ${parsed.getMonth() + 1}월 ${parsed.getDate()}일`;
+  }
+
+  return value;
+};
+
 const ASSIGNEE_OPTIONS = ['김지훈', '박소현', '이민준', '최아로미', '정다은', '한유진', '전체'];
 const WEEKDAY_LABELS = ['일', '월', '화', '수', '목', '금', '토'];
 
@@ -224,7 +249,7 @@ function Spinner({ size = 14, color = '#fff' }) {
   );
 }
 
-function Modal({ open, onClose, title, children, footer, maxWidth = 448, bodyOverflowY = 'auto' }) {
+function Modal({ open, onClose, title, children, footer, maxWidth = 448, bodyOverflowY = 'auto', bodyHeight }) {
   if (!open) return null;
 
   return (
@@ -244,7 +269,7 @@ function Modal({ open, onClose, title, children, footer, maxWidth = 448, bodyOve
             <LucideIcon name="x" size={16} />
           </button>
         </div>
-        <div className="px-5 py-4" style={{ overflowY: bodyOverflowY }}>{children}</div>
+        <div className="px-5 py-4" style={{ overflowY: bodyOverflowY, height: bodyHeight }}>{children}</div>
         {footer && <div className="px-5 py-4 border-t border-[rgba(0,100,180,0.08)] flex items-center justify-end gap-2">{footer}</div>}
       </div>
     </div>
@@ -521,7 +546,7 @@ function ServiceDetailModal({ open, onClose, svc, auditLog }) {
             <div key={`${log.time}-${idx}`} className="flex items-center gap-2 text-xs">
               <span className="text-emerald-500 flex-shrink-0"><LucideIcon name="arrow-up" size={12} /></span>
               <span className="text-slate-600 flex-1 truncate">{log.label}</span>
-              <span className="text-slate-400 flex-shrink-0">{log.time}</span>
+              <span className="text-slate-400 flex-shrink-0">{formatPublishedDate(log.time)}</span>
             </div>
           ))}
         </div>
@@ -574,7 +599,7 @@ function IntegrationControlTower({ services, auditLog, onBadgeClick, onIssueOpen
               color: totalDone === totalTickets ? '#10B981' : '#0099CC',
             }}
           >
-            {totalDone}/{totalTickets} 완료
+            {totalDone}/{totalTickets} 연동 완료
           </span>
         </div>
 
@@ -582,10 +607,8 @@ function IntegrationControlTower({ services, auditLog, onBadgeClick, onIssueOpen
           <div className="flex items-center gap-1.5 flex-shrink-0">
             <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: '#10B981' }} />
             <span className="text-xs text-slate-400">
-              최근 생성일:&nbsp;
-              <span className="font-semibold text-slate-600">{latestLog.time}</span>
-              &nbsp;
-              <span className="text-slate-400">({latestLog.user})</span>
+              최근 발행일:&nbsp;
+              <span className="font-semibold text-slate-600">{formatPublishedDate(latestLog.time)}</span>
             </span>
           </div>
         )}
@@ -604,8 +627,7 @@ function IntegrationControlTower({ services, auditLog, onBadgeClick, onIssueOpen
       {isMobile && latestLog && (
         <p className="text-xs text-slate-400 mt-2.5 flex items-center gap-1.5">
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 flex-shrink-0" />
-          최근 생성일: <span className="font-semibold text-slate-600">{latestLog.time}</span>
-          &nbsp;({latestLog.user})
+          최근 발행일: <span className="font-semibold text-slate-600">{formatPublishedDate(latestLog.time)}</span>
         </p>
       )}
     </div>
@@ -901,14 +923,14 @@ function buildInitialServices(minutes) {
     id: `MAN-${idx + 1}`,
     title: item.text || '액션 아이템',
     assignee: item.assignee || '미지정',
-    status: item.checked ? 'done' : 'todo',
+    status: 'todo',
   }));
 
   const notionTickets = (baseDecisions.length > 0 ? baseDecisions : [{ text: '결정 사항 없음' }]).map((item, idx) => ({
     id: `DOC-${idx + 1}`,
     title: item.text || '결정 사항',
     assignee: '회의록',
-    status: item.checked ? 'done' : 'progress',
+    status: 'progress',
   }));
 
   return [
@@ -1018,11 +1040,7 @@ export default function MeetingManualDetail() {
 
   const [minutes, setMinutes] = useState(initialRecord);
   const [services, setServices] = useState(() => (initialRecord ? buildInitialServices(initialRecord) : []));
-  const [auditLog, setAuditLog] = useState(() => (
-    initialRecord
-      ? [{ svcId: 'notion', label: '직접 작성 회의록 저장', time: formatDisplayDate(initialRecord.date || initialRecord.rawDate), user: '작성자' }]
-      : []
-  ));
+  const [auditLog, setAuditLog] = useState([]);
 
   const summaryActions = useMemo(
     () => (Array.isArray(minutes?.actions) ? minutes.actions : []).map((action) => ({
@@ -1130,18 +1148,6 @@ export default function MeetingManualDetail() {
       return next;
     });
 
-    setServices((prev) =>
-      prev.map((svc) => {
-        if (svc.id !== 'jira') return svc;
-        return {
-          ...svc,
-          tickets: svc.tickets.map((ticket, idx) => {
-            if (idx !== index) return ticket;
-            return { ...ticket, status: ticket.status === 'done' ? 'todo' : 'done' };
-          }),
-        };
-      })
-    );
   }, [persistMinutes]);
 
   const backToMeetings = () => {
@@ -1290,7 +1296,7 @@ export default function MeetingManualDetail() {
           id: `MAN-${idx + 1}`,
           title: item.text || '액션 아이템',
           assignee: item.assignee || '미지정',
-          status: item.checked ? 'done' : 'todo',
+          status: 'todo',
         }));
         return { ...svc, tickets };
       }
@@ -1299,7 +1305,7 @@ export default function MeetingManualDetail() {
           id: `DOC-${idx + 1}`,
           title: item.text || '결정 사항',
           assignee: '회의록',
-          status: item.checked ? 'done' : 'progress',
+          status: 'progress',
         }));
         return { ...svc, tickets };
       }
@@ -1332,7 +1338,7 @@ export default function MeetingManualDetail() {
         id: `DOC-${idx + 1}`,
         title: item.text || '결정 사항',
         assignee: '회의록',
-        status: item.checked ? 'done' : 'progress',
+        status: 'progress',
       }));
       return { ...svc, tickets };
     }));
@@ -1468,7 +1474,7 @@ export default function MeetingManualDetail() {
         id: `MAN-${idx + 1}`,
         title: item.text || '액션 아이템',
         assignee: item.assignee || '미지정',
-        status: item.checked ? 'done' : 'todo',
+        status: 'todo',
       }));
       return { ...svc, tickets };
     }));
@@ -1538,8 +1544,8 @@ export default function MeetingManualDetail() {
     );
 
     const now = new Date();
-    const time = `${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-    setAuditLog((prev) => [...prev, { svcId: targetSvc, label: `직접 작성 항목 연동 (${issueCheckedItems.size}건)`, time, user: '작성자' }]);
+    const time = `${now.getFullYear()}년 ${now.getMonth() + 1}월 ${now.getDate()}일`;
+    setAuditLog((prev) => [...prev, { svcId: targetSvc, label: `직접 작성 항목 연동 (${issueCheckedItems.size}건)`, time }]);
 
     setIssuing(false);
     setIssueOpen(false);
@@ -2158,7 +2164,8 @@ export default function MeetingManualDetail() {
         onClose={issuing ? undefined : () => setIssueOpen(false)}
         title="업무 보내기"
         maxWidth={500}
-        bodyOverflowY={issueStep === 1 ? 'hidden' : 'auto'}
+        bodyOverflowY="auto"
+        bodyHeight={isMobile ? '56vh' : '460px'}
         footer={(
           issueStep === 1 ? (
             <>
@@ -2355,7 +2362,7 @@ export default function MeetingManualDetail() {
                 </span>
                 <span className="text-xs font-bold" style={{ color: '#0099CC' }}>
                   {selectedIssueSvcObj?.name} 생성 예정 · {issueCheckedItems.size}건
-                  {issueMode === 'individual' && <span className="ml-1.5 text-purple-500">→ {issueCheckedItems.size}개 티켓</span>}
+                  {issueMode === 'individual' && <span className="ml-1.5 text-purple-500">→ {issueCheckedItems.size}개 업무</span>}
                 </span>
               </div>
               <div className="space-y-1">

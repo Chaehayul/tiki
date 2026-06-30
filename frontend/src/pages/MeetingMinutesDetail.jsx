@@ -689,7 +689,7 @@ function Toast({ msg, color }) {
 }
 
 /* ─── Modal Wrapper ──────────────────────────────────── */
-function Modal({ open, onClose, title, children, footer, maxWidth = 448, bodyOverflowY = "auto" }) {
+function Modal({ open, onClose, title, children, footer, maxWidth = 448, bodyOverflowY = "auto", bodyHeight }) {
   if (!open) return null;
   return (
     <div
@@ -717,7 +717,7 @@ function Modal({ open, onClose, title, children, footer, maxWidth = 448, bodyOve
             <LucideIcon name="x" size={18} />
           </button>
         </div>
-        <div className="px-6 py-5 flex-1" style={{ overflowY: bodyOverflowY }}>
+        <div className={`px-6 py-5 ${bodyHeight ? "" : "flex-1"}`} style={{ overflowY: bodyOverflowY, height: bodyHeight }}>
           {children}
         </div>
         {footer && (
@@ -1182,7 +1182,8 @@ function IssueModal({ open, onClose, onIssued, services }) {
       onClose={issuing ? undefined : handleClose}
       title="업무 보내기"
       maxWidth={500}
-      bodyOverflowY={step === 1 ? "hidden" : "auto"}
+      bodyOverflowY="auto"
+      bodyHeight="min(460px, 56vh)"
       footer={
         step === 1 ? (
           <>

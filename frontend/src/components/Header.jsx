@@ -1,6 +1,11 @@
 import { useState, useRef, useEffect } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { clearAuthSession } from '../api/apiClient';
+import {
+    acceptProjectInvitation,
+    clearAuthSession,
+    declineProjectInvitation,
+    listProjectInvitations,
+} from '../api/apiClient';
 
 // ── Icons ────────────────────────────────────────────────────────────────────
 const iconPaths = {
@@ -36,6 +41,8 @@ const iconPaths = {
     x: ['M18 6L6 18', 'M6 6l12 12'],
     book: ['M4 19.5A2.5 2.5 0 0 1 6.5 17H20', 'M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z'],
     chevronDown: ['M6 9l6 6 6-6'],
+    bell: ['M18 8a6 6 0 0 0-12 0c0 7-3 8-3 8h18s-3-1-3-8', 'M13.73 21a2 2 0 0 1-3.46 0'],
+    inbox: ['M22 12h-6l-2 3h-4l-2-3H2', 'M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z'],
 };
 
 const cn = (...classes) => classes.filter(Boolean).join(' ');
@@ -170,6 +177,129 @@ function ProfileDropdown({ user, onLogout }) {
                             <Icon name="logOut" size={15} color="#EF4444" />
                             로그아웃
                         </button>
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+}
+
+function InvitationInbox() {
+    const [open, setOpen] = useState(false);
+    const [invitations, setInvitations] = useState([]);
+    const [loading, setLoading] = useState(false);
+    const [busyId, setBusyId] = useState(null);
+    const ref = useRef(null);
+
+    const loadInvitations = async () => {
+        setLoading(true);
+        try {
+            const data = await listProjectInvitations();
+            setInvitations(Array.isArray(data) ? data : []);
+        } catch {
+            setInvitations([]);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        loadInvitations();
+        const refresh = () => loadInvitations();
+        window.addEventListener('tiki-invitations-changed', refresh);
+        return () => window.removeEventListener('tiki-invitations-changed', refresh);
+    }, []);
+
+    useEffect(() => {
+        function handleClick(e) {
+            if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+        }
+        document.addEventListener('mousedown', handleClick);
+        return () => document.removeEventListener('mousedown', handleClick);
+    }, []);
+
+    const respond = async (invitationId, action) => {
+        setBusyId(invitationId);
+        try {
+            if (action === 'accept') {
+                await acceptProjectInvitation(invitationId);
+            } else {
+                await declineProjectInvitation(invitationId);
+            }
+            await loadInvitations();
+            window.dispatchEvent(new Event('tiki-projects-changed'));
+        } finally {
+            setBusyId(null);
+        }
+    };
+
+    const count = invitations.length;
+
+    return (
+        <div className="relative" ref={ref}>
+            <button
+                type="button"
+                onClick={() => {
+                    setOpen((v) => !v);
+                    if (!open) loadInvitations();
+                }}
+                className="relative flex h-9 w-9 items-center justify-center rounded-full border border-[rgba(0,100,180,0.12)] bg-white text-[#5A6F8A] transition-all hover:border-[rgba(0,153,204,0.5)] hover:text-[#0D1B2A] hover:shadow-[0_0_0_3px_rgba(0,153,204,0.08)]"
+                aria-label="메시지함"
+            >
+                <Icon name="inbox" size={17} />
+                {count > 0 && (
+                    <span className="absolute -right-1 -top-1 flex min-w-[18px] items-center justify-center rounded-full bg-[#EF4444] px-1 text-[10px] font-bold leading-[18px] text-white">
+                        {count}
+                    </span>
+                )}
+            </button>
+
+            {open && (
+                <div className="absolute right-0 top-[calc(100%+8px)] z-50 w-[340px] overflow-hidden rounded-[12px] border border-[rgba(0,100,180,0.12)] bg-white shadow-[0_8px_32px_rgba(0,100,180,0.12)]">
+                    <div className="flex items-center justify-between border-b border-[rgba(0,100,180,0.08)] px-4 py-3">
+                        <p className="text-[14px] font-bold text-[#0D1B2A]">메시지함</p>
+                        <span className="text-[12px] font-semibold text-[#5A6F8A]">초대 {count}건</span>
+                    </div>
+
+                    <div className="max-h-[360px] overflow-y-auto py-2">
+                        {loading ? (
+                            <div className="px-4 py-8 text-center text-[13px] text-[#5A6F8A]">불러오는 중...</div>
+                        ) : invitations.length === 0 ? (
+                            <div className="px-4 py-8 text-center">
+                                <div className="mx-auto mb-2 flex h-9 w-9 items-center justify-center rounded-full bg-[#EEF3FF] text-[#0099CC]">
+                                    <Icon name="inbox" size={18} />
+                                </div>
+                                <p className="text-[13px] font-semibold text-[#0D1B2A]">받은 초대가 없습니다</p>
+                                <p className="mt-1 text-[12px] text-[#5A6F8A]">새 프로젝트 초대가 오면 여기에 표시됩니다.</p>
+                            </div>
+                        ) : (
+                            invitations.map((invitation) => (
+                                <div key={invitation.id} className="border-b border-[rgba(0,100,180,0.06)] px-4 py-3 last:border-b-0">
+                                    <p className="text-[13px] font-bold text-[#0D1B2A]">{invitation.project_name || '프로젝트'} 초대</p>
+                                    <p className="mt-1 text-[12px] leading-5 text-[#5A6F8A]">
+                                        {invitation.invited_by_name || '관리자'}님이 {invitation.role === 'admin' ? '관리자' : '멤버'}로 초대했습니다.
+                                    </p>
+                                    <div className="mt-3 flex justify-end gap-2">
+                                        <button
+                                            type="button"
+                                            disabled={busyId === invitation.id}
+                                            onClick={() => respond(invitation.id, 'decline')}
+                                            className="rounded-[7px] border border-[rgba(0,100,180,0.12)] px-3 py-1.5 text-[12px] font-semibold text-[#5A6F8A] hover:bg-[#F8FAFF] disabled:opacity-50"
+                                        >
+                                            거절
+                                        </button>
+                                        <button
+                                            type="button"
+                                            disabled={busyId === invitation.id}
+                                            onClick={() => respond(invitation.id, 'accept')}
+                                            className="rounded-[7px] bg-[#0099CC] px-3 py-1.5 text-[12px] font-semibold text-white hover:bg-[#0088B8] disabled:opacity-50"
+                                        >
+                                            승인
+                                        </button>
+                                    </div>
+                                </div>
+                            ))
+                        )}
                     </div>
                 </div>
             )}
@@ -393,7 +523,8 @@ export default function Header({
 
                     {/* Logged-in: profile avatar */}
                     {effectiveLoggedIn && !isMobile && (
-                        <div className="ml-1">
+                        <div className="ml-1 flex items-center gap-2">
+                            <InvitationInbox />
                             <ProfileDropdown user={effectiveUser} onLogout={handleLogout} />
                         </div>
                     )}

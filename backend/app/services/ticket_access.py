@@ -19,7 +19,8 @@ def assert_ticket_access(db: Session, ticket: Ticket, user_id: UUID) -> None:
         .outerjoin(
             ProjectMember,
             (ProjectMember.project_id == Project.id)
-            & (ProjectMember.user_id == user_id),
+            & (ProjectMember.user_id == user_id)
+            & (ProjectMember.invite_status == "accepted"),
         )
         .where(AnalysisResult.id == ticket.analysis_result_id)
         .where(

@@ -40,6 +40,7 @@ def _assert_project_access(db: Session, project_id: UUID, user_id: UUID) -> None
         select(ProjectMember.id).where(
             ProjectMember.project_id == project_id,
             ProjectMember.user_id == user_id,
+            ProjectMember.invite_status == "accepted",
         )
     ) is not None
     if not is_owner and not is_member:
@@ -60,6 +61,7 @@ def _assert_file_access(db: Session, uploaded_file: UploadedFile, user_id: UUID)
         select(ProjectMember.id).where(
             ProjectMember.project_id == uploaded_file.project_id,
             ProjectMember.user_id == user_id,
+            ProjectMember.invite_status == "accepted",
         )
     ) is not None
     if not is_owner and not is_member:
@@ -78,7 +80,8 @@ def list_uploaded_files(
         .outerjoin(
             ProjectMember,
             (ProjectMember.project_id == UploadedFile.project_id)
-            & (ProjectMember.user_id == current_user.id),
+            & (ProjectMember.user_id == current_user.id)
+            & (ProjectMember.invite_status == "accepted"),
         )
         .where(
             or_(

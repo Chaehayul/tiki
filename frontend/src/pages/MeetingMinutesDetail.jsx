@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+﻿import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useLocation } from "react-router-dom";
 import Header from "../components/Header";
 import Footer from "../components/Footer";
@@ -72,8 +72,6 @@ const ACTION_ITEMS_FOR_ISSUE = [
   { text: "Jira API 오류 핸들링 케이스 처리",         assignee: "이민준",  due: "6/17" },
 ];
 
-const ASSIGNEE_OPTIONS = ["김지훈", "박소현", "이민준", "최아로미", "정다은", "한유진", "전체"];
-
 const PARTICIPANTS = [
   { name: "김지훈",  color: "#0099CC", role: "PM" },
   { name: "박소현",  color: "#7C3AED", role: "ML Engineer" },
@@ -122,6 +120,8 @@ const SPEEDS = [1.0, 1.25, 1.5, 2.0, 0.75];
 const MAX_TS = 4532;
 const PAGE_SIZE = 10;
 const PROJECTLIST_CHEVRON_COLOR = "#A0AFBF";
+const PROJECT_OVERRIDE_STORAGE_KEY = "tiki_project_overrides";
+const PROJECT_CATALOG_STORAGE_KEY = "tiki_project_catalog";
 
 /* ─── 유틸 ───────────────────────────────────────────── */
 function fmtTime(s) {
@@ -166,6 +166,158 @@ function fmtAuditTime(dateStr) {
 
 function isGeneratedAuditLog(log) {
   return /^\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}$/.test(String(log?.time || "").trim());
+}
+
+function readProjectOverrides() {
+  try {
+    const raw = localStorage.getItem(PROJECT_OVERRIDE_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function readProjectCatalog() {
+  try {
+    const raw = localStorage.getItem(PROJECT_CATALOG_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function getStoredUserName() {
+  try {
+    const user = JSON.parse(localStorage.getItem("tiki_user") || "null");
+    return String(user?.name || user?.email || "").trim();
+  } catch {
+    return "";
+  }
+}
+
+function normalizeMemberName(member) {
+  if (typeof member === "string") return member.trim();
+  if (!member || typeof member !== "object") return "";
+  const inviteStatus = String(member.invite_status || member.inviteStatus || "").trim();
+  if (inviteStatus && inviteStatus !== "accepted") return "";
+  return String(member.name || member.email || "").trim();
+}
+
+function buildAcceptedProjectParticipants({ projectId = "", state = {} } = {}) {
+  const names = new Set();
+  const add = (value) => {
+    const normalized = String(value || "").trim();
+    if (!normalized || ["미정", "미지정", "담당자", "담당자 미지정", "회의록", "전체"].includes(normalized)) return;
+    names.add(normalized);
+  };
+  const addParticipants = (values) => {
+    if (!Array.isArray(values)) return;
+    values.forEach((value) => add(normalizeMemberName(value)));
+  };
+
+  const normalizedProjectId = String(projectId || state?.projectId || state?.project?.id || "").trim();
+  const overrides = readProjectOverrides();
+  const override = normalizedProjectId ? overrides[normalizedProjectId] : null;
+  const catalogProject = readProjectCatalog().find((item) => String(item?.id || "") === normalizedProjectId);
+  const projectSources = [state?.project, override, catalogProject].filter(Boolean);
+
+  projectSources.forEach((project) => {
+    add(project?.teamLead || project?.team_lead);
+    addParticipants(project?.admins);
+    addParticipants(project?.participants);
+    addParticipants(project?.members);
+  });
+
+  if (names.size === 0) add(getStoredUserName());
+  return [...names];
+}
+
+function buildProjectAssigneeOptions({ projectId = "", state = {}, participants = [], actions = [] } = {}) {
+  const names = new Set();
+  const add = (value) => {
+    const normalized = String(value || "").trim();
+    if (!normalized || ["미정", "미지정", "담당자", "담당자 미지정", "회의록", "전체"].includes(normalized)) return;
+    names.add(normalized);
+  };
+  const addMany = (values) => {
+    if (!Array.isArray(values)) return;
+    values.forEach((value) => add(normalizeMemberName(value)));
+  };
+
+  const normalizedProjectId = String(projectId || state?.projectId || state?.project?.id || "").trim();
+  const overrides = readProjectOverrides();
+  const override = normalizedProjectId ? overrides[normalizedProjectId] : null;
+  const catalogProject = readProjectCatalog().find((item) => String(item?.id || "") === normalizedProjectId);
+  const projectSources = [state?.project, override, catalogProject].filter(Boolean);
+
+  buildAcceptedProjectParticipants({ projectId: normalizedProjectId, state }).forEach(add);
+  addMany(participants);
+  addMany(state?.projectParticipants);
+  projectSources.forEach((project) => {
+    add(project?.teamLead || project?.team_lead);
+    addMany(project?.participants);
+    addMany(project?.admins);
+    addMany(project?.members);
+  });
+  add(getStoredUserName());
+
+  return [...names];
+}
+
+function toAuditTimestamp(value) {
+  const parsed = new Date(value || Date.now());
+  const date = Number.isNaN(parsed.getTime()) ? new Date() : parsed;
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")} ${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+}
+
+function buildStoredIntegrationLogs({ projectId = "", sourceTitle = "" } = {}) {
+  const overrides = readProjectOverrides();
+  const normalizedProjectId = String(projectId || "").trim();
+  const normalizedSource = String(sourceTitle || "").trim();
+  const projects = normalizedProjectId
+    ? [[normalizedProjectId, overrides[normalizedProjectId]]]
+    : Object.entries(overrides);
+
+  return projects.flatMap(([currentProjectId, projectOverride]) => {
+    const items = Array.isArray(projectOverride?.myActionItems) ? projectOverride.myActionItems : [];
+    return items
+      .filter((item) => item?.integrationTool || item?.externalLink || item?.jiraLink)
+      .filter((item) => {
+        const projectMatches = !normalizedProjectId || String(item?.projectId || currentProjectId) === normalizedProjectId;
+        const sourceMatches = !normalizedSource || String(item?.source || "").trim() === normalizedSource;
+        return projectMatches && sourceMatches;
+      })
+      .map((item, index) => {
+        const rawTool = String(item?.integrationTool || item?.integrationProvider || item?.externalLink || item?.jiraLink || "").toLowerCase();
+        const svcId = rawTool.includes("notion") ? "notion" : "jira";
+        return {
+          svcId,
+          label: item?.title || item?.text || `대시보드 연동 업무 ${index + 1}`,
+          time: toAuditTimestamp(item?.updatedAt || item?.updated_at),
+          user: item?.assignee || "담당자",
+          source: "dashboard",
+        };
+      });
+  });
+}
+
+function writeProjectOverrides(next) {
+  try {
+    localStorage.setItem(PROJECT_OVERRIDE_STORAGE_KEY, JSON.stringify(next));
+  } catch {
+    // ignore storage write failures in local mock mode
+  }
+}
+
+function buildExternalLink(svcId, title) {
+  const text = String(title || "업무").slice(0, 40);
+  if (svcId === "notion") return `https://www.notion.so/search?query=${encodeURIComponent(text)}`;
+  const params = new URLSearchParams({ jql: `text ~ "${text}"` });
+  return `https://jira.atlassian.com/issues/?${params.toString()}`;
 }
 
 const WEEKDAY_LABELS = ["일", "월", "화", "수", "목", "금", "토"];
@@ -788,26 +940,16 @@ function CustomDropdown({
 
 /* ─── 연동 서비스 뱃지 (실시간 카운트 반영) ─────────── */
 function IntegrationBadge({ svc, onClick, issuedCount }) {
-  const total = svc.tickets.length;
-  const done = Math.min(Math.max(issuedCount ?? 0, 0), total);
-  const isEmpty = done === 0;
-  const allDone = done === total;
+  const done = Math.max(issuedCount ?? 0, 0);
+  const hasIssued = done > 0;
 
   return (
     <button
       onClick={() => onClick(svc)}
       className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border transition-all hover:scale-105 active:scale-95 cursor-pointer"
       style={{
-        background: allDone
-          ? "rgba(16,185,129,0.06)"
-          : isEmpty
-          ? "rgba(90,111,138,0.06)"
-          : "rgba(0,153,204,0.05)",
-        borderColor: allDone
-          ? "rgba(16,185,129,0.35)"
-          : isEmpty
-          ? "rgba(0,100,180,0.12)"
-          : "rgba(0,153,204,0.3)",
+        background: hasIssued ? "rgba(16,185,129,0.06)" : "rgba(90,111,138,0.06)",
+        borderColor: hasIssued ? "rgba(16,185,129,0.35)" : "rgba(0,100,180,0.12)",
       }}
     >
       <span
@@ -817,16 +959,10 @@ function IntegrationBadge({ svc, onClick, issuedCount }) {
         {svc.iconLabel}
       </span>
       <span className="text-xs font-semibold text-slate-500">{svc.name}</span>
-      <span className="text-xs">
-        <span
-          className="font-bold"
-          style={{ color: allDone ? "#10B981" : isEmpty ? "#5A6F8A" : "#0099CC" }}
-        >
-          {done}
-        </span>
-        <span className="text-slate-400">/{total}</span>
+      <span className="text-xs font-bold" style={{ color: hasIssued ? "#10B981" : "#5A6F8A" }}>
+        {hasIssued ? `${done}건 연동` : "연동 전"}
       </span>
-      {allDone && (
+      {hasIssued && (
         <span className="text-emerald-500"><LucideIcon name="check" size={12} /></span>
       )}
     </button>
@@ -851,6 +987,23 @@ function ServiceDetailModal({ open, onClose, svc, auditLog }) {
   };
 
   const svcLogs = auditLog.filter(l => l.svcId === svc.id);
+  const hasIssued = svcLogs.length > 0;
+  const normalizeText = (value) => String(value || "").trim().toLowerCase();
+  const issuedTicketTitles = new Set(svcLogs.map((log) => normalizeText(log.label)).filter(Boolean));
+  const displayTickets = [
+    ...svc.tickets.map((ticket) => {
+      const isIssued = issuedTicketTitles.has(normalizeText(ticket.title)) || issuedTicketTitles.has(normalizeText(`${ticket.id} · ${ticket.title}`));
+      return isIssued ? { ...ticket, status: "done" } : ticket;
+    }),
+    ...svcLogs
+      .filter((log) => !svc.tickets.some((ticket) => normalizeText(ticket.title) === normalizeText(log.label)))
+      .map((log, idx) => ({
+        id: `${svc.id.toUpperCase()}-${idx + 1}`,
+        title: log.label,
+        assignee: log.user || "담당자",
+        status: "done",
+      })),
+  ];
 
   const handleTicketClick = (ticket) => {
     const url = `${svc.deepLinkBase}${ticket.id}`;
@@ -861,19 +1014,19 @@ function ServiceDetailModal({ open, onClose, svc, auditLog }) {
     <Modal open={open} onClose={onClose} title={`${svc.name} 연동 현황`}>
       <div className="mb-4">
         <div className="flex justify-between mb-1.5">
-          <span className="text-xs text-slate-400">전체 진행률</span>
-          <span className="text-xs font-bold text-slate-900">{done} / {totalTickets} 완료</span>
-        </div>
-        <div className="h-1.5 rounded-full bg-slate-100">
-          <div
-            className="h-full rounded-full transition-all duration-500"
-            style={{ width: `${pct}%`, background: "linear-gradient(90deg,#0099CC,#7C3AED)" }}
-          />
+          <span className="text-xs text-slate-400">실제 발행 이력</span>
+          <span className="text-xs font-bold text-slate-900">{hasIssued ? `${svcLogs.length}건 연동` : "연동 전"}</span>
         </div>
       </div>
 
-      <div className="space-y-2 max-h-60 overflow-y-auto mb-4">
-        {svc.tickets.map(t => (
+      {!hasIssued ? (
+        <div className="rounded-xl p-4 mb-4 border border-slate-200 bg-slate-50">
+          <p className="text-sm font-semibold text-slate-700">아직 {svc.name}로 보낸 업무가 없습니다.</p>
+          <p className="text-xs text-slate-400 mt-1">업무 보내기를 실행하면 이곳에 실제 발행 이력이 표시됩니다.</p>
+        </div>
+      ) : (
+        <div className="space-y-2 max-h-60 overflow-y-auto mb-4">
+        {displayTickets.map(t => (
           <button
             key={t.id}
             onClick={() => handleTicketClick(t)}
@@ -912,7 +1065,8 @@ function ServiceDetailModal({ open, onClose, svc, auditLog }) {
             </div>
           </button>
         ))}
-      </div>
+        </div>
+      )}
 
       {svcLogs.length > 0 && (
         <div
@@ -935,7 +1089,7 @@ function ServiceDetailModal({ open, onClose, svc, auditLog }) {
 }
 
 /* ─── 개별 업무 행 ───────────────────────────────────── */
-function IndividualTicketRow({ item, index }) {
+function IndividualTicketRow({ item, index, assigneeOptions = [] }) {
   const [title, setTitle] = useState(item.text);
   const [assignee, setAssignee] = useState(item.assignee);
   const [due, setDue] = useState(normalizeDueLabel(item.due) || item.due || "미정");
@@ -988,7 +1142,7 @@ function IndividualTicketRow({ item, index }) {
         <CustomDropdown
           value={assignee}
           onChange={setAssignee}
-          options={ASSIGNEE_OPTIONS}
+          options={assigneeOptions}
           placeholder="담당자 선택"
         />
       </div>
@@ -1021,7 +1175,7 @@ function IndividualTicketRow({ item, index }) {
 }
 
 /* ─── 2단계 발행 모달 (로딩 스피너 + 에러 핸들링 포함) ─ */
-function IssueModal({ open, onClose, onIssued, services, isMobile }) {
+function IssueModal({ open, onClose, onIssued, services, isMobile, assigneeOptions = [] }) {
   const [step, setStep] = useState(1);
   const [selectedSvc, setSelectedSvc] = useState(null);
   const [checkedItems, setCheckedItems] = useState(new Set());
@@ -1044,6 +1198,20 @@ function IssueModal({ open, onClose, onIssued, services, isMobile }) {
     const baseDue = ACTION_ITEMS_FOR_ISSUE[idx]?.due;
     return normalizeDueLabel(baseDue) || baseDue || "미정";
   }, []);
+  const issuedIssueKeySet = useMemo(() => {
+    if (!selectedSvc) return new Set();
+    const svc = services.find((item) => item.id === selectedSvc);
+    return new Set(
+      (svc?.tickets || [])
+        .filter((ticket) => ticket.status === "done")
+        .map((ticket) => String(ticket.title || "").trim().toLowerCase())
+        .filter(Boolean)
+    );
+  }, [selectedSvc, services]);
+  const isIssueItemIssued = useCallback(
+    (item) => issuedIssueKeySet.has(String(item?.text || item?.title || "").trim().toLowerCase()),
+    [issuedIssueKeySet]
+  );
 
   const reset = () => {
     setStep(1);
@@ -1080,12 +1248,35 @@ function IssueModal({ open, onClose, onIssued, services, isMobile }) {
   const handleClose = () => { reset(); onClose(); };
 
   const toggleItem = (idx) => {
+    if (!selectedSvc || isIssueItemIssued(ACTION_ITEMS_FOR_ISSUE[idx])) return;
     setCheckedItems(prev => {
       const next = new Set(prev);
       next.has(idx) ? next.delete(idx) : next.add(idx);
       return next;
     });
   };
+
+  const selectableItemIndexes = useMemo(
+    () => ACTION_ITEMS_FOR_ISSUE.map((item, idx) => (isIssueItemIssued(item) ? null : idx)).filter((idx) => idx !== null),
+    [isIssueItemIssued]
+  );
+  const allItemsSelected = selectableItemIndexes.length > 0 && checkedItems.size === selectableItemIndexes.length;
+
+  const toggleAllItems = () => {
+    if (selectableItemIndexes.length === 0) return;
+    setCheckedItems((prev) => {
+      if (prev.size === selectableItemIndexes.length) return new Set();
+      return new Set(selectableItemIndexes);
+    });
+  };
+
+  useEffect(() => {
+    if (!selectedSvc) return;
+    setCheckedItems((prev) => {
+      const next = new Set([...prev].filter((idx) => !isIssueItemIssued(ACTION_ITEMS_FOR_ISSUE[idx])));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [isIssueItemIssued, selectedSvc]);
 
   const goStep2 = () => {
     if (!selectedSvc || checkedItems.size === 0) return;
@@ -1117,7 +1308,7 @@ function IssueModal({ open, onClose, onIssued, services, isMobile }) {
       : (dueCandidates[0] || "미정");
 
     setTitle(autoTitle);
-    setAssignee(items.length === 1 ? items[0].assignee : "");
+    setAssignee(items.length === 1 && items[0].assignee && items[0].assignee !== "미정" ? items[0].assignee : assigneeOptions[0] || "");
     setMergedDue(defaultMergedDue);
     setIssueError(null);
     setStep(2);
@@ -1143,9 +1334,16 @@ function IssueModal({ open, onClose, onIssued, services, isMobile }) {
 
     const svcName = services.find(s => s.id === selectedSvc)?.name || "";
     if (issueMode === "merged") {
-      onIssued(svcName, `"${title.slice(0, 18)}${title.length > 18 ? "…" : ""}" 발행됨`, assignee || "미지정");
+      onIssued(svcName, [{ label: title, user: assignee || "미지정", due: mergedDue }]);
     } else {
-      onIssued(svcName, `개별 업무 ${checkedItems.size}건 발행됨`, "복수 담당자");
+      onIssued(
+        svcName,
+        selectedItemsList.map((item) => ({
+          label: item.text,
+          user: item.assignee || "미지정",
+          due: item.due || "미정",
+        }))
+      );
     }
     setIssuing(false);
     handleClose();
@@ -1259,36 +1457,58 @@ function IssueModal({ open, onClose, onIssued, services, isMobile }) {
           </div>
 
           <div>
-            <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-2.5">
-              보낼 업무 선택
-              {checkedItems.size > 0 && (
-                <span className="ml-2 text-cyan-500 normal-case">({checkedItems.size}개 선택됨)</span>
+            <div className="mb-2.5 flex items-center justify-between gap-3">
+              <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest">
+                보낼 업무 선택
+                {checkedItems.size > 0 && (
+                  <span className="ml-2 text-cyan-500 normal-case">({checkedItems.size}개 선택됨)</span>
+                )}
+              </p>
+              {ACTION_ITEMS_FOR_ISSUE.length > 0 && (
+                <button
+                  type="button"
+                  onClick={toggleAllItems}
+                  className="shrink-0 rounded-lg border border-[rgba(0,100,180,0.12)] px-2.5 py-1 text-[11px] font-bold text-[#0099CC] transition hover:bg-[#EEF3FF]"
+                >
+                  {allItemsSelected ? "전체 해제" : "전체 선택"}
+                </button>
               )}
-            </p>
+            </div>
             <div className="space-y-1.5">
               {ACTION_ITEMS_FOR_ISSUE.map((item, idx) => {
                 const checked = checkedItems.has(idx);
+                const alreadyIssued = selectedSvc && isIssueItemIssued(item);
+                const canSelectItem = Boolean(selectedSvc) && !alreadyIssued;
                 return (
                   <div
                     key={idx}
                     onClick={() => toggleItem(idx)}
                     className="flex items-start gap-3 p-2.5 rounded-xl border cursor-pointer transition-all"
                     style={{
-                      borderColor: checked ? "rgba(16,185,129,0.35)" : "rgba(0,100,180,0.12)",
-                      background: checked ? "#F0FDF9" : "#fff",
+                      borderColor: alreadyIssued ? "rgba(16,185,129,0.28)" : checked ? "rgba(16,185,129,0.35)" : "rgba(0,100,180,0.12)",
+                      background: alreadyIssued ? "#F3FBF7" : checked ? "#F0FDF9" : "#fff",
+                      cursor: canSelectItem ? "pointer" : "not-allowed",
+                      opacity: !selectedSvc ? 0.6 : 1,
                     }}
                   >
                     <div
                       className="w-4 h-4 rounded flex items-center justify-center flex-shrink-0 mt-0.5 transition-all border"
                       style={{
-                        background: checked ? "#10B981" : "transparent",
-                        borderColor: checked ? "#10B981" : "rgba(0,100,180,0.2)",
+                        background: alreadyIssued || checked ? "#10B981" : "transparent",
+                        borderColor: alreadyIssued || checked ? "#10B981" : "rgba(0,100,180,0.2)",
                       }}
                     >
-                      {checked && <LucideIcon name="check" size={10} color="#fff" />}
+                      {(alreadyIssued || checked) && <LucideIcon name="check" size={10} color="#fff" />}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm text-slate-800 leading-snug">{item.text}</p>
+                      <div className="flex items-center gap-2 min-w-0">
+                        <p className="text-sm text-slate-800 leading-snug truncate">{item.text}</p>
+                        {alreadyIssued && (
+                          <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-700">
+                            이미 연동됨
+                          </span>
+                        )}
+                      </div>
                       <p className="text-xs text-slate-400 mt-0.5">{item.assignee || "미정"} · {getDueLabel(idx)}</p>
                     </div>
                   </div>
@@ -1422,7 +1642,7 @@ function IssueModal({ open, onClose, onIssued, services, isMobile }) {
                   <CustomDropdown
                     value={assignee}
                     onChange={setAssignee}
-                    options={ASSIGNEE_OPTIONS}
+                    options={assigneeOptions}
                     placeholder="담당자 선택"
                     disabled={issuing}
                     hasError={isMultiple && !assignee}
@@ -1478,7 +1698,7 @@ function IssueModal({ open, onClose, onIssued, services, isMobile }) {
                 각 항목의 제목과 담당자를 확인하세요. 수정 후 한 번에 발행됩니다.
               </p>
               {selectedItemsList.map((item, i) => (
-                <IndividualTicketRow key={i} item={item} index={i} />
+                <IndividualTicketRow key={i} item={item} index={i} assigneeOptions={assigneeOptions} />
               ))}
             </div>
           )}
@@ -2729,17 +2949,13 @@ function AudioPlayer({ curTime, playing, spdIdx, onSeek, onTogglePlay, onCycleSp
 
 /* ─── 연동 컨트롤 타워 ───────────────────────────────── */
 function IntegrationControlTower({ services, auditLog, onBadgeClick, onIssueOpen, isMobile }) {
-  const totalTickets = services.reduce((sum, s) => sum + s.tickets.length, 0);
   const generatedLogs = auditLog.filter(isGeneratedAuditLog);
   const generatedCountByService = generatedLogs.reduce((acc, log) => {
     if (!log?.svcId) return acc;
     acc[log.svcId] = (acc[log.svcId] || 0) + 1;
     return acc;
   }, {});
-  const totalDone = services.reduce(
-    (sum, s) => sum + Math.min(generatedCountByService[s.id] || 0, s.tickets.length),
-    0
-  );
+  const totalDone = generatedLogs.length;
   const latestGeneratedLog = generatedLogs[generatedLogs.length - 1] || null;
   const hasGenerated = Boolean(latestGeneratedLog);
 
@@ -2754,19 +2970,11 @@ function IntegrationControlTower({ services, auditLog, onBadgeClick, onIssueOpen
           <span
             className="text-xs font-bold px-2 py-0.5 rounded-full"
             style={{
-              background: hasGenerated
-                ? totalDone === totalTickets
-                  ? "rgba(16,185,129,0.1)"
-                  : "rgba(0,153,204,0.1)"
-                : "rgba(0,153,204,0.1)",
-              color: hasGenerated
-                ? totalDone === totalTickets
-                  ? "#10B981"
-                  : "#0099CC"
-                : "#0099CC",
+              background: hasGenerated ? "rgba(16,185,129,0.1)" : "rgba(90,111,138,0.08)",
+              color: hasGenerated ? "#10B981" : "#5A6F8A",
             }}
           >
-            {hasGenerated ? `${totalDone}/${totalTickets} 연동 완료` : `0/${totalTickets}`}
+            {hasGenerated ? `${totalDone}건 연동 완료` : "연동 전"}
           </span>
         </div>
 
@@ -2851,10 +3059,21 @@ export default function TikiSprint12() {
   const [toast, setToast] = useState({ show: false, message: "", type: "success" });
 
   const [services, setServices] = useState(INITIAL_INTEGRATION_SERVICES);
-  const [auditLog, setAuditLog] = useState([
-    { svcId: "jira",   label: "TIKI-98 발행",  time: "06-14 14:32", user: "이민준" },
-    { svcId: "notion", label: "P-22 발행",      time: "06-14 15:01", user: "김지훈" },
-  ]);
+  const [auditLog, setAuditLog] = useState([]);
+  const mergedAuditLog = useMemo(() => {
+    const state = location?.state || {};
+    const storedLogs = buildStoredIntegrationLogs({
+      projectId: state.projectId,
+      sourceTitle: state.meeting?.title || state.title || "",
+    });
+    const seen = new Set();
+    return [...auditLog, ...storedLogs].filter((log) => {
+      const key = `${log.svcId}|${log.label}|${log.user || ""}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }, [auditLog, location?.state]);
   const [summaryActions, setSummaryActions] = useState(() =>
     SUMMARY_DATA.actions.map((action) => ({ ...action }))
   );
@@ -2866,6 +3085,15 @@ export default function TikiSprint12() {
     issues: SUMMARY_DATA.issues.map((i) => ({ ...i })),
     next_agenda: [...SUMMARY_DATA.next_agenda],
   }));
+  const issueAssigneeOptions = useMemo(() => {
+    const state = location?.state || {};
+    return buildProjectAssigneeOptions({
+      projectId: state.projectId,
+      state,
+      participants: state.meeting?.participants,
+      actions: Array.isArray(state.actions) ? state.actions : [],
+    });
+  }, [location?.state]);
 
   const [modal, setModal] = useState(null);
   const [detailSvc, setDetailSvc] = useState(null);
@@ -3073,8 +3301,15 @@ export default function TikiSprint12() {
     }
   }, [allCollapsed]);
 
-  const handleIssued = useCallback((svcName, label, user) => {
+  const handleIssued = useCallback((svcName, issuedItems = []) => {
     const svcId = INITIAL_INTEGRATION_SERVICES.find(s => s.name === svcName)?.id || "jira";
+    const logs = (Array.isArray(issuedItems) ? issuedItems : [{ label: issuedItems }])
+      .map((item) => ({
+        label: String(item?.label || item || "연동 업무").trim(),
+        user: String(item?.user || "담당자").trim() || "담당자",
+        due: String(item?.due || "").trim(),
+      }))
+      .filter((item) => item.label);
 
     setServices(prev =>
       prev.map(svc => {
@@ -3093,10 +3328,45 @@ export default function TikiSprint12() {
 
     const now = new Date();
     const timeStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2,"0")}-${String(now.getDate()).padStart(2,"0")} ${String(now.getHours()).padStart(2,"0")}:${String(now.getMinutes()).padStart(2,"0")}`;
-    setAuditLog(prev => [...prev, { svcId, label, time: timeStr, user }]);
+    setAuditLog(prev => [...prev, ...logs.map((item) => ({ svcId, label: item.label, time: timeStr, user: item.user }))]);
+
+    const state = location?.state || {};
+    const projectId = String(state.projectId || "").trim();
+    const sourceTitle = String(state.meeting?.title || state.title || "").trim();
+    if (projectId && sourceTitle && logs.length > 0) {
+      const overrides = readProjectOverrides();
+      const prevProject = overrides[projectId] && typeof overrides[projectId] === "object" ? overrides[projectId] : {};
+      const prevItems = Array.isArray(prevProject.myActionItems) ? prevProject.myActionItems : [];
+      const nextItems = [...prevItems];
+      logs.forEach((item, index) => {
+        const id = `${sourceTitle}-${svcId}-${item.label}-${index}`;
+        const persisted = {
+          id,
+          text: item.label,
+          title: item.label,
+          description: summaryData.summary || "",
+          due: item.due,
+          dueDate: item.due,
+          assignee: item.user,
+          assignees: [item.user].filter(Boolean),
+          status: "연동완료",
+          source: sourceTitle,
+          projectId,
+          projectName: state.projectName || state.project?.name || "",
+          integrationTool: svcId === "notion" ? "Notion" : "Jira",
+          externalLink: buildExternalLink(svcId, item.label),
+          updatedAt: new Date().toISOString(),
+        };
+        const existingIndex = nextItems.findIndex((existing) => String(existing?.id || "") === id);
+        if (existingIndex >= 0) nextItems[existingIndex] = { ...nextItems[existingIndex], ...persisted };
+        else nextItems.unshift(persisted);
+      });
+      overrides[projectId] = { ...prevProject, myActionItems: nextItems };
+      writeProjectOverrides(overrides);
+    }
 
     showToast(svcName === "Jira" ? "Jira에 연동되었습니다." : "Notion에 연동되었습니다.");
-  }, [showToast]);
+  }, [location?.state, showToast, summaryData.summary]);
 
   const txData = TX
     .map((d, i) => ({ ...d, idx: i }))
@@ -3114,8 +3384,12 @@ export default function TikiSprint12() {
     return acc;
   }, -1);
 
-  const visibleParticipants = PARTICIPANTS.slice(0, 4);
-  const hiddenCount = Math.max(PARTICIPANTS.length - visibleParticipants.length, 0);
+  const acceptedParticipants = useMemo(() => {
+    const state = location?.state || {};
+    return buildAcceptedProjectParticipants({ projectId: state.projectId, state });
+  }, [location?.state]);
+  const visibleParticipants = acceptedParticipants.slice(0, 4);
+  const hiddenCount = Math.max(acceptedParticipants.length - visibleParticipants.length, 0);
 
   const handleBadgeClick = useCallback((svc) => {
     const latest = services.find(s => s.id === svc.id) || svc;
@@ -3182,14 +3456,14 @@ export default function TikiSprint12() {
               </h1>
               <div className="flex items-center gap-2.5">
                 <div className="flex -space-x-2">
-                  {visibleParticipants.map(p => (
+                  {visibleParticipants.map((name, idx) => (
                     <div
-                      key={p.name}
+                      key={`${name}-${idx}`}
                       className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold text-white border-2 border-white"
-                      style={{ background: p.color }}
-                      title={p.name}
+                      style={{ background: PARTICIPANTS[idx % PARTICIPANTS.length]?.color || "#0099CC" }}
+                      title={name}
                     >
-                      {p.name[0]}
+                      {name[0] || "?"}
                     </div>
                   ))}
                   {hiddenCount > 0 && (
@@ -3201,13 +3475,13 @@ export default function TikiSprint12() {
                     </button>
                   )}
                 </div>
-                <span className="text-xs text-slate-400">총 {PARTICIPANTS.length}명 참여</span>
+                <span className="text-xs text-slate-400">총 {acceptedParticipants.length}명 참여</span>
               </div>
             </div>
 
             <IntegrationControlTower
               services={services}
-              auditLog={auditLog}
+              auditLog={mergedAuditLog}
               onBadgeClick={handleBadgeClick}
               onIssueOpen={() => setIssueOpen(true)}
               isMobile={isMobile}
@@ -3351,7 +3625,7 @@ export default function TikiSprint12() {
         open={!!detailSvc}
         onClose={() => setDetailSvc(null)}
         svc={detailSvc}
-        auditLog={auditLog}
+        auditLog={mergedAuditLog}
       />
 
       <IssueModal
@@ -3360,21 +3634,22 @@ export default function TikiSprint12() {
         onIssued={handleIssued}
         services={services}
         isMobile={isMobile}
+        assigneeOptions={issueAssigneeOptions}
       />
 
       <Modal open={modal === "participants"} onClose={() => setModal(null)} title="회의 참여자">
         <div className="space-y-2 max-h-72 overflow-y-auto">
-          {PARTICIPANTS.map(p => (
-            <div key={p.name} className="flex items-center gap-3 p-3 rounded-xl border border-slate-200">
+          {acceptedParticipants.map((name, idx) => (
+            <div key={`${name}-${idx}`} className="flex items-center gap-3 p-3 rounded-xl border border-slate-200">
               <div
                 className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-white"
-                style={{ background: p.color }}
+                style={{ background: PARTICIPANTS[idx % PARTICIPANTS.length]?.color || "#0099CC" }}
               >
-                {p.name[0]}
+                {name[0] || "?"}
               </div>
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-semibold text-slate-900">{p.name}</p>
-                <p className="text-xs text-slate-400">{p.role}</p>
+                <p className="text-sm font-semibold text-slate-900">{name}</p>
+                <p className="text-xs text-slate-400">프로젝트 참여자</p>
               </div>
               <span className="text-xs font-bold px-2 py-0.5 rounded bg-emerald-100 text-emerald-600">참여 중</span>
             </div>

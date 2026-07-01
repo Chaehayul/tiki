@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import Header from '../components/Header';
 import Footer from '../components/Footer';
 import MobileTab from '../components/MobileTab';
-import { listProjects } from '../api/apiClient';
+import { deleteProject, listProjects } from '../api/apiClient';
 
 const iconPaths = {
   plus: ['M12 5v14', 'M5 12h14'],
@@ -41,34 +41,6 @@ const VISIBILITY_META = {
   '구성원만': { icon: 'user', label: '구성원만' },
   '전체보기': { icon: 'globe',  label: '전체보기' },
 };
-
-const PROJECT_SUMMARY = {
-  1: 'AI 기반 회의록 자동 생성 파이프라인 설계 및 STT 모델 선정 검토 진행 중',
-  2: '공통 컴포넌트 토큰 체계 정립 및 Figma 변수 연동 방안 논의 완료',
-  3: '사용자 인터뷰 VOC 패턴 분석 후 핵심 페인포인트 3가지 도출 예정',
-  4: 'Q3 신규 기능 로드맵 초안 작성 및 이해관계자 우선순위 합의 진행',
-  5: '배치 작업 장애 원인 분석 완료, 자동화 아키텍처 개선안 리뷰 예정',
-  6: '신규 유입 온보딩 시나리오 점검 및 단계별 이탈 원인 분석 중',
-  7: '채널별 캠페인 퍼포먼스 데이터 취합 후 해야 할일 우선순위 정렬',
-  8: '사내 문서 템플릿 통합 기준 수립 및 부서별 적용 범위 협의 완료',
-  9: '백로그 항목 재정리 및 스프린트 우선순위 기준 팀 내 정합성 확보',
-  10: '핵심 KPI 후보군 정의 후 데이터 수집 가능 여부 검토 단계 진입',
-  11: '온보딩 퍼널 단계별 이탈률 분석 및 가설 기반 개선안 도출 중',
-};
-
-const PROJECTS = [
-  { id: 1,  name: 'AI 회의록 자동화',        category: '개발',   visibility: '구성원만', members: 5, createdAt: '2026-06-01', teamLead: '정아름',    updatedAt: '2시간 전',  participants: ['정아름', '김민수', '송지영', '김소현', '채하율'], meetings: [{ id: 'm-101', title: '주간 스프린트 회의',   date: '2026-06-10', round: '1회차' }, { id: 'm-102', title: '요구사항 정제 미팅',     date: '2026-06-13', round: '2회차' }] },
-  { id: 2,  name: '디자인 시스템 구축',       category: '디자인', visibility: '전체보기', members: 3, createdAt: '2026-05-27', teamLead: '박디자이너', updatedAt: '어제',      participants: ['박디자이너', '정아름', '송지영'], meetings: [{ id: 'm-201', title: '컴포넌트 토큰 정리',   date: '2026-06-09', round: '1회차' }] },
-  { id: 3,  name: '사용자 인터뷰 분석',       category: '기타',   visibility: '개인',    members: 7, createdAt: '2026-05-19', teamLead: '김소현',    updatedAt: '3일 전',   participants: ['김소현', '송지영', '채하율', '외부리서처A'], meetings: [{ id: 'm-301', title: '인터뷰 질문지 점검', date: '2026-06-05', round: '1회차' }, { id: 'm-302', title: 'VOC 인사이트 공유',      date: '2026-06-11', round: '2회차' }, { id: 'm-303', title: '후속 액션 플래닝',       date: '2026-06-14', round: '3회차' }] },
-  { id: 4,  name: '분기별 기획안',            category: '기획',   visibility: '구성원만', members: 4, createdAt: '2026-06-08', teamLead: '송지영',    updatedAt: '1시간 전', participants: ['송지영', '김소현', '정아름', '김민수'], meetings: [{ id: 'm-401', title: 'Q3 로드맵 정리',       date: '2026-06-15', round: '1회차' }] },
-  { id: 5,  name: '운영 자동화 개선',         category: '개발',   visibility: '전체보기', members: 6, createdAt: '2026-04-23', teamLead: '김민수',    updatedAt: '5시간 전', participants: ['김민수', '채하율', '정아름'], meetings: [{ id: 'm-501', title: '배치 작업 장애 복기', date: '2026-06-08', round: '1회차' }, { id: 'm-502', title: '자동화 아키텍처 리뷰',   date: '2026-06-12', round: '2회차' }] },
-  { id: 6,  name: '온보딩 가이드 리뉴얼',     category: '기획',   visibility: '구성원만', members: 2, createdAt: '2026-05-03', teamLead: '김소현',    updatedAt: '이번 주',  participants: ['김소현', '박디자이너'], meetings: [{ id: 'm-601', title: '신규 유입 시나리오 점검', date: '2026-06-07', round: '1회차' }] },
-  { id: 7,  name: '캠페인 퍼널 분석',         category: '마케팅', visibility: '개인',    members: 4, createdAt: '2026-05-15', teamLead: '마케터A',   updatedAt: '어제',     participants: ['마케터A', '김소현', '채하율'], meetings: [{ id: 'm-701', title: '캠페인 성과 리뷰',    date: '2026-06-10', round: '1회차' }, { id: 'm-702', title: '채널별 해야 할일',    date: '2026-06-13', round: '2회차' }] },
-  { id: 8,  name: '문서 표준화 태스크',       category: '기타',   visibility: '전체보기', members: 3, createdAt: '2026-04-30', teamLead: '송지영',    updatedAt: '3일 전',   participants: ['송지영', '정아름', '김소현'], meetings: [{ id: 'm-801', title: '문서 템플릿 통합',    date: '2026-06-06', round: '1회차' }] },
-  { id: 9,  name: '신규 기능 우선순위 정렬',  category: '기획',   visibility: '구성원만', members: 5, createdAt: '2026-05-21', teamLead: '정아름',    updatedAt: '어제',     participants: ['정아름', '김소현', '송지영', '김민수', '채하율'], meetings: [{ id: 'm-901', title: '우선순위 기준 정합',  date: '2026-06-11', round: '1회차' }, { id: 'm-902', title: '백로그 재정리',          date: '2026-06-14', round: '2회차' }] },
-  { id: 10, name: '프로덕트 KPI 재정의',      category: '기획',   visibility: '개인',    members: 4, createdAt: '2026-05-12', teamLead: '김소현',    updatedAt: '3일 전',   participants: ['김소현', '정아름', '박디자이너', '송지영'], meetings: [{ id: 'm-1001', title: '핵심 KPI 후보 정의', date: '2026-06-09', round: '1회차' }] },
-  { id: 11, name: '온보딩 퍼널 개선안',       category: '기획',   visibility: '전체보기', members: 6, createdAt: '2026-05-30', teamLead: '송지영',    updatedAt: '이번 주',  participants: ['송지영', '김소현', '정아름', '김민수', '채하율', '박디자이너'], meetings: [{ id: 'm-1101', title: '퍼널 단계별 이탈 분석', date: '2026-06-08', round: '1회차' }, { id: 'm-1102', title: '가설 기반 개선안 리뷰',  date: '2026-06-12', round: '2회차' }] },
-];
 
 const stateLabels = {
   IDLE: '대기 중',
@@ -157,6 +129,7 @@ function saveUserProjectActivity(user, map) {
 }
 
 const PROJECT_LIST_VIEW_MODE_KEY = 'tiki_project_list_view_mode';
+const isTemporaryCodexProject = (project) => String(project?.name || '').toLowerCase().includes('codex invitation check');
 
 function loadProjectListViewMode() {
   try {
@@ -199,7 +172,7 @@ function parseCurrentUser() {
 }
 
 function ProjectCard({ project, onOpen, onOpenConfig, onDelete, menuKey, setMenuKey, menuScope, menuDirectionByKey, setMenuDirectionByKey }) {
-  const summary = PROJECT_SUMMARY[project.id] || '최근 회의 내용을 요약하고 있어요.';
+  const summary = project.description || '최근 회의 내용을 요약하고 있어요.';
   const currentMenuKey = `${menuScope}-${project.id}`;
   const menuDirection = menuDirectionByKey[currentMenuKey] || 'down';
 
@@ -293,7 +266,7 @@ function ProjectCardSkeleton() {
 }
 
 function ProjectListItem({ project, onOpen, onOpenConfig, onDelete, menuKey, setMenuKey, menuScope, menuDirectionByKey, setMenuDirectionByKey }) {
-  const summary = PROJECT_SUMMARY[project.id] || '최근 회의 내용을 요약하고 있어요.';
+  const summary = project.description || '최근 회의 내용을 요약하고 있어요.';
   const currentMenuKey = `${menuScope}-${project.id}`;
   const menuDirection = menuDirectionByKey[currentMenuKey] || 'down';
 
@@ -443,7 +416,9 @@ export default function ProjectList() {
   const fetchProjects = useCallback(() => {
     return listProjects()
       .then((data) => {
-        const mapped = (Array.isArray(data) ? data : []).map((p) => ({
+        const mapped = (Array.isArray(data) ? data : [])
+          .filter((p) => !isTemporaryCodexProject(p))
+          .map((p) => ({
           id: p.id,
           name: p.name,
           category: p.category,
@@ -455,12 +430,11 @@ export default function ProjectList() {
           _updatedAt: p.updated_at,
         }));
 
-        // In dev, keep mock data visible when backend has no projects yet.
-        setProjects(mapped.length > 0 ? mapped : PROJECTS);
+        setProjects(mapped);
       })
       .catch(() => {
         // Keep existing data to avoid UI flicker when a refetch fails momentarily.
-        setProjects((prev) => (prev.length > 0 ? prev : PROJECTS));
+        setProjects((prev) => prev.filter((project) => !isTemporaryCodexProject(project)));
       })
       .finally(() => {
         setHasFetchedProjects(true);
@@ -485,9 +459,11 @@ export default function ProjectList() {
     };
 
     window.addEventListener('focus', handleRefetch);
+    window.addEventListener('tiki-projects-changed', handleRefetch);
     document.addEventListener('visibilitychange', handleVisibility);
     return () => {
       window.removeEventListener('focus', handleRefetch);
+      window.removeEventListener('tiki-projects-changed', handleRefetch);
       document.removeEventListener('visibilitychange', handleVisibility);
     };
   }, [fetchProjects]);
@@ -511,9 +487,7 @@ export default function ProjectList() {
     return () => document.removeEventListener('mousedown', handleOutsideClick);
   }, []);
 
-  const sourceProjects = hasFetchedProjects
-    ? (projects.length > 0 ? projects : PROJECTS)
-    : [];
+  const sourceProjects = hasFetchedProjects ? projects : [];
 
   const participatedProjects = useMemo(() => {
     if (deletedProjectIds.length === 0) return sourceProjects;
@@ -595,14 +569,20 @@ export default function ProjectList() {
     setPendingDeleteProject(project);
   }, []);
 
-  const confirmDeleteProject = useCallback(() => {
+  const confirmDeleteProject = useCallback(async () => {
     if (!pendingDeleteProject) return;
     const deleteId = String(pendingDeleteProject.id);
     setDeletedProjectIds((prev) => (prev.includes(deleteId) ? prev : [...prev, deleteId]));
     setProjects((prev) => prev.filter((project) => String(project.id) !== deleteId));
     setOpenMenuKey(null);
     setPendingDeleteProject(null);
-  }, [pendingDeleteProject]);
+    try {
+      await deleteProject(deleteId);
+    } catch {
+      setDeletedProjectIds((prev) => prev.filter((id) => id !== deleteId));
+      fetchProjects();
+    }
+  }, [fetchProjects, pendingDeleteProject]);
 
   const handlePageChange = useCallback((n) => { setPage(n); window.scrollTo({ top: 0, behavior: 'smooth' }); }, []);
 

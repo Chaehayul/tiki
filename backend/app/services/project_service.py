@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import select
@@ -26,6 +27,7 @@ def _get_project_or_404(db: Session, project_id: UUID) -> Project:
         .where(Project.id == project_id)
         .options(
             selectinload(Project.members),
+            selectinload(Project.members).selectinload(ProjectMember.invited_by),
             selectinload(Project.meetings),
             selectinload(Project.owner),
         )
@@ -37,7 +39,7 @@ def _get_project_or_404(db: Session, project_id: UUID) -> Project:
 
 def _assert_member(project: Project, user_id: UUID) -> None:
     is_owner = project.owner_id == user_id
-    is_member = any(m.user_id == user_id for m in project.members)
+    is_member = any(m.user_id == user_id and m.invite_status == "accepted" for m in project.members)
     if not is_owner and not is_member:
         raise AppException(detail="Access denied", status_code=403, code="forbidden")
 
@@ -59,13 +61,17 @@ def list_projects(db: Session, user_id: UUID) -> list[Project]:
         .where(Project.owner_id == user_id)
         .options(
             selectinload(Project.members),
+            selectinload(Project.members).selectinload(ProjectMember.invited_by),
             selectinload(Project.meetings),
             selectinload(Project.owner),
         )
     ).all()
 
     member_project_ids = db.scalars(
-        select(ProjectMember.project_id).where(ProjectMember.user_id == user_id)
+        select(ProjectMember.project_id).where(
+            ProjectMember.user_id == user_id,
+            ProjectMember.invite_status == "accepted",
+        )
     ).all()
 
     if member_project_ids:
@@ -74,6 +80,7 @@ def list_projects(db: Session, user_id: UUID) -> list[Project]:
             .where(Project.id.in_(member_project_ids), Project.owner_id != user_id)
             .options(
                 selectinload(Project.members),
+                selectinload(Project.members).selectinload(ProjectMember.invited_by),
                 selectinload(Project.meetings),
                 selectinload(Project.owner),
             )
@@ -114,6 +121,8 @@ def create_project(db: Session, payload: ProjectCreate, user_id: UUID) -> Projec
             email=invite.email,
             name=invite.name,
             role=invite.role,
+            invited_by_id=user_id,
+            invite_status="pending",
         )
         db.add(member)
 
@@ -179,6 +188,10 @@ def create_meeting(db: Session, project_id: UUID, payload: MeetingCreate, user_i
         tags=payload.tags,
         participants=payload.participants,
         summary=payload.summary,
+        action_items=payload.action_items,
+        action_items_count=payload.action_items_count
+        if payload.action_items_count is not None
+        else len(payload.action_items),
     )
     db.add(meeting)
     db.commit()
@@ -229,6 +242,7 @@ def invite_member(
         select(ProjectMember).where(
             ProjectMember.project_id == project_id,
             ProjectMember.email == email,
+            ProjectMember.invite_status.in_(("pending", "accepted")),
         )
     )
     if already is not None:
@@ -244,14 +258,63 @@ def invite_member(
     member = ProjectMember(
         project_id=project_id,
         user_id=existing_user.id if existing_user else None,
+        invited_by_id=user_id,
         email=email,
         name=payload.name or (existing_user.name if existing_user else None),
         role=payload.role,
+        invite_status="pending",
     )
     db.add(member)
     db.commit()
     db.refresh(member)
     return member
+
+
+def list_my_invitations(db: Session, user: User) -> list[ProjectMember]:
+    return list(
+        db.scalars(
+            select(ProjectMember)
+            .join(Project, Project.id == ProjectMember.project_id)
+            .where(
+                ProjectMember.email == user.email,
+                ProjectMember.invite_status == "pending",
+            )
+            .options(
+                selectinload(ProjectMember.project),
+                selectinload(ProjectMember.invited_by),
+            )
+            .order_by(ProjectMember.created_at.desc())
+        ).all()
+    )
+
+
+def respond_to_invitation(db: Session, invitation_id: UUID, user: User, status: str) -> ProjectMember:
+    if status not in {"accepted", "declined"}:
+        raise AppException(detail="Invalid invitation status", status_code=400, code="invalid_status")
+
+    invitation = db.scalar(
+        select(ProjectMember)
+        .where(
+            ProjectMember.id == invitation_id,
+            ProjectMember.email == user.email,
+            ProjectMember.invite_status == "pending",
+        )
+        .options(
+            selectinload(ProjectMember.project),
+            selectinload(ProjectMember.invited_by),
+        )
+    )
+    if invitation is None:
+        raise AppException(detail="Invitation not found", status_code=404, code="invitation_not_found")
+
+    invitation.user_id = user.id
+    if not invitation.name:
+        invitation.name = user.name
+    invitation.invite_status = status
+    invitation.responded_at = datetime.now(UTC)
+    db.commit()
+    db.refresh(invitation)
+    return invitation
 
 
 def remove_member(

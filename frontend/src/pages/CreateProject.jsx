@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import Header from '../components/Header';
 import Footer from '../components/Footer';
 import MobileTab from '../components/MobileTab';
-import { createProject } from '../api/apiClient';
+import { createProject, lookupUserByEmail } from '../api/apiClient';
 
 const icons = {
   folder: ["M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"],
@@ -106,15 +106,37 @@ export default function CreateProject() {
     setStep(2);
   };
 
-  const handleAddMember = () => {
-    if (!email.trim() || !email.includes('@')) { triggerToast('올바른 형식의 이메일 주소를 입력해 주세요.', 'info'); return; }
+  const handleAddMember = async () => {
+    const normalizedEmail = email.trim().toLowerCase();
+    if (!normalizedEmail || !normalizedEmail.includes('@')) { triggerToast('올바른 형식의 이메일 주소를 입력해 주세요.', 'info'); return; }
+    if (invitedMembers.some((member) => member.email.toLowerCase() === normalizedEmail)) {
+      triggerToast('이미 추가된 구성원입니다.', 'info');
+      return;
+    }
+
     setIsInviting(true);
-    setTimeout(() => {
-      setInvitedMembers([...invitedMembers, { id: Date.now(), email: email.trim(), role: role === 'admin' ? '관리자' : '일반 멤버', status: '초대장 발송 완료' }]);
+    try {
+      const [lookup] = await Promise.all([
+        lookupUserByEmail(normalizedEmail).catch(() => null),
+        new Promise((resolve) => setTimeout(resolve, 700)),
+      ]);
+      const displayName = lookup?.found && lookup?.name ? lookup.name : normalizedEmail;
+      setInvitedMembers((prev) => [
+        ...prev,
+        {
+          id: Date.now(),
+          email: normalizedEmail,
+          name: lookup?.found ? lookup.name : null,
+          displayName,
+          role: role === 'admin' ? '관리자' : '일반 멤버',
+          status: '초대장 발송 완료',
+        },
+      ]);
       setEmail('');
-      setIsInviting(false);
       triggerToast('초대장이 메일로 성공적으로 발송되었습니다.', 'mail');
-    }, 1200);
+    } finally {
+      setIsInviting(false);
+    }
   };
 
   const handleRemoveMember = (id) => {
@@ -132,7 +154,18 @@ export default function CreateProject() {
       setBuildProgress(45);
       setBuildStepText('AI 가이드라인 및 규칙 컨벤션 프로토콜 바인딩 중...');
 
-      await createProject({ name: projectName, description });
+      await createProject({
+        name: projectName.trim(),
+        description: description.trim(),
+        category: copyTemplate === 'design-system' ? '디자인' : copyTemplate === 'strategy-planning' ? '기획' : '일반',
+        visibility,
+        meetingTemplate: copyTemplate === 'none' ? 'basic' : copyTemplate,
+        members: invitedMembers.map((member) => ({
+          email: member.email,
+          name: member.name || undefined,
+          role: member.role === '관리자' ? 'admin' : 'member',
+        })),
+      });
 
       await new Promise((r) => setTimeout(r, 800));
       setBuildProgress(80);
@@ -256,7 +289,7 @@ export default function CreateProject() {
               <div className="mt-5 flex items-center justify-between gap-3 border-t border-[rgba(0,100,180,0.06)] pt-3">
                 <div className="flex min-w-0 items-center gap-1.5 text-[#0D1B2A]/70">
                   <LIcon name="users" size={15} className="shrink-0" />
-                  <span className="truncate text-xs">참여 {invitedMembers.length + 1}명</span>
+                  <span className="truncate text-xs">참여 1명 · 초대 {invitedMembers.length}명</span>
                 </div>
                 <div className="flex shrink-0 items-center gap-1.5 text-[#0D1B2A]/55">
                   <LIcon name="clock" size={14} className="shrink-0" />
@@ -445,8 +478,11 @@ export default function CreateProject() {
                       {invitedMembers.map((member) => (
                         <div key={member.id} className="flex items-center justify-between bg-white px-3 py-2.5 rounded-lg border border-[rgba(0,100,180,0.08)] text-xs animate-fadeIn">
                           <div className="flex items-center space-x-2 truncate mr-4">
-                            <div className="w-6 h-6 rounded-full bg-[#EEF3FF] flex items-center justify-center text-[10px] font-bold text-[#0099CC]">{member.email.charAt(0).toUpperCase()}</div>
-                            <span className="font-medium text-[#0D1B2A] truncate max-w-[150px] sm:max-w-xs">{member.email}</span>
+                            <div className="w-6 h-6 rounded-full bg-[#EEF3FF] flex items-center justify-center text-[10px] font-bold text-[#0099CC]">{(member.displayName || member.email).charAt(0).toUpperCase()}</div>
+                            <div className="min-w-0">
+                              <p className="font-medium text-[#0D1B2A] truncate max-w-[150px] sm:max-w-xs">{member.displayName || member.email}</p>
+                              {member.name && <p className="mt-0.5 truncate text-[10px] text-[#8A9AB0] max-w-[150px] sm:max-w-xs">{member.email}</p>}
+                            </div>
                           </div>
                           <div className="flex items-center space-x-3 shrink-0">
                             <span className={`px-2.5 py-0.5 rounded text-[10px] font-bold ${member.role === '관리자' ? 'bg-[#7C3AED]/10 text-[#7C3AED]' : 'bg-[#EEF3FF] text-[#0099CC]'}`}>{member.role}</span>

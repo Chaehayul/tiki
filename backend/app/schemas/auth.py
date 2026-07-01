@@ -27,6 +27,12 @@ class UserResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class UserLookupResponse(BaseModel):
+    found: bool
+    email: EmailStr
+    name: str | None = None
+
+
 class UserUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=100)
     role: str | None = Field(default=None, max_length=50)

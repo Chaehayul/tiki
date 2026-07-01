@@ -32,7 +32,23 @@ from app.services import project_service
 router = APIRouter(prefix="/projects", tags=["projects"])
 
 
+def _to_member_response(member) -> MemberResponse:
+    return MemberResponse(
+        id=member.id,
+        email=member.email,
+        name=member.name,
+        role=member.role,
+        invite_status=member.invite_status,
+        invited_by_name=member.invited_by.name if getattr(member, "invited_by", None) else None,
+        project_id=member.project_id,
+        project_name=member.project.name if getattr(member, "project", None) else None,
+        responded_at=member.responded_at,
+        created_at=member.created_at,
+    )
+
+
 def _to_project_response(project: Project) -> ProjectResponse:
+    accepted_member_count = sum(1 for member in project.members if member.invite_status == "accepted")
     return ProjectResponse(
         id=project.id,
         name=project.name,
@@ -48,17 +64,8 @@ def _to_project_response(project: Project) -> ProjectResponse:
         notion_token_configured=bool(project.notion_token),
         owner_id=project.owner_id,
         team_lead=project.owner.name if project.owner else "알 수 없음",
-        member_count=len(project.members) + 1,
-        members=[
-            MemberResponse(
-                id=m.id,
-                email=m.email,
-                name=m.name,
-                role=m.role,
-                created_at=m.created_at,
-            )
-            for m in project.members
-        ],
+        member_count=accepted_member_count + 1,
+        members=[_to_member_response(m) for m in project.members],
         meetings=[MeetingResponse.model_validate(m) for m in project.meetings],
         created_at=project.created_at,
         updated_at=project.updated_at,
@@ -66,6 +73,7 @@ def _to_project_response(project: Project) -> ProjectResponse:
 
 
 def _to_list_item(project: Project) -> ProjectListItem:
+    accepted_member_count = sum(1 for member in project.members if member.invite_status == "accepted")
     return ProjectListItem(
         id=project.id,
         name=project.name,
@@ -76,7 +84,7 @@ def _to_list_item(project: Project) -> ProjectListItem:
         meeting_template=project.meeting_template,
         owner_id=project.owner_id,
         team_lead=project.owner.name if project.owner else "알 수 없음",
-        member_count=len(project.members) + 1,
+        member_count=accepted_member_count + 1,
         meeting_count=len(project.meetings),
         created_at=project.created_at,
         updated_at=project.updated_at,
@@ -102,6 +110,35 @@ def create_project(
 ) -> ProjectResponse:
     project = project_service.create_project(db, payload, current_user.id)
     return _to_project_response(project)
+
+
+@router.get("/invitations", response_model=list[MemberResponse])
+def list_my_invitations(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[MemberResponse]:
+    invitations = project_service.list_my_invitations(db, current_user)
+    return [_to_member_response(invitation) for invitation in invitations]
+
+
+@router.post("/invitations/{invitation_id}/accept", response_model=MemberResponse)
+def accept_invitation(
+    invitation_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> MemberResponse:
+    invitation = project_service.respond_to_invitation(db, invitation_id, current_user, "accepted")
+    return _to_member_response(invitation)
+
+
+@router.post("/invitations/{invitation_id}/decline", response_model=MemberResponse)
+def decline_invitation(
+    invitation_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> MemberResponse:
+    invitation = project_service.respond_to_invitation(db, invitation_id, current_user, "declined")
+    return _to_member_response(invitation)
 
 
 @router.get("/{project_id}", response_model=ProjectResponse)
@@ -167,7 +204,7 @@ def get_project_stats(
         uploads_by_status=UploadStatusBreakdown(**status_map),
         total_meetings=len(project.meetings),
         total_tickets=total_tickets,
-        member_count=len(project.members) + 1,
+        member_count=sum(1 for member in project.members if member.invite_status == "accepted") + 1,
     )
 
 
@@ -300,7 +337,7 @@ def invite_member(
     db: Session = Depends(get_db),
 ) -> MemberResponse:
     member = project_service.invite_member(db, project_id, payload, current_user.id)
-    return MemberResponse.model_validate(member)
+    return _to_member_response(member)
 
 
 @router.delete("/{project_id}/members/{member_id}", status_code=status.HTTP_204_NO_CONTENT)

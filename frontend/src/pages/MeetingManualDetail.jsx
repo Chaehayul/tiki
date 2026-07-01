@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import Header from '../components/Header';
 import Footer from '../components/Footer';
@@ -7,6 +7,7 @@ import ToastPopup from '../components/toastpopup';
 
 const MANUAL_MEETING_RECORDS_KEY = 'tiki_manual_minutes_records';
 const PROJECT_OVERRIDE_STORAGE_KEY = 'tiki_project_overrides';
+const PROJECT_CATALOG_STORAGE_KEY = 'tiki_project_catalog';
 const PROJECTLIST_CHEVRON_COLOR = '#A0AFBF';
 
 const stateLabels = {
@@ -69,6 +70,140 @@ const readProjectOverrides = () => {
   }
 };
 
+const readProjectCatalog = () => {
+  try {
+    const raw = localStorage.getItem(PROJECT_CATALOG_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+};
+
+const writeProjectOverrides = (next) => {
+  try {
+    localStorage.setItem(PROJECT_OVERRIDE_STORAGE_KEY, JSON.stringify(next));
+  } catch {
+    // ignore storage write failures in local mock mode
+  }
+};
+
+const buildStoredIntegrationLogs = ({ projectId = '', sourceTitle = '' } = {}) => {
+  const overrides = readProjectOverrides();
+  const normalizedProjectId = String(projectId || '').trim();
+  const normalizedSource = String(sourceTitle || '').trim();
+  const projects = normalizedProjectId
+    ? [[normalizedProjectId, overrides[normalizedProjectId]]]
+    : Object.entries(overrides);
+
+  return projects.flatMap(([currentProjectId, projectOverride]) => {
+    const items = Array.isArray(projectOverride?.myActionItems) ? projectOverride.myActionItems : [];
+    return items
+      .filter((item) => item?.integrationTool || item?.externalLink || item?.jiraLink)
+      .filter((item) => {
+        const projectMatches = !normalizedProjectId || String(item?.projectId || currentProjectId) === normalizedProjectId;
+        const sourceMatches = !normalizedSource || String(item?.source || '').trim() === normalizedSource;
+        return projectMatches && sourceMatches;
+      })
+      .map((item, index) => {
+        const rawTool = String(item?.integrationTool || item?.integrationProvider || item?.externalLink || item?.jiraLink || '').toLowerCase();
+        const svcId = rawTool.includes('notion') ? 'notion' : 'jira';
+        return {
+          svcId,
+          label: item?.title || item?.text || `대시보드 연동 업무 ${index + 1}`,
+          time: item?.updatedAt || item?.updated_at || new Date().toISOString(),
+          user: item?.assignee || getStoredUserName() || '담당자',
+          source: 'dashboard',
+        };
+      });
+  });
+};
+
+const buildExternalLink = (svcId, title) => {
+  const params = new URLSearchParams({ jql: `text ~ "${String(title || '업무').slice(0, 40)}"` });
+  if (svcId === 'notion') return `https://www.notion.so/search?query=${encodeURIComponent(String(title || '업무'))}`;
+  return `https://jira.atlassian.com/issues/?${params.toString()}`;
+};
+
+const getStoredUserName = () => {
+  try {
+    const user = JSON.parse(localStorage.getItem('tiki_user') || 'null');
+    return String(user?.name || user?.email || '').trim();
+  } catch {
+    return '';
+  }
+};
+
+const normalizeMemberName = (member) => {
+  if (typeof member === 'string') return member.trim();
+  if (!member || typeof member !== 'object') return '';
+  const inviteStatus = String(member.invite_status || member.inviteStatus || '').trim();
+  if (inviteStatus && inviteStatus !== 'accepted') return '';
+  return String(member.name || member.email || '').trim();
+};
+
+const buildAcceptedProjectParticipants = ({ projectId = '', state = {} } = {}) => {
+  const names = new Set();
+  const add = (value) => {
+    const normalized = String(value || '').trim();
+    if (!normalized || ['미정', '미지정', '담당자', '담당자 미지정', '회의록', '전체'].includes(normalized)) return;
+    names.add(normalized);
+  };
+  const addParticipants = (values) => {
+    if (!Array.isArray(values)) return;
+    values.forEach((value) => add(normalizeMemberName(value)));
+  };
+
+  const normalizedProjectId = String(projectId || state?.projectId || state?.project?.id || '').trim();
+  const overrides = readProjectOverrides();
+  const override = normalizedProjectId ? overrides[normalizedProjectId] : null;
+  const catalogProject = readProjectCatalog().find((item) => String(item?.id || '') === normalizedProjectId);
+  const projectSources = [state?.project, override, catalogProject].filter(Boolean);
+
+  projectSources.forEach((project) => {
+    add(project?.teamLead || project?.team_lead);
+    addParticipants(project?.admins);
+    addParticipants(project?.participants);
+    addParticipants(project?.members);
+  });
+
+  if (names.size === 0) add(getStoredUserName());
+  return [...names];
+};
+
+const buildProjectAssigneeOptions = ({ projectId = '', state = {}, participants = [], actions = [] } = {}) => {
+  const names = new Set();
+  const add = (value) => {
+    const normalized = String(value || '').trim();
+    if (!normalized || ['미정', '미지정', '담당자', '담당자 미지정', '회의록', '전체'].includes(normalized)) return;
+    names.add(normalized);
+  };
+  const addMany = (values) => {
+    if (!Array.isArray(values)) return;
+    values.forEach((value) => add(normalizeMemberName(value)));
+  };
+
+  const normalizedProjectId = String(projectId || state?.projectId || state?.project?.id || '').trim();
+  const overrides = readProjectOverrides();
+  const override = normalizedProjectId ? overrides[normalizedProjectId] : null;
+  const catalogProject = readProjectCatalog().find((item) => String(item?.id || '') === normalizedProjectId);
+  const projectSources = [state?.project, override, catalogProject].filter(Boolean);
+
+  buildAcceptedProjectParticipants({ projectId: normalizedProjectId, state }).forEach(add);
+  addMany(participants);
+  addMany(state?.projectParticipants);
+  projectSources.forEach((project) => {
+    add(project?.teamLead || project?.team_lead);
+    addMany(project?.participants);
+    addMany(project?.admins);
+    addMany(project?.members);
+  });
+  add(getStoredUserName());
+
+  return [...names];
+};
+
 const formatDueDate = (raw) => {
   const value = String(raw || '').trim();
   if (!value) return '미정';
@@ -106,7 +241,6 @@ const formatPublishedDate = (raw) => {
   return value;
 };
 
-const ASSIGNEE_OPTIONS = ['김지훈', '박소현', '이민준', '최아로미', '정다은', '한유진', '전체'];
 const WEEKDAY_LABELS = ['일', '월', '화', '수', '목', '금', '토'];
 
 const pad2 = (n) => String(n).padStart(2, '0');
@@ -478,11 +612,8 @@ function DueDateCalendar({ value, onSelect, onClose, placement = 'bottom' }) {
   );
 }
 
-function IntegrationBadge({ svc, onClick }) {
-  const done = svc.tickets.filter((t) => t.status === 'done').length;
-  const total = svc.tickets.length;
-  const isEmpty = done === 0;
-  const allDone = total > 0 && done === total;
+function IntegrationBadge({ svc, onClick, issuedCount = 0 }) {
+  const hasIssued = issuedCount > 0;
 
   return (
     <button
@@ -490,8 +621,8 @@ function IntegrationBadge({ svc, onClick }) {
       onClick={() => onClick(svc)}
       className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border transition-all hover:scale-105 active:scale-95 cursor-pointer"
       style={{
-        background: allDone ? 'rgba(16,185,129,0.06)' : isEmpty ? 'rgba(90,111,138,0.06)' : 'rgba(0,153,204,0.05)',
-        borderColor: allDone ? 'rgba(16,185,129,0.35)' : isEmpty ? 'rgba(0,100,180,0.12)' : 'rgba(0,153,204,0.3)',
+        background: hasIssued ? 'rgba(16,185,129,0.06)' : 'rgba(90,111,138,0.06)',
+        borderColor: hasIssued ? 'rgba(16,185,129,0.35)' : 'rgba(0,100,180,0.12)',
       }}
     >
       <span
@@ -501,13 +632,10 @@ function IntegrationBadge({ svc, onClick }) {
         {svc.iconLabel}
       </span>
       <span className="text-xs font-semibold text-slate-500">{svc.name}</span>
-      <span className="text-xs">
-        <span className="font-bold" style={{ color: allDone ? '#10B981' : isEmpty ? '#5A6F8A' : '#0099CC' }}>
-          {done}
-        </span>
-        <span className="text-slate-400">/{total}</span>
+      <span className="text-xs font-bold" style={{ color: hasIssued ? '#10B981' : '#5A6F8A' }}>
+        {hasIssued ? `${issuedCount}건 연동` : '연동 전'}
       </span>
-      {allDone && <span className="text-emerald-500"><LucideIcon name="check" size={12} /></span>}
+      {hasIssued && <span className="text-emerald-500"><LucideIcon name="check" size={12} /></span>}
     </button>
   );
 }
@@ -515,32 +643,47 @@ function IntegrationBadge({ svc, onClick }) {
 function ServiceDetailModal({ open, onClose, svc, auditLog }) {
   if (!svc) return null;
 
-  const done = svc.tickets.filter((t) => t.status === 'done').length;
-  const total = svc.tickets.length;
-  const pct = total === 0 ? 0 : Math.round((done / total) * 100);
+  const svcLogs = auditLog.filter((log) => log.svcId === svc.id);
+  const done = svcLogs.length;
   const statusLabel = { done: '완료', progress: '진행 중', todo: '대기' };
   const statusCls = {
     done: 'bg-emerald-100 text-emerald-700',
     progress: 'bg-amber-100 text-amber-700',
     todo: 'bg-slate-100 text-slate-500',
   };
-
-  const svcLogs = auditLog.filter((log) => log.svcId === svc.id);
-
+  const normalizeText = (value) => String(value || '').trim().toLowerCase();
+  const issuedTicketTitles = new Set(svcLogs.map((log) => normalizeText(log.label)).filter(Boolean));
+  const displayTickets = [
+    ...svc.tickets.map((ticket) => {
+      const isIssued = issuedTicketTitles.has(normalizeText(ticket.title)) || issuedTicketTitles.has(normalizeText(`${ticket.id} · ${ticket.title}`));
+      return isIssued ? { ...ticket, status: 'done' } : ticket;
+    }),
+    ...svcLogs
+      .filter((log) => !svc.tickets.some((ticket) => normalizeText(ticket.title) === normalizeText(log.label)))
+      .map((log, idx) => ({
+        id: `${svc.iconLabel || svc.id}-${idx + 1}`,
+        title: log.label,
+        assignee: log.user || '담당자',
+        status: 'done',
+      })),
+  ];
   return (
     <Modal open={open} onClose={onClose} title={`${svc.name} 연동 현황`}>
       <div className="mb-4">
         <div className="flex justify-between mb-1.5">
-          <span className="text-xs text-slate-400">전체 진행률</span>
-          <span className="text-xs font-bold text-slate-900">{done} / {total} 완료</span>
-        </div>
-        <div className="h-1.5 rounded-full bg-slate-100">
-          <div className="h-full rounded-full transition-all duration-500" style={{ width: `${pct}%`, background: 'linear-gradient(90deg,#0099CC,#7C3AED)' }} />
+          <span className="text-xs text-slate-400">실제 발행 이력</span>
+          <span className="text-xs font-bold text-slate-900">{done > 0 ? `${done}건 연동` : '연동 전'}</span>
         </div>
       </div>
 
-      <div className="space-y-2 max-h-60 overflow-y-auto mb-4">
-        {svc.tickets.map((ticket) => (
+      {svcLogs.length === 0 ? (
+        <div className="rounded-xl p-4 mb-4 border border-slate-200 bg-slate-50">
+          <p className="text-sm font-semibold text-slate-700">아직 {svc.name}로 보낸 업무가 없습니다.</p>
+          <p className="text-xs text-slate-400 mt-1">업무 보내기를 실행하면 이곳에 실제 발행 이력이 표시됩니다.</p>
+        </div>
+      ) : (
+        <div className="space-y-2 max-h-60 overflow-y-auto mb-4">
+        {displayTickets.map((ticket) => (
           <div key={ticket.id} className={`w-full text-left flex items-center gap-3 p-3 rounded-xl border ${ticket.status === 'done' ? 'border-emerald-200 bg-emerald-50/50' : 'border-slate-200'}`}>
             <span className="flex-shrink-0">
               {ticket.status === 'done' ? (
@@ -558,7 +701,8 @@ function ServiceDetailModal({ open, onClose, svc, auditLog }) {
             <span className={`text-xs font-bold px-2 py-0.5 rounded ${statusCls[ticket.status]}`}>{statusLabel[ticket.status]}</span>
           </div>
         ))}
-      </div>
+        </div>
+      )}
 
       {svcLogs.length > 0 && (
         <div className="rounded-xl p-3 space-y-1.5" style={{ background: 'rgba(0,153,204,0.04)', border: '1px solid rgba(0,153,204,0.12)' }}>
@@ -601,10 +745,14 @@ function IssueButton({ onClick, issuingGlobal = false }) {
 }
 
 function IntegrationControlTower({ services, auditLog, onBadgeClick, onIssueOpen, isMobile, issuing }) {
-  const totalDone = services.reduce((sum, svc) => sum + svc.tickets.filter((t) => t.status === 'done').length, 0);
-  const totalTickets = services.reduce((sum, svc) => sum + svc.tickets.length, 0);
   const latestLog = auditLog[auditLog.length - 1] || null;
   const hasIssued = Boolean(latestLog);
+  const issuedCountByService = auditLog.reduce((acc, log) => {
+    if (!log?.svcId) return acc;
+    acc[log.svcId] = (acc[log.svcId] || 0) + 1;
+    return acc;
+  }, {});
+  const totalIssued = auditLog.length;
 
   return (
     <div
@@ -617,19 +765,11 @@ function IntegrationControlTower({ services, auditLog, onBadgeClick, onIssueOpen
           <span
             className="text-xs font-bold px-2 py-0.5 rounded-full"
             style={{
-              background: hasIssued
-                ? totalDone === totalTickets
-                  ? 'rgba(16,185,129,0.1)'
-                  : 'rgba(0,153,204,0.1)'
-                : 'rgba(0,153,204,0.1)',
-              color: hasIssued
-                ? totalDone === totalTickets
-                  ? '#10B981'
-                  : '#0099CC'
-                : '#0099CC',
+              background: hasIssued ? 'rgba(16,185,129,0.1)' : 'rgba(90,111,138,0.08)',
+              color: hasIssued ? '#10B981' : '#5A6F8A',
             }}
           >
-            {hasIssued ? `${totalDone}/${totalTickets} 연동 완료` : `0/${totalTickets}`}
+            {hasIssued ? `${totalIssued}건 연동 완료` : '연동 전'}
           </span>
         </div>
 
@@ -646,7 +786,7 @@ function IntegrationControlTower({ services, auditLog, onBadgeClick, onIssueOpen
 
       <div className="flex flex-wrap items-center gap-2">
         {services.map((svc) => (
-          <IntegrationBadge key={svc.id} svc={svc} onClick={onBadgeClick} />
+          <IntegrationBadge key={svc.id} svc={svc} onClick={onBadgeClick} issuedCount={issuedCountByService[svc.id] || 0} />
         ))}
 
         <div className="hidden sm:block w-px h-5 bg-slate-200 mx-1" />
@@ -953,6 +1093,7 @@ function buildInitialServices(minutes) {
     id: `MAN-${idx + 1}`,
     title: item.text || '액션 아이템',
     assignee: item.assignee || '미지정',
+    due: formatDueDate(item.dueDate),
     status: 'todo',
   }));
 
@@ -1033,10 +1174,21 @@ export default function MeetingManualDetail() {
 
   const initialRecord = useMemo(() => {
     const all = readManualMeetingRecords();
-    if (recordId && all[recordId]) return all[recordId];
+    const currentUserName = getStoredUserName();
+    if (recordId && all[recordId]) {
+      const stored = all[recordId];
+      return {
+        ...stored,
+        participants: buildAcceptedProjectParticipants({
+          projectId: stored.projectId || location.state?.projectId,
+          state: location.state,
+        }),
+      };
+    }
 
     const fromMeeting = location.state?.meeting;
     if (fromMeeting && typeof fromMeeting === 'object') {
+      const isManualMeeting = fromMeeting.detailType === 'manual' || location.state?.detailType === 'manual';
       return {
         id: recordId || String(fromMeeting.id || '').trim() || `manual-${Date.now()}`,
         projectId: String(location.state?.projectId || '').trim(),
@@ -1045,7 +1197,10 @@ export default function MeetingManualDetail() {
         date: fromMeeting.date || '-',
         rawDate: '',
         type: fromMeeting.type || '정기',
-        participants: Array.isArray(fromMeeting.participants) ? fromMeeting.participants : [],
+        participants: buildAcceptedProjectParticipants({
+          projectId: location.state?.projectId,
+          state: location.state,
+        }),
         summary: fromMeeting.summary || '',
         keywords: Array.isArray(fromMeeting.tags)
           ? fromMeeting.tags.map((tag) => String(tag || '').replace(/^#/, '')).filter(Boolean)
@@ -1072,6 +1227,20 @@ export default function MeetingManualDetail() {
   const [services, setServices] = useState(() => (initialRecord ? buildInitialServices(initialRecord) : []));
   const [auditLog, setAuditLog] = useState([]);
 
+  const mergedAuditLog = useMemo(() => {
+    const storedLogs = buildStoredIntegrationLogs({
+      projectId: minutes?.projectId,
+      sourceTitle: minutes?.title,
+    });
+    const seen = new Set();
+    return [...auditLog, ...storedLogs].filter((log) => {
+      const key = `${log.svcId}|${log.label}|${log.user || ''}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }, [auditLog, minutes?.projectId, minutes?.title]);
+
   const summaryActions = useMemo(
     () => (Array.isArray(minutes?.actions) ? minutes.actions : []).map((action) => ({
       text: action.text,
@@ -1097,6 +1266,45 @@ export default function MeetingManualDetail() {
     () => [...issueCheckedItems].map((idx) => issueActionItems[idx]).filter(Boolean),
     [issueActionItems, issueCheckedItems]
   );
+  const issuedIssueKeySet = useMemo(() => {
+    if (!selectedIssueSvc) return new Set();
+    return new Set(
+      mergedAuditLog
+        .filter((log) => log.svcId === selectedIssueSvc)
+        .map((log) => String(log.label || '').trim().toLowerCase())
+        .filter(Boolean)
+    );
+  }, [mergedAuditLog, selectedIssueSvc]);
+  const isIssueItemIssued = useCallback(
+    (item) => issuedIssueKeySet.has(String(item?.text || item?.title || '').trim().toLowerCase()),
+    [issuedIssueKeySet]
+  );
+  const issueAssigneeOptions = useMemo(
+    () => buildProjectAssigneeOptions({
+      projectId: minutes?.projectId,
+      state: location.state,
+      participants: minutes?.participants,
+      actions: [
+        ...(Array.isArray(minutes?.actions) ? minutes.actions : []),
+        ...issueActionItems,
+        ...issueIndividualDrafts,
+      ],
+    }),
+    [issueActionItems, issueIndividualDrafts, location.state, minutes]
+  );
+  const selectableIssueItemIndexes = useMemo(
+    () => issueActionItems.map((item, idx) => (isIssueItemIssued(item) ? null : idx)).filter((idx) => idx !== null),
+    [isIssueItemIssued, issueActionItems]
+  );
+  const allIssueItemsSelected = selectableIssueItemIndexes.length > 0 && issueCheckedItems.size === selectableIssueItemIndexes.length;
+
+  const toggleAllIssueItems = useCallback(() => {
+    if (selectableIssueItemIndexes.length === 0) return;
+    setIssueCheckedItems((prev) => {
+      if (prev.size === selectableIssueItemIndexes.length) return new Set();
+      return new Set(selectableIssueItemIndexes);
+    });
+  }, [selectableIssueItemIndexes]);
 
   useEffect(() => {
     const handleResize = () => setIsMobile(window.innerWidth < 768);
@@ -1206,7 +1414,7 @@ export default function MeetingManualDetail() {
     setIssueMode('merged');
     const first = issueActionItems[0];
     setIssueTitle(first?.text || '');
-    setIssueAssignee(first?.assignee || '');
+    setIssueAssignee(first?.assignee && first.assignee !== '미지정' ? first.assignee : issueAssigneeOptions[0] || '');
     setIssueDueDate(first?.due || '미정');
     setIssueDesc('회의에서 논의된 항목입니다. 내용을 확인하고 처리해주세요.');
     setIssuePriority('보통');
@@ -1214,7 +1422,18 @@ export default function MeetingManualDetail() {
     setIsIssueDuePickerOpen(false);
     setIssueIndividualDuePickerIdx(null);
     setIssueOpen(true);
-  }, [issueActionItems]);
+  }, [issueActionItems, issueAssigneeOptions]);
+
+  useEffect(() => {
+    if (!selectedIssueSvc) return;
+    setIssueCheckedItems((prev) => {
+      const next = new Set([...prev].filter((idx) => {
+        const item = issueActionItems[idx];
+        return item && !isIssueItemIssued(item);
+      }));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [isIssueItemIssued, issueActionItems, selectedIssueSvc]);
 
   const goIssueStep2 = useCallback(() => {
     if (!selectedIssueSvc || issueCheckedItems.size === 0) return;
@@ -1223,16 +1442,16 @@ export default function MeetingManualDetail() {
       ? items[0].text
       : `${items[0]?.text || '업무'} 외 ${items.length - 1}건`;
     setIssueTitle(autoTitle);
-    setIssueAssignee(items.length === 1 ? (items[0]?.assignee || '') : '');
+    setIssueAssignee(items.length === 1 && items[0]?.assignee !== '미지정' ? (items[0]?.assignee || '') : '');
     setIssueDueDate(items.length === 1 ? (items[0]?.due || '미정') : '미정');
     setIssueIndividualDrafts(items.map((item) => ({
       title: item.text,
-      assignee: item.assignee,
+      assignee: item.assignee && item.assignee !== '미지정' ? item.assignee : issueAssigneeOptions[0] || '',
       due: item.due,
     })));
     setIssueIndividualDuePickerIdx(null);
     setIssueStep(2);
-  }, [issueActionItems, issueCheckedItems, selectedIssueSvc]);
+  }, [issueActionItems, issueCheckedItems, issueAssigneeOptions, selectedIssueSvc]);
 
   const buildDraftFromMinutes = useCallback((source) => {
     const safe = source || {};
@@ -1324,6 +1543,7 @@ export default function MeetingManualDetail() {
           id: `MAN-${idx + 1}`,
           title: item.text || '액션 아이템',
           assignee: item.assignee || '미지정',
+          due: formatDueDate(item.dueDate),
           status: 'todo',
         }));
         return { ...svc, tickets };
@@ -1502,6 +1722,7 @@ export default function MeetingManualDetail() {
         id: `MAN-${idx + 1}`,
         title: item.text || '액션 아이템',
         assignee: item.assignee || '미지정',
+        due: formatDueDate(item.dueDate),
         status: 'todo',
       }));
       return { ...svc, tickets };
@@ -1556,6 +1777,9 @@ export default function MeetingManualDetail() {
     await new Promise((resolve) => setTimeout(resolve, 900));
 
     const targetSvc = selectedIssueSvc === 'notion' ? 'notion' : 'jira';
+    const selectedTicketItems = services.find((svc) => svc.id === targetSvc)?.tickets
+      ?.map((ticket, idx) => ({ ...ticket, index: idx }))
+      .filter((ticket) => issueCheckedItems.has(ticket.index)) || [];
 
     setServices((prev) =>
       prev.map((svc) => {
@@ -1574,7 +1798,46 @@ export default function MeetingManualDetail() {
 
     const now = new Date();
     const time = `${now.getFullYear()}년 ${now.getMonth() + 1}월 ${now.getDate()}일`;
-    setAuditLog((prev) => [...prev, { svcId: targetSvc, label: `직접 작성 항목 연동 (${issueCheckedItems.size}건)`, time }]);
+    const nextLogs = selectedTicketItems.map((ticket) => ({
+      svcId: targetSvc,
+      label: ticket.title,
+      time,
+      user: ticket.assignee || getStoredUserName() || '담당자',
+    }));
+    setAuditLog((prev) => [...prev, ...nextLogs]);
+
+    if (minutes?.projectId && minutes?.title && nextLogs.length > 0) {
+      const overrides = readProjectOverrides();
+      const projectId = String(minutes.projectId);
+      const prevProject = overrides[projectId] && typeof overrides[projectId] === 'object' ? overrides[projectId] : {};
+      const prevItems = Array.isArray(prevProject.myActionItems) ? prevProject.myActionItems : [];
+      const nextItems = [...prevItems];
+      selectedTicketItems.forEach((ticket) => {
+        const id = `${minutes.id || minutes.title}-${targetSvc}-${ticket.index + 1}`;
+        const persisted = {
+          id,
+          text: ticket.title,
+          title: ticket.title,
+          description: minutes.summary || '',
+          due: ticket.due || '',
+          dueDate: ticket.due || '',
+          assignee: ticket.assignee || getStoredUserName() || '담당자',
+          assignees: [ticket.assignee || getStoredUserName() || '담당자'].filter(Boolean),
+          status: '연동완료',
+          source: minutes.title,
+          projectId,
+          projectName: minutes.projectName || '',
+          integrationTool: targetSvc === 'notion' ? 'Notion' : 'Jira',
+          externalLink: buildExternalLink(targetSvc, ticket.title),
+          updatedAt: new Date().toISOString(),
+        };
+        const existingIndex = nextItems.findIndex((item) => String(item?.id || '') === id);
+        if (existingIndex >= 0) nextItems[existingIndex] = { ...nextItems[existingIndex], ...persisted };
+        else nextItems.unshift(persisted);
+      });
+      overrides[projectId] = { ...prevProject, myActionItems: nextItems };
+      writeProjectOverrides(overrides);
+    }
 
     setIssuing(false);
     setIssueOpen(false);
@@ -1711,7 +1974,7 @@ export default function MeetingManualDetail() {
 
             <IntegrationControlTower
               services={services}
-              auditLog={auditLog}
+              auditLog={mergedAuditLog}
               onBadgeClick={setDetailSvc}
               onIssueOpen={openIssueModal}
               isMobile={isMobile}
@@ -2218,7 +2481,7 @@ export default function MeetingManualDetail() {
       {!isMobile && <Footer />}
       {isMobile && <MobileTab active={activeTab} onChange={setActiveTab} />}
 
-      <ServiceDetailModal open={!!detailSvc} onClose={() => setDetailSvc(null)} svc={detailSvc} auditLog={auditLog} />
+      <ServiceDetailModal open={!!detailSvc} onClose={() => setDetailSvc(null)} svc={detailSvc} auditLog={mergedAuditLog} />
 
       <Modal
         open={issueOpen}
@@ -2326,18 +2589,31 @@ export default function MeetingManualDetail() {
             </div>
 
             <div>
-              <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-2.5">
-                보낼 업무 선택
-                {issueCheckedItems.size > 0 && <span className="ml-2 text-cyan-500 normal-case">({issueCheckedItems.size}개 선택됨)</span>}
-              </p>
+              <div className="mb-2.5 flex items-center justify-between gap-3">
+                <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest">
+                  보낼 업무 선택
+                  {issueCheckedItems.size > 0 && <span className="ml-2 text-cyan-500 normal-case">({issueCheckedItems.size}개 선택됨)</span>}
+                </p>
+                {issueActionItems.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={toggleAllIssueItems}
+                    className="shrink-0 rounded-lg border border-[rgba(0,100,180,0.12)] px-2.5 py-1 text-[11px] font-bold text-[#0099CC] transition hover:bg-[#EEF3FF]"
+                  >
+                    {allIssueItemsSelected ? '전체 해제' : '전체 선택'}
+                  </button>
+                )}
+              </div>
               <div className="space-y-1.5">
                 {issueActionItems.length > 0 ? issueActionItems.map((item, idx) => {
                   const checked = issueCheckedItems.has(idx);
-                  const canSelectItem = Boolean(selectedIssueSvc);
+                  const alreadyIssued = selectedIssueSvc && isIssueItemIssued(item);
+                  const canSelectItem = Boolean(selectedIssueSvc) && !alreadyIssued;
                   return (
                     <div
                       key={`${item.text}-${idx}`}
                       onClick={() => {
+                        if (!canSelectItem) return;
                         setIssueCheckedItems((prev) => {
                           const next = new Set(prev);
                           next.has(idx) ? next.delete(idx) : next.add(idx);
@@ -2346,22 +2622,30 @@ export default function MeetingManualDetail() {
                       }}
                       className="flex items-start gap-3 p-2.5 rounded-xl border cursor-pointer transition-all"
                       style={{
-                        borderColor: checked ? 'rgba(16,185,129,0.35)' : 'rgba(0,100,180,0.12)',
-                        background: checked ? '#F0FDF9' : '#fff',
-                        cursor: 'pointer',
+                        borderColor: alreadyIssued ? 'rgba(16,185,129,0.28)' : checked ? 'rgba(16,185,129,0.35)' : 'rgba(0,100,180,0.12)',
+                        background: alreadyIssued ? '#F3FBF7' : checked ? '#F0FDF9' : '#fff',
+                        cursor: canSelectItem ? 'pointer' : 'not-allowed',
+                        opacity: !selectedIssueSvc ? 0.6 : 1,
                       }}
                     >
                       <div
                         className="w-4 h-4 rounded flex items-center justify-center flex-shrink-0 mt-0.5 transition-all border"
                         style={{
-                          background: checked ? '#10B981' : 'transparent',
-                          borderColor: checked ? '#10B981' : 'rgba(0,100,180,0.2)',
+                          background: alreadyIssued || checked ? '#10B981' : 'transparent',
+                          borderColor: alreadyIssued || checked ? '#10B981' : 'rgba(0,100,180,0.2)',
                         }}
                       >
-                        {checked && <LucideIcon name="check" size={10} color="#fff" />}
+                        {(alreadyIssued || checked) && <LucideIcon name="check" size={10} color="#fff" />}
                       </div>
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm text-slate-800 leading-snug">{item.text}</p>
+                        <div className="flex items-center gap-2 min-w-0">
+                          <p className="text-sm text-slate-800 leading-snug truncate">{item.text}</p>
+                          {alreadyIssued && (
+                            <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-700">
+                              이미 연동됨
+                            </span>
+                          )}
+                        </div>
                         <p className="text-xs text-slate-400 mt-0.5">{item.assignee} · {item.due}</p>
                       </div>
                     </div>
@@ -2468,7 +2752,7 @@ export default function MeetingManualDetail() {
                     <CustomDropdown
                       value={issueAssignee}
                       onChange={setIssueAssignee}
-                      options={ASSIGNEE_OPTIONS}
+                      options={issueAssigneeOptions}
                       placeholder="담당자 선택"
                       disabled={issuing}
                       hasError={issueIsMultiple && !issueAssignee}
@@ -2550,7 +2834,7 @@ export default function MeetingManualDetail() {
                         onChange={(nextAssignee) => {
                           setIssueIndividualDrafts((prev) => prev.map((draft, i) => (i === idx ? { ...draft, assignee: nextAssignee } : draft)));
                         }}
-                        options={ASSIGNEE_OPTIONS}
+                        options={issueAssigneeOptions}
                         placeholder="담당자 선택"
                       />
                     </div>

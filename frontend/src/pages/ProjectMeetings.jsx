@@ -1,254 +1,44 @@
-import { useMemo, useEffect, useState, useRef } from 'react';
+﻿import { useMemo, useEffect, useState, useRef } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import Header from '../components/Header';
 import Footer from '../components/Footer';
 import MobileTab from '../components/MobileTab';
-import { listProjects } from '../api/apiClient';
+import { deleteProjectMeeting, getProject, listProjects, updateProjectMeeting } from '../api/apiClient';
 
-const PROJECTS = [
-    {
-        id: 1,
-        name: 'AI 회의록 자동화',
-        description: '회의 녹음 파일 기반으로 AI가 요약하고 Jira 해야 할일까지 자동 매핑하는 프로젝트입니다.',
-        createdAt: '2026-06-01',
-        status: '진행 중',
-        teamLead: '정아름',
-        participants: ['정아름', '김민수', '송지영', '김소현', '채하율'],
-        myActionItems: [
-            {
-                id: 'ai-1',
-                text: 'STT 응답 속도 5초 이하로 최적화',
-                due: '2026.06.18',
-                assignee: '김민수',
-                status: '검증 전',
-                source: '주간 스프린트 회의',
-            },
-            {
-                id: 'ai-2',
-                text: 'Jira 발행 규칙 QA 시나리오 검증',
-                due: '2026.06.20',
-                assignee: '정아름',
-                status: '연동 완료',
-                source: '요구사항 정제 미팅',
-            },
-            {
-                id: 'ai-3',
-                text: '화자 분리 모델 재학습 데이터 정리',
-                due: '2026.06.22',
-                assignee: '김소현',
-                status: '완료',
-                source: '배포 리스크 점검',
-            },
-        ],
-        meetings: [
-            {
-                id: 'm-101',
-                date: '2026.06.16',
-                title: '주간 스프린트 회의',
-                status: '진행 중',
-                type: '정기',
-                tags: ['#개발', '#Jira연동'],
-                participants: ['정아름', '김민수', '송지영'],
-                summary: 'Sprint 12 목표를 정리하고 STT 성능 최적화 일정과 Jira 발행 기준을 확정했습니다.',
-                actionItems: 6,
-                jiraLinked: 2,
-            },
-            {
-                id: 'm-102',
-                date: '2026.06.13',
-                title: '요구사항 정제 미팅',
-                status: '완료',
-                type: '수시',
-                tags: ['#기획', '#개발'],
-                participants: ['정아름', '김소현', '채하율'],
-                summary: '업로드 단계 UX 개선안과 회의록 자동 분류 태그 정책을 합의했습니다.',
-                actionItems: 4,
-                jiraLinked: 1,
-            },
-            {
-                id: 'm-103',
-                date: '2026.06.11',
-                title: '배포 리스크 점검',
-                status: 'Jira 발행됨',
-                type: '정기',
-                tags: ['#개발', '#배포'],
-                participants: ['정아름', '김민수'],
-                summary: '배포 전 체크리스트와 장애 대응 절차를 재정의했습니다.',
-                actionItems: 5,
-                jiraLinked: 3,
-            },
-        ],
-    },
-    {
-        id: 2,
-        name: '디자인 시스템 구축',
-        description: '컴포넌트/토큰 규칙을 통일해 제품 전반의 UI 일관성과 협업 속도를 높이는 프로젝트입니다.',
-        createdAt: '2026-05-27',
-        status: '진행 중',
-        teamLead: '박디자이너',
-        participants: ['박디자이너', '정아름', '송지영'],
-        myActionItems: [
-            {
-                id: 'ds-1',
-                text: '컴포넌트 토큰 문서 버전업',
-                due: '2026.06.18',
-                assignee: '박디자이너',
-                status: '검증 전',
-                source: '컴포넌트 토큰 정리',
-            },
-            {
-                id: 'ds-2',
-                text: '버튼/폼 공통 스타일 QA',
-                due: '2026.06.21',
-                assignee: '송지영',
-                status: '연동 완료',
-                source: '컴포넌트 토큰 정리',
-            },
-        ],
-        meetings: [
-            {
-                id: 'm-201',
-                date: '2026.06.12',
-                title: '컴포넌트 토큰 정리',
-                status: '완료',
-                type: '정기',
-                tags: ['#디자인'],
-                participants: ['박디자이너', '송지영'],
-                summary: '컬러/타이포 토큰 네이밍 규칙을 통일하고 릴리즈 정책을 정했습니다.',
-                actionItems: 3,
-                jiraLinked: 1,
-            },
-        ],
-    },
-    {
-        id: 3,
-        name: '사용자 인터뷰 분석',
-        description: '인터뷰 VOC를 구조화해 핵심 인사이트를 도출하고 기능 우선순위 수립에 반영하는 프로젝트입니다.',
-        createdAt: '2026-05-19',
-        status: '보류',
-        teamLead: '김소현',
-        participants: ['김소현', '송지영', '채하율', '외부리서처A'],
-        myActionItems: [
-            {
-                id: 'ux-1',
-                text: 'VOC 태깅 기준 재정의',
-                due: '2026.06.24',
-                assignee: '김소현',
-                status: '검증 전',
-                source: 'VOC 인사이트 공유',
-            },
-        ],
-        meetings: [
-            {
-                id: 'm-301',
-                date: '2026.06.05',
-                title: '인터뷰 질문지 정합성 점검',
-                status: '완료',
-                type: '정기',
-                tags: ['#리서치'],
-                participants: ['김소현', '외부리서처A'],
-                summary: '질문 플로우 중복 항목을 정리하고 인터뷰 기록 템플릿을 표준화했습니다.',
-                actionItems: 2,
-                jiraLinked: 0,
-            },
-            {
-                id: 'm-302',
-                date: '2026.06.11',
-                title: 'VOC 인사이트 공유',
-                status: '진행 중',
-                type: '수시',
-                tags: ['#VOC', '#기획'],
-                participants: ['김소현', '송지영', '채하율'],
-                summary: '주요 페인포인트 3개를 도출해 우선순위 해야 할일로 등록했습니다.',
-                actionItems: 4,
-                jiraLinked: 1,
-            },
-        ],
-    },
-    {
-        id: 4,
-        name: '분기별 기획안',
-        description: '분기 로드맵과 핵심 과제를 정리하고 실행 우선순위를 확정하는 기획 프로젝트입니다.',
-        createdAt: '2026-06-08',
-        status: '완료',
-        teamLead: '송지영',
-        participants: ['송지영', '김소현', '정아름', '김민수'],
-        myActionItems: [
-            {
-                id: 'p-1',
-                text: '분기 로드맵 공유안 확정',
-                due: '2026.06.17',
-                assignee: '송지영',
-                status: '완료',
-                source: 'Q3 로드맵 정리',
-            },
-            {
-                id: 'p-2',
-                text: '기획 QA 체크리스트 배포',
-                due: '2026.06.20',
-                assignee: '김민수',
-                status: '연동 완료',
-                source: '백로그 우선순위 재조정',
-            },
-        ],
-        meetings: [
-            {
-                id: 'm-401',
-                date: '2026.06.15',
-                title: 'Q3 로드맵 정리',
-                status: '완료',
-                type: '정기',
-                tags: ['#기획', '#로드맵'],
-                participants: ['송지영', '정아름', '김소현'],
-                summary: 'Q3 목표와 주요 마일스톤을 확정했습니다.',
-                actionItems: 5,
-                jiraLinked: 2,
-            },
-            {
-                id: 'm-402',
-                date: '2026.06.13',
-                title: '백로그 우선순위 재조정',
-                status: 'Jira 발행됨',
-                type: '수시',
-                tags: ['#기획', '#Jira연동'],
-                participants: ['송지영', '김민수'],
-                summary: '핵심 과제 우선순위를 업데이트하고 Jira 티켓을 재배치했습니다.',
-                actionItems: 7,
-                jiraLinked: 4,
-            },
-        ],
-    },
-];
 
 function statusBadgeClass(status) {
     if (status === '완료') return 'bg-[#E6F4EA] text-[#10B981]';
     if (status === '보류') return 'bg-[#FCE8E6] text-[#EF4444]';
     if (status === 'Jira 발행됨') return 'bg-[#EEF3FF] text-[#0099CC]';
+    if (status === '연동완료') return 'bg-[#EEF3FF] text-[#0099CC]';
+    if (status === '수행완료') return 'bg-[#F1F5F9] text-[#475569]';
+    if (status === '검토완료') return 'bg-[#F1F5F9] text-[#475569]';
     return 'bg-[#FEF7E0] text-[#F59E0B]';
 }
 
 // ✅ 해야 할일 상태 뱃지 스타일 함수 추가
-const ACTION_STATUS_ORDER = ['검토대기', '검토완료', '연동완료', '완료히스토리'];
+const ACTION_STATUS_ORDER = ['검토대기', '검토완료', '연동완료', '수행완료'];
 const ACTION_STATUS_LABEL = {
     검토대기: '검토대기',
     검토완료: '검토완료',
+    수행완료: '수행완료',
     연동완료: '연동완료',
-    완료히스토리: '완료',
 };
 
 function normalizeActionStatus(status) {
     const normalized = String(status || '').trim();
     if (normalized === '검증 전') return '검토대기';
-    if (normalized === '완료') return '완료히스토리';
+    if (normalized === '완료' || normalized === '완료히스토리') return '수행완료';
     if (normalized === '연동 완료') return '연동완료';
     if (ACTION_STATUS_ORDER.includes(normalized)) return normalized;
     return '검토대기';
 }
 
 function actionStatusStyle(status) {
-    if (status === '완료히스토리') return { bg: '#E6F4EA', color: '#10B981', border: '#10B981' };
-    if (status === '연동완료') return { bg: '#EEF3FF', color: '#0099CC', border: '#0099CC' };
-    if (status === '검토완료') return { bg: '#F1F5F9', color: '#475569', border: '#94A3B8' };
+    const normalized = normalizeActionStatus(status);
+    if (normalized === '연동완료') return { bg: '#EEF3FF', color: '#0099CC', border: '#0099CC' };
+    if (normalized === '수행완료') return { bg: '#E6F4EA', color: '#10B981', border: '#10B981' };
+    if (normalized === '검토완료') return { bg: '#F1F5F9', color: '#475569', border: '#94A3B8' };
     return { bg: '#FEF7E0', color: '#F59E0B', border: '#F59E0B' }; // 검토대기
 }
 
@@ -258,6 +48,70 @@ function getActionStatusLabel(status) {
 
 function getActionStatusBadgeLabel(status) {
     return getActionStatusLabel(status);
+}
+
+function isActionCompleteStatus(status) {
+    return normalizeActionStatus(status) === '수행완료';
+}
+
+function compactLegacyActionHistoryItems(items) {
+    const byId = new Map();
+    const histories = [];
+
+    items.forEach((item) => {
+        const snapshotOf = String(item?.snapshotOf || '').trim();
+        const historySavedAt = String(item?.historySavedAt || '').trim();
+        if (snapshotOf || historySavedAt) {
+            histories.push({ ...item, snapshotOf });
+            return;
+        }
+
+        const id = String(item?.id || '').trim();
+        const key = id || `${item?.text || item?.title || ''}::${item?.source || ''}::${item?.due || item?.dueDate || ''}`;
+        if (!byId.has(key)) byId.set(key, item);
+    });
+
+    histories.forEach((history) => {
+        const key = String(history.snapshotOf || '').trim();
+        const recoveredKey = key || `${history?.text || history?.title || ''}::${history?.source || ''}::${history?.due || history?.dueDate || ''}`;
+        const base = byId.get(recoveredKey);
+        const merged = {
+            ...(base || history),
+            id: recoveredKey || history.id,
+            status: '수행완료',
+            integrationTool: base?.integrationTool || history.integrationTool || null,
+            externalLink: base?.externalLink || history.externalLink || '',
+            snapshotOf: null,
+            historySavedAt: null,
+        };
+        byId.set(recoveredKey || merged.id, merged);
+    });
+
+    return Array.from(byId.values());
+}
+
+function hasActionIntegration(item) {
+    return Boolean(item?.externalLink || item?.integrationTool);
+}
+
+function getMeetingDisplayStatus(meeting, actionItems) {
+    const title = String(meeting?.title || '').trim();
+    const meetingId = String(meeting?.id || '').trim();
+    const relatedActions = actionItems.filter((item) => {
+        const source = String(item?.source || '').trim();
+        return (title && source === title) || (meetingId && String(item?.meetingId || '') === meetingId);
+    });
+
+    if (relatedActions.length === 0) {
+        const raw = String(meeting?.status || '').trim();
+        if (raw === '완료') return '진행 중';
+        return raw || '진행 중';
+    }
+
+    const statuses = relatedActions.map((item) => normalizeActionStatus(item.status));
+    if (statuses.every((status) => isActionCompleteStatus(status))) return '완료';
+    if (statuses.some((status) => status === '검토완료' || isActionCompleteStatus(status))) return '진행 중';
+    return '검토대기';
 }
 
 function toDateInputValue(value) {
@@ -367,6 +221,7 @@ const PARTICIPANT_COLOR_MAP = {
 const PROJECT_OVERRIDE_STORAGE_KEY = 'tiki_project_overrides';
 const PROJECT_CATALOG_STORAGE_KEY = 'tiki_project_catalog';
 const MANUAL_MEETING_RECORDS_KEY = 'tiki_manual_minutes_records';
+const isTemporaryCodexProject = (project) => String(project?.name || '').toLowerCase().includes('codex invitation check');
 
 const TOAST_COLORS = { info: '#0099CC', ai: '#7C3AED', success: '#10B981', warning: '#F59E0B', error: '#EF4444' };
 const TOAST_VARIANTS = {
@@ -398,6 +253,15 @@ function getProjectVisibilityMeta(value) {
     if (normalized === 'private') return { label: '개인', icon: 'lock' };
     if (normalized === 'org') return { label: '전체보기', icon: 'globe' };
     return { label: '구성원만', icon: 'user' };
+}
+
+function normalizeProjectStatus(project) {
+    const raw = String(project?.status || project?.projectStatus || '').trim();
+    const hasCompletionFlag = Boolean(project?.completed_at || project?.completedAt || project?.isCompleted);
+    if (hasCompletionFlag && (raw === '완료' || raw === 'completed')) return '완료';
+    if (raw === '보류' || raw === 'paused') return '보류';
+    if (raw === 'Jira 발행됨') return raw;
+    return '진행 중';
 }
 
 const readProjectOverrides = () => {
@@ -443,7 +307,12 @@ const readProjectCatalog = () => {
         const raw = localStorage.getItem(PROJECT_CATALOG_STORAGE_KEY);
         if (!raw) return [];
         const parsed = JSON.parse(raw);
-        return Array.isArray(parsed) ? parsed : [];
+        const projects = Array.isArray(parsed) ? parsed : [];
+        const cleaned = projects.filter((project) => !isTemporaryCodexProject(project));
+        if (cleaned.length !== projects.length) {
+            localStorage.setItem(PROJECT_CATALOG_STORAGE_KEY, JSON.stringify(cleaned));
+        }
+        return cleaned;
     } catch {
         return [];
     }
@@ -451,7 +320,8 @@ const readProjectCatalog = () => {
 
 const writeProjectCatalog = (next) => {
     try {
-        localStorage.setItem(PROJECT_CATALOG_STORAGE_KEY, JSON.stringify(next));
+        const cleaned = Array.isArray(next) ? next.filter((project) => !isTemporaryCodexProject(project)) : [];
+        localStorage.setItem(PROJECT_CATALOG_STORAGE_KEY, JSON.stringify(cleaned));
     } catch {
         // ignore storage write failures in local mock mode
     }
@@ -469,24 +339,31 @@ function normalizeProject(project) {
         '';
 
     const teamLead = String(project.teamLead || project.team_lead || '').trim();
-    const memberCountRaw =
-        typeof project.members === 'number'
-            ? project.members
-            : typeof project.member_count === 'number'
-              ? project.member_count
-              : Array.isArray(project.participants)
-                ? project.participants.length
-                : 0;
-    const memberCount = Number.isFinite(memberCountRaw) ? Math.max(1, memberCountRaw) : 1;
-
-    let participants = Array.isArray(project.participants) ? project.participants.filter(Boolean) : [];
-    if (participants.length === 0) {
-        const leadName = teamLead || '담당자';
-        participants = [leadName];
-        for (let i = 2; i <= memberCount; i += 1) {
-            participants.push(`구성원${i}`);
-        }
-    }
+    const memberNames = Array.isArray(project.members)
+        ? project.members
+              .filter((member) => {
+                  if (typeof member === 'string') return true;
+                  const inviteStatus = String(member?.invite_status || member?.inviteStatus || '').trim();
+                  return !inviteStatus || inviteStatus === 'accepted';
+              })
+              .map((member) => {
+                  if (typeof member === 'string') return member;
+                  return member?.name || member?.email || '';
+              })
+              .filter(Boolean)
+        : [];
+    const storedParticipants = Array.isArray(project.members)
+        ? []
+        : Array.isArray(project.participants)
+          ? project.participants.filter(Boolean)
+          : [];
+    const participants = [
+        ...new Set([
+            teamLead,
+            ...storedParticipants,
+            ...memberNames,
+        ].filter(Boolean)),
+    ];
     const admins = Array.isArray(project.admins)
         ? [...new Set(project.admins.filter((name) => participants.includes(name)))]
         : [];
@@ -504,10 +381,7 @@ function normalizeProject(project) {
               detailType: meeting.detailType || 'uploaded',
               detailRecordId: meeting.detailRecordId || '',
               tags: Array.isArray(meeting.tags) && meeting.tags.length > 0 ? meeting.tags : ['#회의'],
-              participants:
-                  Array.isArray(meeting.participants) && meeting.participants.length > 0
-                      ? meeting.participants
-                      : participants,
+              participants: Array.isArray(meeting.participants) ? meeting.participants.filter(Boolean) : [],
               summary: meeting.summary || '회의 요약이 아직 등록되지 않았습니다.',
               actionItems: typeof meeting.actionItems === 'number' ? meeting.actionItems : 0,
               jiraLinked: typeof meeting.jiraLinked === 'number' ? meeting.jiraLinked : 0,
@@ -519,7 +393,7 @@ function normalizeProject(project) {
         description: project.description || '',
         createdAt,
         visibility: normalizeProjectVisibility(project.visibility || project.projectVisibility),
-        status: project.status || '진행 중',
+        status: normalizeProjectStatus(project),
         teamLead: teamLead || participants[0] || '담당자',
         participants,
         admins,
@@ -1072,35 +946,53 @@ export default function ProjectMeetings() {
                         name: p.name,
                         description: p.description,
                         createdAt: p.created_at ? String(p.created_at) : '',
-                        teamLead: p.team_lead,
-                        members: p.member_count,
+                        teamLead: p.team_lead || (p.owner?.name),
+                        members: Array.isArray(p.members) ? p.members : [],
                     })
                 );
 
-                if (mapped.length === 0) return;
+                // Replace catalog with API data, discarding any old mock entries (integer IDs)
+                const isUUID = (id) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(id));
                 setProjectCatalog((prev) => {
                     const base = Array.isArray(prev) ? prev : [];
-                    const next = [...base];
-                    mapped.forEach((item) => {
-                        const idx = next.findIndex((existing) => isSameProjectId(existing?.id, item.id));
-                        if (idx >= 0) {
-                            next[idx] = {
-                                ...next[idx],
-                                ...item,
-                                createdAt: toDateLabel(item.createdAt) || toDateLabel(next[idx]?.createdAt) || '',
-                            };
-                        } else {
-                            next.push(item);
-                        }
-                    });
+                    // Keep only real-API (UUID) entries that aren't in the new list, then merge
+                    const retained = base.filter((p) => isUUID(p?.id) && !mapped.some((m) => isSameProjectId(m.id, p?.id)));
+                    const next = [...retained, ...mapped];
                     writeProjectCatalog(next);
                     return next;
                 });
             })
             .catch(() => {
-                // Ignore API read failures and continue with local state/mock data.
+                // API failures leave the current local navigation state intact.
             });
     }, []);
+
+    useEffect(() => {
+        const id = normalizeProjectId(projectId);
+        if (!id) return;
+        getProject(id)
+            .then((data) => {
+                const normalized = normalizeProject({
+                    ...data,
+                    createdAt: data?.created_at ? String(data.created_at) : data?.createdAt,
+                    teamLead: data?.team_lead,
+                    members: Array.isArray(data?.members) ? data.members : [],
+                    meetings: Array.isArray(data?.meetings) ? data.meetings : [],
+                });
+                if (!normalized?.id) return;
+                setProjectCatalog((prev) => {
+                    const base = Array.isArray(prev) ? prev : [];
+                    const idx = base.findIndex((item) => isSameProjectId(item?.id, normalized.id));
+                    const next = idx >= 0 ? [...base] : [...base, normalized];
+                    if (idx >= 0) next[idx] = { ...base[idx], ...normalized };
+                    writeProjectCatalog(next);
+                    return next;
+                });
+            })
+            .catch(() => {
+                // Keep route state/local records if the project cannot be fetched.
+            });
+    }, [projectId]);
 
     const project = useMemo(() => {
         const id = normalizeProjectId(projectId);
@@ -1121,11 +1013,6 @@ export default function ProjectMeetings() {
                 admins: Array.isArray(override?.admins) ? override.admins : baseProject?.admins,
             });
         };
-
-        const byId = PROJECTS.find((p) => isSameProjectId(p.id, id));
-        if (byId) {
-            return mergeWithOverride(byId);
-        }
 
         const byCatalog = projectCatalog.find((p) => isSameProjectId(p?.id, id));
         if (byCatalog) {
@@ -1167,7 +1054,7 @@ export default function ProjectMeetings() {
     }, [location.key]);
 
     const projectCandidates = useMemo(() => {
-        const source = [...PROJECTS, ...projectCatalog];
+        const source = [...projectCatalog];
         const deduped = [];
         source.forEach((item) => {
             if (!item?.id) return;
@@ -1235,7 +1122,7 @@ export default function ProjectMeetings() {
                     description: record?.summary || '',
                     due: normalizeStorageDate(action?.dueDate),
                     assignee: action?.assignee || project.teamLead || '담당자 미지정',
-                    status: action?.checked ? '검토완료' : '검토대기',
+                    status: action?.status ? normalizeActionStatus(action.status) : action?.checked ? '수행완료' : '검토대기',
                     source: String(record?.title || '').trim() || project.name || '회의 제목 없음',
                     integrationTool: null,
                     externalLink: '',
@@ -1246,7 +1133,7 @@ export default function ProjectMeetings() {
                 }));
             });
 
-        const mergedActionItems = [...(project.myActionItems || []), ...manualActionItems].filter((item) => {
+        const mergedActionItems = compactLegacyActionHistoryItems([...(project.myActionItems || []), ...manualActionItems]).filter((item) => {
             return String(item?.text || '').trim().length > 0;
         });
         const dedupedActionItems = [];
@@ -1289,6 +1176,47 @@ export default function ProjectMeetings() {
     }, [project]);
 
     const allActionItems = actionItems;
+    const computedProjectStatus = useMemo(() => {
+        if (!project) return '진행 중';
+        if (allActionItems.length > 0 && allActionItems.every((item) => isActionCompleteStatus(item.status))) {
+            return '완료';
+        }
+        if (allActionItems.length > 0) return '진행 중';
+        return normalizeProjectStatus(project);
+    }, [project, allActionItems]);
+
+    useEffect(() => {
+        if (!project?.id) return;
+        if (project.status === computedProjectStatus) return;
+
+        const id = String(project.id);
+        const nextOverrides = readProjectOverrides();
+        const prevOverride = nextOverrides[id] && typeof nextOverrides[id] === 'object' ? nextOverrides[id] : {};
+        nextOverrides[id] = {
+            ...prevOverride,
+            id,
+            status: computedProjectStatus,
+            isCompleted: computedProjectStatus === '완료',
+            completedAt: computedProjectStatus === '완료' ? prevOverride.completedAt || new Date().toISOString() : null,
+        };
+        writeProjectOverrides(nextOverrides);
+
+        setProjectCatalog((prev) => {
+            const base = Array.isArray(prev) ? prev : [];
+            const next = base.map((item) =>
+                isSameProjectId(item?.id, id)
+                    ? {
+                          ...item,
+                          status: computedProjectStatus,
+                          isCompleted: computedProjectStatus === '완료',
+                          completedAt: computedProjectStatus === '완료' ? item.completedAt || new Date().toISOString() : null,
+                      }
+                    : item
+            );
+            writeProjectCatalog(next);
+            return next;
+        });
+    }, [project?.id, project?.status, computedProjectStatus]);
 
     const actionAssigneeOptions = useMemo(() => {
         const participants = Array.isArray(project?.participants) ? project.participants : [];
@@ -1299,15 +1227,33 @@ export default function ProjectMeetings() {
         allActionItems.forEach((item) => statusSet.add(normalizeActionStatus(item.status)));
         return ['전체', ...statusSet];
     }, [allActionItems]);
-    const actionSourceOptions = useMemo(
-        () => ['전체', ...new Set(allActionItems.map((item) => item.source))],
-        [allActionItems]
-    );
+    const actionSourceOptions = useMemo(() => {
+        const meetingTitles = (project?.meetings || [])
+            .map((meeting) => String(meeting?.title || '').trim())
+            .filter(Boolean);
+        const itemSources = allActionItems
+            .map((item) => String(item?.source || '').trim())
+            .filter(Boolean);
+        return ['전체', ...new Set([...meetingTitles, ...itemSources])];
+    }, [project?.meetings, allActionItems]);
+
+    const actionMetricItems = useMemo(() => {
+        return allActionItems.filter((item) => {
+            const assigneeOk = actionAssigneeFilter === '전체' || item.assignee === actionAssigneeFilter;
+            const sourceOk = actionSourceFilter === '전체' || item.source === actionSourceFilter;
+            return assigneeOk && sourceOk;
+        });
+    }, [allActionItems, actionAssigneeFilter, actionSourceFilter]);
 
     const filteredActionItems = useMemo(() => {
         return allActionItems.filter((item) => {
             const assigneeOk = actionAssigneeFilter === '전체' || item.assignee === actionAssigneeFilter;
-            const statusOk = actionStatusFilter === '전체' || item.status === actionStatusFilter;
+            const normalizedStatus = normalizeActionStatus(item.status);
+            const statusOk =
+                actionStatusFilter === '전체' ||
+                (actionStatusFilter === '연동완료'
+                    ? normalizedStatus === '연동완료' || hasActionIntegration(item)
+                    : normalizedStatus === actionStatusFilter);
             const sourceOk = actionSourceFilter === '전체' || item.source === actionSourceFilter;
             return assigneeOk && statusOk && sourceOk;
         });
@@ -1315,12 +1261,12 @@ export default function ProjectMeetings() {
 
     const actionDashboardStats = useMemo(() => {
         return {
-            reviewPending: allActionItems.filter((item) => item.status === '검토대기').length,
-            reviewDone: allActionItems.filter((item) => item.status === '검토완료').length,
-            linked: allActionItems.filter((item) => item.status === '연동완료').length,
-            history: allActionItems.filter((item) => item.status === '완료히스토리').length,
+            reviewPending: actionMetricItems.filter((item) => normalizeActionStatus(item.status) === '검토대기').length,
+            reviewDone: actionMetricItems.filter((item) => normalizeActionStatus(item.status) === '검토완료').length,
+            performed: actionMetricItems.filter((item) => normalizeActionStatus(item.status) === '수행완료').length,
+            linked: actionMetricItems.filter((item) => normalizeActionStatus(item.status) === '연동완료' || hasActionIntegration(item)).length,
         };
-    }, [allActionItems]);
+    }, [actionMetricItems]);
 
     const activeActionItem = useMemo(() => {
         if (!activeActionItemId) return null;
@@ -1381,8 +1327,8 @@ export default function ProjectMeetings() {
         if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
         toastTimerRef.current = setTimeout(() => setToast({ message: '', type: 'info' }), 2200);
     };
-    const openParticipantsModal = (members = project.participants, title = '회의 참여자') => {
-        const normalized = Array.isArray(members) && members.length > 0 ? members : project.participants;
+    const openParticipantsModal = (members = [], title = '회의 참여자') => {
+        const normalized = Array.isArray(members) ? members.filter(Boolean) : [];
         setParticipantsModalMembers(normalized);
         setParticipantsModalTitle(title);
         setIsParticipantsModalOpen(true);
@@ -1435,7 +1381,7 @@ export default function ProjectMeetings() {
         setEditMeetingTagsDraft([]);
         setEditMeetingTagInput('');
     };
-    const confirmEditMeeting = () => {
+    const confirmEditMeeting = async () => {
         const nextTitle = String(editMeetingTitle || '').trim();
         if (!pendingEditMeetingId) return;
         if (!nextTitle) {
@@ -1453,6 +1399,14 @@ export default function ProjectMeetings() {
         );
         setMeetings(nextMeetings);
         persistProjectMeetings(nextMeetings);
+        try {
+            await updateProjectMeeting(project.id, pendingEditMeetingId, {
+                title: nextTitle,
+                tags: nextTags,
+            });
+        } catch {
+            // Keep the local edit visible; the next project refetch will reconcile server state.
+        }
         cancelEditMeeting();
         showToast('회의 제목/태그가 수정되었습니다.', 'success');
     };
@@ -1547,33 +1501,13 @@ export default function ProjectMeetings() {
         return true;
     };
 
-    const saveActionToHistory = (itemId, { closeAfterSave = false } = {}) => {
-        const baseItem = allActionItems.find((item) => item.id === itemId);
-        if (!baseItem) return false;
-        const now = getKSTTimestampLabel();
-        const historyItem = {
-            ...baseItem,
-            id: `${baseItem.id}-history-${Date.now()}`,
-            status: '완료히스토리',
-            snapshotOf: baseItem.id,
-            historySavedAt: now,
-            updatedAt: now,
-        };
-        const nextItems = [...allActionItems, historyItem];
-        setActionItems(nextItems);
-        persistProjectActionItems(nextItems);
-        showToast('히스토리에 저장되었습니다.', 'success');
-        if (closeAfterSave) closeActionDrawer();
-        return true;
-    };
-
     const startActionIntegration = (tool) => {
         if (!actionDraft) return;
         setPendingIntegrationTarget(tool);
         window.setTimeout(() => {
             const isNotion = tool === 'notion';
             const ok = saveActionDraft({
-                nextStatus: '연동완료',
+                nextStatus: normalizeActionStatus(actionDraft.status) === '수행완료' ? '수행완료' : '연동완료',
                 integrationTool: isNotion ? 'Notion' : 'Jira',
                 closeAfterSave: true,
             });
@@ -1605,11 +1539,18 @@ export default function ProjectMeetings() {
         removeActionItem(pendingDeleteActionItemId);
         setPendingDeleteActionItemId(null);
     };
-    const confirmDeleteMeeting = () => {
+    const confirmDeleteMeeting = async () => {
         if (!pendingDeleteMeeting) return;
-        setDeletedMeetingIds((prev) => [...prev, pendingDeleteMeeting]);
+        const meetingId = pendingDeleteMeeting;
+        setDeletedMeetingIds((prev) => [...prev, meetingId]);
         showToast('회의가 목록에서 삭제되었습니다.', 'success');
         setPendingDeleteMeeting(null);
+        try {
+            await deleteProjectMeeting(project.id, meetingId);
+        } catch {
+            setDeletedMeetingIds((prev) => prev.filter((id) => id !== meetingId));
+            showToast('회의 삭제에 실패했습니다.', 'error');
+        }
     };
     const currentToastVariant = TOAST_VARIANTS[toast.type] || TOAST_VARIANTS.info;
     const projectDescriptionText = project.description?.trim() || '';
@@ -1769,9 +1710,9 @@ export default function ProjectMeetings() {
                                         <div className="mt-1 flex flex-wrap items-center gap-2">
                                             <h1 className="text-2xl font-bold text-[#0D1B2A]">{project.name}</h1>
                                             <span
-                                                className={`px-2.5 py-1 rounded-full text-xs font-bold ${statusBadgeClass(project.status)}`}
+                                                className={`px-2.5 py-1 rounded-full text-xs font-bold ${statusBadgeClass(computedProjectStatus)}`}
                                             >
-                                                {project.status}
+                                                {computedProjectStatus}
                                             </span>
                                         </div>
                                         {projectDescriptionText && (
@@ -2075,6 +2016,7 @@ export default function ProjectMeetings() {
                                                 <div className="hidden md:block">
                                                     {visibleMeetings.map((meeting) => {
                                                         const isEditing = pendingEditMeetingId === meeting.id;
+                                                        const meetingDisplayStatus = getMeetingDisplayStatus(meeting, allActionItems);
                                                         const onTitleKeyDown = (e) => {
                                                             if (e.key === 'Enter') {
                                                                 e.preventDefault();
@@ -2144,9 +2086,9 @@ export default function ProjectMeetings() {
                                                                 )}
                                                                 <div className="text-left">
                                                                     <span
-                                                                        className={`px-2 py-0.5 rounded-full text-xs font-semibold ${statusBadgeClass(meeting.status)}`}
+                                                                        className={`px-2 py-0.5 rounded-full text-xs font-semibold ${statusBadgeClass(meetingDisplayStatus)}`}
                                                                     >
-                                                                        {meeting.status}
+                                                                        {meetingDisplayStatus}
                                                                     </span>
                                                                 </div>
                                                                 <div className="flex flex-wrap gap-1 text-left">
@@ -2285,6 +2227,7 @@ export default function ProjectMeetings() {
                                                 <div className="md:hidden divide-y divide-[rgba(0,100,180,0.08)]">
                                                     {visibleMeetings.map((meeting) => {
                                                         const isEditing = pendingEditMeetingId === meeting.id;
+                                                        const meetingDisplayStatus = getMeetingDisplayStatus(meeting, allActionItems);
                                                         const onMobileTitleKeyDown = (e) => {
                                                             if (e.key === 'Enter') {
                                                                 e.preventDefault();
@@ -2309,9 +2252,9 @@ export default function ProjectMeetings() {
                                                                     </span>
                                                                     <div className="flex items-center gap-2">
                                                                         <span
-                                                                            className={`px-2 py-0.5 rounded-full text-xs font-semibold ${statusBadgeClass(meeting.status)}`}
+                                                                            className={`px-2 py-0.5 rounded-full text-xs font-semibold ${statusBadgeClass(meetingDisplayStatus)}`}
                                                                         >
-                                                                            {meeting.status}
+                                                                            {meetingDisplayStatus}
                                                                         </span>
                                                                         {!isEditing && (
                                                                             <div
@@ -2663,9 +2606,9 @@ export default function ProjectMeetings() {
                                                 </p>
                                             </div>
                                             <div className="rounded-xl border border-[rgba(0,100,180,0.1)] bg-[#F8FAFF] p-3">
-                                                <p className="text-[11px] text-[#5A6F8A]">업무 처리 현황</p>
+                                                <p className="text-[11px] text-[#5A6F8A]">수행완료</p>
                                                 <p className="text-lg font-bold text-[#10B981]">
-                                                    {actionDashboardStats.history}
+                                                    {actionDashboardStats.performed}
                                                 </p>
                                             </div>
                                         </div>
@@ -2701,7 +2644,7 @@ export default function ProjectMeetings() {
                                                 {filteredActionItems.map((item) => {
                                                     const statusStyle = actionStatusStyle(item.status);
                                                     const isFinalDone =
-                                                        normalizeActionStatus(item.status) === '완료히스토리';
+                                                        normalizeActionStatus(item.status) === '수행완료';
                                                     return (
                                                         <div
                                                             key={item.id}
@@ -2811,7 +2754,7 @@ export default function ProjectMeetings() {
                                                 {filteredActionItems.map((item) => {
                                                     const statusStyle = actionStatusStyle(item.status);
                                                     const isFinalDone =
-                                                        normalizeActionStatus(item.status) === '완료히스토리';
+                                                        normalizeActionStatus(item.status) === '수행완료';
                                                     return (
                                                         <article
                                                             key={item.id}
@@ -3151,17 +3094,6 @@ export default function ProjectMeetings() {
                                                 </a>
                                             </div>
                                         )}
-
-                                    {normalizeActionStatus(actionDraft.status) === '완료히스토리' && (
-                                        <div className="rounded-2xl border border-[rgba(16,185,129,0.28)] bg-[#F3FBF7] px-3.5 py-3">
-                                            <p className="text-sm font-semibold text-[#0D1B2A]">
-                                                업무 처리 현황 상태입니다.
-                                            </p>
-                                            <p className="text-xs text-[#5A6F8A] mt-1">
-                                                내부 기록으로 보관 중이며 필요 시 수정을 할 수 있습니다.
-                                            </p>
-                                        </div>
-                                    )}
                                 </div>
                             ) : (
                                 <div className="view-enter-right p-5 space-y-4">
@@ -3335,7 +3267,11 @@ export default function ProjectMeetings() {
                                                 <button
                                                     type="button"
                                                     onClick={() => {
-                                                        saveActionToHistory(actionDraft.id, { closeAfterSave: true });
+                                                        const ok = saveActionDraft({
+                                                            nextStatus: '수행완료',
+                                                            closeAfterSave: true,
+                                                        });
+                                                        if (ok) showToast('수행 완료 처리되었습니다.', 'success');
                                                     }}
                                                     className="text-sm font-semibold px-4 py-2 rounded-xl text-slate-500 border border-slate-200 bg-white hover:bg-slate-50 transition-colors"
                                                 >
@@ -3357,6 +3293,36 @@ export default function ProjectMeetings() {
                                             </>
                                         )}
 
+                                        {normalizeActionStatus(actionDraft.status) === '수행완료' && (
+                                            <>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                        const ok = saveActionDraft({ closeAfterSave: true });
+                                                        if (ok) showToast('변경 사항이 저장되었습니다.', 'success');
+                                                    }}
+                                                    className="text-sm font-semibold px-4 py-2 rounded-xl text-slate-500 border border-slate-200 bg-white hover:bg-slate-50 transition-colors"
+                                                >
+                                                    수정 저장
+                                                </button>
+                                                {!hasActionIntegration(actionDraft) && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setActionDrawerView('integrate')}
+                                                        className="flex items-center gap-1.5 text-sm font-bold px-5 py-2 rounded-xl text-white transition-all hover:-translate-y-0.5"
+                                                        style={{
+                                                            background:
+                                                                'linear-gradient(135deg,#0099CC,#7C3AED)',
+                                                            boxShadow: '0 4px 12px rgba(0,100,180,0.18)',
+                                                        }}
+                                                    >
+                                                        <ZapIcon className="text-white" />
+                                                        연동하기
+                                                    </button>
+                                                )}
+                                            </>
+                                        )}
+
                                         {normalizeActionStatus(actionDraft.status) === '연동완료' && (
                                             <>
                                                 <button
@@ -3371,9 +3337,13 @@ export default function ProjectMeetings() {
                                                 </button>
                                                 <button
                                                     type="button"
-                                                    onClick={() =>
-                                                        saveActionToHistory(actionDraft.id, { closeAfterSave: true })
-                                                    }
+                                                    onClick={() => {
+                                                        const ok = saveActionDraft({
+                                                            nextStatus: '수행완료',
+                                                            closeAfterSave: true,
+                                                        });
+                                                        if (ok) showToast('수행 완료 처리되었습니다.', 'success');
+                                                    }}
                                                     className="flex items-center gap-1.5 text-sm font-bold px-5 py-2 rounded-xl text-white transition-all hover:-translate-y-0.5"
                                                     style={{
                                                         background:
@@ -3384,19 +3354,6 @@ export default function ProjectMeetings() {
                                                     수행완료
                                                 </button>
                                             </>
-                                        )}
-
-                                        {normalizeActionStatus(actionDraft.status) === '완료히스토리' && (
-                                            <button
-                                                type="button"
-                                                onClick={() => {
-                                                    const ok = saveActionDraft({ closeAfterSave: true });
-                                                    if (ok) showToast('변경 사항이 저장되었습니다.', 'success');
-                                                }}
-                                                className="text-sm font-semibold px-4 py-2 rounded-xl text-slate-500 border border-slate-200 bg-white hover:bg-slate-50 transition-colors"
-                                            >
-                                                수정 저장
-                                            </button>
                                         )}
                                     </div>
                                 </div>
@@ -3622,3 +3579,4 @@ export default function ProjectMeetings() {
         </div>
     );
 }
+

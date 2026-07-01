@@ -1,42 +1,11 @@
 import { useState, useEffect, useRef, useMemo, forwardRef } from "react";
 import { createPortal } from "react-dom";
 import { Navigate } from "react-router-dom";
-import { clearAuthSession } from "../api/apiClient";
+import { clearAuthSession, listProjectMeetings, listProjects, listProjectTickets } from "../api/apiClient";
 import Header from "../components/Header";
 import Footer from "../components/Footer";
 import MobileTab from "../components/MobileTab";
 import ToastPopup from "../components/toastpopup";
-
-// 가상의 팀원 목록 (스타트업 '네오테크' 시나리오 반영)
-const TEAM_MEMBERS = [
-  { name: "정아름", role: "프론트엔드 리드", avatar: "user" },
-  { name: "김민수", role: "백엔드 리드", avatar: "user" },
-  { name: "송지영", role: "PM & 아키텍트", avatar: "user" },
-  { name: "김소현", role: "서비스 기획", avatar: "user" },
-  { name: "채하율", role: "데이터 엔지니어", avatar: "user" },
-  { name: "박디자이너", role: "UI/UX 디자이너", avatar: "user" }
-];
-
-const TRANSCRIPT_MOCK = [
-  { time: "01:15", speaker: "김소현", text: "이번 스프린트에서는 TIKI 브랜드 전용 컬러 팔레트를 프론트엔드에 완전히 정착시켜야 해요." },
-  { time: "03:12", speaker: "정아름", text: "네, 알겠습니다. TIKI 컬러 팔레트 프론트엔드 환경에 CSS 변수 정의 및 테마 반영 작업은 제가 맡을게요." },
-  { time: "07:45", speaker: "송지영", text: "좋습니다. 백엔드 세션 처리도 이슈가 있어요." },
-  { time: "11:45", speaker: "김민수", text: "네, 그 부분은 제가 API 규격에 맞춰 세션 리프레시 토큰 흐름을 재설계하겠습니다." },
-  { time: "21:10", speaker: "채하율", text: "대시보드 UI MVP 디자인 최종 시안을 어제 전달받았어요." },
-  { time: "24:02", speaker: "박디자이너", text: "디자인팀에서 마이그레이션이 끝나는 대로 피그마에 최종 업로드할게요." }
-];
-
-const PROJECTS = {
-  TIKI: { key: "TIKI", name: "TIKI 앱 개발", color: "#0099CC", bg: "#EEF3FF", border: "rgba(0,153,204,0.32)" },
-  MKT: { key: "MKT", name: "마케팅 캠페인 Q3", color: "#EF4444", bg: "#FCE8E6", border: "rgba(239,68,68,0.3)" },
-  DS: { key: "DS", name: "데이터 인프라 구축", color: "#10B981", bg: "#E6F4EA", border: "rgba(16,185,129,0.3)" }
-};
-
-const MEETING_TITLES = {
-  TIKI: "네오테크 6월 3주차 스프린트 회의",
-  MKT: "마케팅 캠페인 Q3 킥오프 회의",
-  DS: "데이터 인프라 구축 점검 회의"
-};
 
 const PRIORITY_EN = {
   "높음": { label: "높음", bg: "#FCE8E6", text: "#EF4444" },
@@ -44,117 +13,28 @@ const PRIORITY_EN = {
   "낮음": { label: "낮음", bg: "#F1F4F8", text: "#5A6F8A" }
 };
 
-const INITIAL_ACTION_ITEMS = [
-  {
-    id: 1,
-    title: "[TIKI 서비스] 컬러 팔레트 프론트엔드 환경에 CSS 변수 정의 및 테마 반영 작업",
-    priority: "보통",
-    projectKey: "TIKI",
-    assignee: "정아름",
-    assignees: ["정아름"],
-    avatar: "user",
-    status: "검증 전",
-    dueDate: "2026-06-23",
-    meetingDate: "2026-06-16",
-    description: "회의록 03분 12초 영역 기인. 메인 배경(#F8FAFF), 서피스(#FFFFFF), 주요 액션(#0099CC) 및 테두리 변수를 Tailwind 설정 혹은 전역 CSS에 반영하여 디자인 컴포넌트 전체의 일관성을 확보할 것.",
-    contextTime: "03:12",
-    jiraLink: ""
-  },
-  {
-    id: 2,
-    title: "로그인 만료 세션 예외 처리 및 토큰 리프레시 로직 보완",
-    priority: "낮음",
-    projectKey: "TIKI",
-    assignee: "김소현",
-    assignees: ["김소현", "김민수", "송지영"],
-    avatar: "user",
-    status: "연동 완료",
-    dueDate: "2026-06-30",
-    meetingDate: "2026-06-16",
-    description: "회의록 11분 45초 영역 기인. 사용자가 장시간 자리를 비우거나 브라우저를 종료했을 때 세션 만료가 뜨지 않는 버그 방지. Redis 연동 세션 스펙을 검토하고 자동 갱신 API 연동 수행.",
-    contextTime: "11:45",
-    jiraLink: "https://jira.atlassian.com/browse/TIKI-102"
-  },
-  {
-    id: 3,
-    title: "대시보드 UI MVP 디자인 최종 시안 Figma 업로드 및 검토 요청",
-    priority: "낮음",
-    projectKey: "TIKI",
-    assignee: "채하율",
-    assignees: ["채하율"],
-    avatar: "user",
-    status: "연동 완료",
-    dueDate: "2026-06-18",
-    meetingDate: "2026-06-16",
-    description: "회의록 24분 02초 영역 기인. 시제품 자재 및 컴포넌트 단위 디자인 가이드 Figma 업로드 완료 후 Jira 연계 에픽 생성.",
-    contextTime: "24:02",
-    jiraLink: "https://jira.atlassian.com/browse/TIKI-104"
-  },
-  {
-    id: 4,
-    title: "Q3 캠페인 랜딩페이지 카피 및 A/B 테스트 시안 정리",
-    priority: "보통",
-    projectKey: "MKT",
-    assignee: "송지영",
-    assignees: ["송지영"],
-    avatar: "user",
-    status: "진행중",
-    dueDate: "2026-06-20",
-    meetingDate: "2026-06-17",
-    description: "마케팅 캠페인 회의 기인. 랜딩페이지 카피 2종, 헤드라인 A/B 테스트 시안을 정리하고 디자인팀에 전달.",
-    contextTime: "09:40",
-    jiraLink: ""
-  },
-  {
-    id: 5,
-    title: "데이터 파이프라인 야간 배치 실패 알림 연동",
-    priority: "높음",
-    projectKey: "DS",
-    assignee: "채하율",
-    assignees: ["채하율", "김민수"],
-    avatar: "user",
-    status: "검증 전",
-    dueDate: "2026-06-19",
-    meetingDate: "2026-06-17",
-    description: "데이터 인프라 회의 기인. 야간 배치 실패 시 Slack 알림이 누락되는 문제 해결 및 모니터링 대시보드 연동.",
-    contextTime: "15:02",
-    jiraLink: ""
-  },
-  {
-    id: 6,
-    title: "정아름 - 디자인 시스템 컴포넌트 네이밍 컨벤션 문서화",
-    priority: "낮음",
-    projectKey: "TIKI",
-    assignee: "정아름",
-    assignees: ["정아름"],
-    avatar: "user",
-    status: "검증 전",
-    dueDate: "2026-07-03",
-    meetingDate: "2026-06-16",
-    description: "회의록 31분 20초 영역 기인. 팀 전체가 참고할 수 있도록 디자인 시스템 컴포넌트의 네이밍 규칙과 명명 기준을 정리해 문서로 남길 것.",
-    contextTime: "31:20",
-    jiraLink: ""
-  }
-];
-
-const STATUS_TABS = ["전체", "검증 전", "진행중", "연동 완료"];
+const STATUS_TABS = ["전체", "검토대기", "검토완료", "연동완료", "수행완료"];
 
 const STATUS_DOT = {
-  "검증 전": "#F59E0B",
-  "진행중": "#7C3AED",
-  "연동 완료": "#10B981"
+  "검토대기": "#F59E0B",
+  "검토완료": "#7C3AED",
+  "수행완료": "#64748B",
+  "연동완료": "#10B981"
 };
 
 const STATUS_BADGE_CLASS = {
-  "검증 전": "border-[#F59E0B]/40 text-[#B97309]",
-  "진행중": "border-[#7C3AED]/40 text-[#7C3AED]",
-  "연동 완료": "border-[#10B981]/40 text-[#0E8F69]"
+  "검토대기": "border-[#F59E0B]/40 text-[#B97309]",
+  "검토완료": "border-[#7C3AED]/40 text-[#7C3AED]",
+  "수행완료": "border-[#94A3B8]/50 text-[#475569]",
+  "연동완료": "border-[#10B981]/40 text-[#0E8F69]"
 };
 
 const STATUS_LABEL = {
   "검증 전": "검토대기",
   "진행중": "검토완료",
-  "연동 완료": "연동완료"
+  "연동 완료": "연동완료",
+  "완료": "수행완료",
+  "완료히스토리": "수행완료"
 };
 
 function getStatusLabel(status) {
@@ -162,9 +42,56 @@ function getStatusLabel(status) {
 }
 
 function getPanelStatusStyle(status) {
-  if (status === "연동 완료") return { bg: "#EEF3FF", color: "#0099CC", border: "#0099CC" };
-  if (status === "진행중") return { bg: "#F1F5F9", color: "#475569", border: "#94A3B8" };
+  if (status === "연동완료") return { bg: "#EEF3FF", color: "#0099CC", border: "#0099CC" };
+  if (status === "수행완료") return { bg: "#F1F5F9", color: "#475569", border: "#94A3B8" };
+  if (status === "검토완료") return { bg: "#F1F5F9", color: "#475569", border: "#94A3B8" };
   return { bg: "#FEF7E0", color: "#F59E0B", border: "#F59E0B" };
+}
+
+function hasExternalLink(item) {
+  return Boolean(item?.jiraLink || item?.externalLink || item?.integrationProvider || item?.integrationTool);
+}
+
+function isActionDone(item) {
+  return getStatusLabel(item?.status) === "수행완료";
+}
+
+function compactLegacyActionHistoryItems(items) {
+  const byId = new Map();
+  const histories = [];
+
+  items.forEach((item) => {
+    const snapshotOf = String(item?.snapshotOf || "").trim();
+    const historySavedAt = String(item?.historySavedAt || "").trim();
+    if (snapshotOf || historySavedAt) {
+      histories.push({ ...item, snapshotOf });
+      return;
+    }
+
+    const id = String(item?.id || "").trim();
+    const key = id || `${item?.projectKey || item?.projectId || ""}-${item?.title || item?.text || ""}-${item?.assignee || ""}`;
+    if (!byId.has(key)) byId.set(key, item);
+  });
+
+  histories.forEach((history) => {
+    const key = String(history.snapshotOf || "").trim();
+    const recoveredKey = key || `${history?.projectKey || history?.projectId || ""}-${history?.title || history?.text || ""}-${history?.assignee || ""}`;
+    const base = byId.get(recoveredKey);
+    const merged = {
+      ...(base || history),
+      id: recoveredKey || history.id,
+      status: "수행완료",
+      jiraLink: base?.jiraLink || history.jiraLink || history.externalLink || "",
+      externalLink: base?.externalLink || history.externalLink || history.jiraLink || "",
+      integrationProvider: base?.integrationProvider || history.integrationProvider || null,
+      integrationTool: base?.integrationTool || history.integrationTool || null,
+      snapshotOf: null,
+      historySavedAt: null,
+    };
+    byId.set(recoveredKey || merged.id, merged);
+  });
+
+  return Array.from(byId.values());
 }
 
 const TOAST_ICON_RULE = {
@@ -173,7 +100,25 @@ const TOAST_ICON_RULE = {
   success: "#10B981"
 };
 
-const CURRENT_USER_NAME = "정아름";
+const PROJECT_OVERRIDE_STORAGE_KEY = "tiki_project_overrides";
+const MANUAL_MEETING_RECORDS_KEY = "tiki_manual_minutes_records";
+
+const readJsonObject = (key) => {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(key) || "{}");
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+};
+
+const writeJsonObject = (key, value) => {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // 대시보드 화면 상태는 이미 갱신되므로 저장 실패만 조용히 무시한다.
+  }
+};
 
 function LucideIcon({ name, size = 16, className = "" }) {
   const icons = {
@@ -359,8 +304,10 @@ function LucideIcon({ name, size = 16, className = "" }) {
 }
 
 function getDDayInfo(dueDateStr) {
-  const today = new Date("2026-06-18T00:00:00");
-  const due = new Date(`${dueDateStr}T00:00:00`);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const due = parseDueDate(dueDateStr);
+  if (!due) return { label: "미정", urgent: false, overdue: false, missing: true };
   const diffDays = Math.round((due - today) / (1000 * 60 * 60 * 24));
 
   if (diffDays < 0) return { label: `D+${Math.abs(diffDays)}`, urgent: true, overdue: true };
@@ -370,8 +317,10 @@ function getDDayInfo(dueDateStr) {
 }
 
 function getTodayOrTomorrowLabel(dueDateStr) {
-  const today = new Date("2026-06-18T00:00:00");
-  const due = new Date(`${dueDateStr}T00:00:00`);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const due = parseDueDate(dueDateStr);
+  if (!due) return null;
   const diffDays = Math.round((due - today) / (1000 * 60 * 60 * 24));
 
   if (diffDays === 0) return "오늘까지";
@@ -379,19 +328,59 @@ function getTodayOrTomorrowLabel(dueDateStr) {
   return null;
 }
 
-function formatAssignees(assignees, fallbackName) {
-  const list = assignees && assignees.length > 0 ? assignees : [fallbackName];
-  const includesMe = list.includes(CURRENT_USER_NAME);
+function parseDueDate(raw) {
+  const value = String(raw || "").trim();
+  if (!value || value === "-" || value === "미정") return null;
 
-  if (includesMe) {
-    return list.join(", ");
-  }
-  return `담당자 ${list.length}명`;
+  const koreanMatch = value.match(/^(\d{4})년\s*(\d{1,2})월\s*(\d{1,2})일$/);
+  const fullDateMatch = value.replace(/[.]/g, "-").match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  const shortDateMatch = value.match(/^(\d{1,2})[/.](\d{1,2})$/);
+
+  const [, year, month, day] = koreanMatch
+    ? koreanMatch
+    : fullDateMatch
+      ? fullDateMatch
+      : shortDateMatch
+        ? [null, new Date().getFullYear(), shortDateMatch[1], shortDateMatch[2]]
+        : [];
+  if (!year || !month || !day) return null;
+  const date = new Date(Number(year), Number(month) - 1, Number(day));
+  if (Number.isNaN(date.getTime())) return null;
+  date.setHours(0, 0, 0, 0);
+  return date;
 }
 
-function isAssignedToMe(item) {
-  const list = item.assignees && item.assignees.length > 0 ? item.assignees : [item.assignee];
-  return list.includes(CURRENT_USER_NAME);
+function formatDueShort(raw) {
+  const due = parseDueDate(raw);
+  if (!due) return "미정";
+  return `${String(due.getMonth() + 1).padStart(2, "0")}.${String(due.getDate()).padStart(2, "0")}`;
+}
+
+function compareDueDate(left, right) {
+  const leftDate = parseDueDate(left?.dueDate);
+  const rightDate = parseDueDate(right?.dueDate);
+  if (!leftDate && !rightDate) return 0;
+  if (!leftDate) return 1;
+  if (!rightDate) return -1;
+  return leftDate - rightDate;
+}
+
+function formatAssignees(assignees, fallbackName) {
+  const list = assignees && assignees.length > 0 ? assignees : [fallbackName];
+  return list.filter(Boolean).join(', ') || fallbackName || '';
+}
+
+function isAssignedToMe(item, aliases = []) {
+  const normalizedAliases = aliases.map((value) => String(value || "").trim().toLowerCase()).filter(Boolean);
+  if (normalizedAliases.length === 0) return false;
+  const assignees = [
+    item?.assignee,
+    ...(Array.isArray(item?.assignees) ? item.assignees : []),
+    item?.assigneeEmail,
+  ]
+    .map((value) => String(value || "").trim().toLowerCase())
+    .filter(Boolean);
+  return assignees.some((value) => normalizedAliases.includes(value));
 }
 
 function ProjectBadge({ project, size = "sm" }) {
@@ -732,7 +721,8 @@ export default function App() {
       window.removeEventListener("tiki-auth-changed", syncAuthSession);
     };
   }, []);
-  const [actionItems, setActionItems] = useState(INITIAL_ACTION_ITEMS);
+  const [projects, setProjects] = useState([]);
+  const [actionItems, setActionItems] = useState([]);
   const [statusFilter, setStatusFilter] = useState("전체");
   const [projectFilter, setProjectFilter] = useState("전체");
   const [searchQuery, setSearchQuery] = useState("");
@@ -771,7 +761,79 @@ export default function App() {
     assignee: ""
   });
 
+  const buildPersistedActionItem = (item, patch = {}) => {
+    const next = { ...item, ...patch };
+    return {
+      id: next.id,
+      text: next.text || next.title || "해야 할 일",
+      title: next.title || next.text || "해야 할 일",
+      description: next.description || "",
+      due: next.due || next.dueDate || "",
+      dueDate: next.dueDate || next.due || "",
+      assignee: next.assignee || "",
+      assignees: Array.isArray(next.assignees) && next.assignees.length > 0
+        ? next.assignees
+        : next.assignee ? [next.assignee] : [],
+      status: next.status || "검토대기",
+      source: next.source || "",
+      projectId: next.projectKey ? String(next.projectKey) : "",
+      projectName: next.projectName || "",
+      integrationTool: next.integrationProvider || next.integrationTool || null,
+      externalLink: next.jiraLink || next.externalLink || "",
+      jiraLink: next.jiraLink || next.externalLink || "",
+      updatedAt: new Date().toISOString(),
+    };
+  };
+
+  const persistActionItemUpdate = (item, patch = {}) => {
+    const projectId = String(item?.projectKey || item?.projectId || "");
+    if (!projectId || !item?.id) return;
+
+    const persistedItem = buildPersistedActionItem(item, patch);
+    const overrides = readJsonObject(PROJECT_OVERRIDE_STORAGE_KEY);
+    const prevProject = overrides[projectId] && typeof overrides[projectId] === "object" ? overrides[projectId] : {};
+    const prevItems = Array.isArray(prevProject.myActionItems) ? prevProject.myActionItems : [];
+    let found = false;
+    const nextItems = prevItems.map((existing) => {
+      if (String(existing?.id || "") !== String(item.id)) return existing;
+      found = true;
+      return { ...existing, ...persistedItem };
+    });
+    if (!found) nextItems.unshift(persistedItem);
+    overrides[projectId] = { ...prevProject, myActionItems: nextItems };
+    writeJsonObject(PROJECT_OVERRIDE_STORAGE_KEY, overrides);
+
+    const manualMatch = String(item.id).match(/^(.+)-action-(\d+)$/);
+    if (manualMatch) {
+      const [, recordId, indexText] = manualMatch;
+      const index = Number(indexText) - 1;
+      const manualRecords = readJsonObject(MANUAL_MEETING_RECORDS_KEY);
+      const record = manualRecords[recordId];
+      if (record && Array.isArray(record.actions) && record.actions[index]) {
+        const nextStatus = persistedItem.status;
+        const nextActions = record.actions.map((action, idx) => (
+          idx === index
+            ? {
+                ...action,
+                text: persistedItem.text,
+                assignee: persistedItem.assignee,
+                dueDate: persistedItem.dueDate,
+                status: nextStatus,
+                checked: ["수행완료", "연동완료"].includes(nextStatus) ? true : Boolean(action.checked),
+              }
+            : action
+        ));
+        manualRecords[recordId] = { ...record, actions: nextActions };
+        writeJsonObject(MANUAL_MEETING_RECORDS_KEY, manualRecords);
+      }
+    }
+  };
+
   const [toast, setToast] = useState({ show: false, message: "", type: "info" });
+  const userAliases = useMemo(
+    () => [user?.name, user?.email].map((value) => String(value || "").trim()).filter(Boolean),
+    [user?.name, user?.email]
+  );
 
   const triggerToast = (msg, type = "info") => {
     setToast({ show: true, message: msg, type });
@@ -830,6 +892,160 @@ export default function App() {
     return () => document.removeEventListener("mousedown", handleOutsideClick);
   }, [isAssigneeOpen, isDueDateOpen, isStatusSortOpen, isProjectFilterOpen]);
 
+  const mapTicketStatus = (s) => {
+    if (s === 'synced') return '연동완료';
+    if (s === 'ready') return '검토완료';
+    return '검토대기';
+  };
+
+  const mapTicketPriority = (p) => {
+    if (p === 'high' || p === 'urgent') return '높음';
+    if (p === 'low') return '낮음';
+    return '보통';
+  };
+
+  const mapMeetingActionItem = (item, project, meeting, index) => ({
+    id: item.id || `${meeting.id || meeting.title}-action-${index + 1}`,
+    title: item.title || item.text || "해야 할 일",
+    text: item.text || item.title || "해야 할 일",
+    description: item.description || meeting.summary || "",
+    priority: item.priority || "보통",
+    projectKey: project.id,
+    projectName: project.name,
+    projectColor: project.color || "#0099CC",
+    assignee: item.assignee || "",
+    assignees: Array.isArray(item.assignees) && item.assignees.length > 0
+      ? item.assignees
+      : item.assignee ? [item.assignee] : [],
+    avatar: "user",
+    status: getStatusLabel(item.status || "검토대기"),
+    dueDate: item.dueDate || item.due || "",
+    meetingDate: meeting.date || meeting.created_at?.slice?.(0, 10) || "",
+    contextTime: item.contextTime || "",
+    jiraLink: item.externalLink || item.jiraLink || "",
+    externalLink: item.externalLink || item.jiraLink || "",
+    integrationTool: item.integrationTool || null,
+    integrationProvider: item.integrationProvider || null,
+    snapshotOf: item.snapshotOf || null,
+    historySavedAt: item.historySavedAt || null,
+    source: item.source || meeting.title || "",
+  });
+
+  const readLocalManualActionItems = (projectList) => {
+    const projectMap = new Map(projectList.map((project) => [String(project.id), project]));
+    const overrides = readJsonObject(PROJECT_OVERRIDE_STORAGE_KEY);
+    const manualRecords = readJsonObject(MANUAL_MEETING_RECORDS_KEY);
+
+    const overrideItems = Object.entries(overrides).flatMap(([projectId, override]) => {
+      const project = projectMap.get(String(projectId));
+      if (!project || !Array.isArray(override?.myActionItems)) return [];
+      return override.myActionItems.map((item, index) =>
+        mapMeetingActionItem(item, project, { id: `local-${projectId}`, title: item.source || "직접 작성 회의록" }, index)
+      );
+    });
+
+    const manualItems = Object.values(manualRecords).flatMap((record) => {
+      const project = projectMap.get(String(record?.projectId || ""));
+      if (!project || !Array.isArray(record?.actions)) return [];
+      return record.actions.map((item, index) =>
+        mapMeetingActionItem(
+          {
+            ...item,
+            id: `${record.id || "manual"}-action-${index + 1}`,
+            title: item.text,
+            description: item.description,
+            status: item.status || (item.checked ? "수행완료" : "검토대기"),
+            source: record.title,
+            projectId: record.projectId,
+            projectName: record.projectName,
+          },
+          project,
+          record,
+          index
+        )
+      );
+    });
+
+    return [...overrideItems, ...manualItems];
+  };
+
+  useEffect(() => {
+    if (!user || userAliases.length === 0) {
+      setActionItems([]);
+      return;
+    }
+
+    listProjects()
+      .then((projectList) => {
+        const rawProjects = Array.isArray(projectList) ? projectList : [];
+        setProjects(rawProjects);
+        return Promise.all(
+          rawProjects.map((p) =>
+            Promise.all([
+              listProjectTickets(p.id).catch(() => []),
+              listProjectMeetings(p.id).catch(() => []),
+            ]).then(([tickets, meetings]) => ({
+              project: p,
+              tickets: Array.isArray(tickets) ? tickets : [],
+              meetings: Array.isArray(meetings) ? meetings : [],
+            }))
+              .catch(() => ({ project: p, tickets: [], meetings: [] }))
+          )
+        ).then((results) => ({ rawProjects, results }));
+      })
+      .then(({ rawProjects, results }) => {
+        const myItems = results.flatMap(({ project, tickets }) =>
+          tickets
+            .map((t) => ({
+              id: t.id,
+              title: t.title,
+              description: t.description || '',
+              priority: mapTicketPriority(t.priority),
+              projectKey: project.id,
+              projectName: project.name,
+              projectColor: project.color || '#0099CC',
+              assignee: t.assignee || '',
+              assignees: t.assignee ? [t.assignee] : [],
+              avatar: 'user',
+              status: mapTicketStatus(t.status),
+              dueDate: t.due_at ? t.due_at.slice(0, 10) : '',
+              meetingDate: t.created_at ? t.created_at.slice(0, 10) : '',
+              contextTime: '',
+              jiraLink: t.external_syncs?.find((s) => s.provider === 'jira')?.external_url || '',
+            }))
+        );
+        const meetingItems = results.flatMap(({ project, meetings }) =>
+          meetings.flatMap((meeting) =>
+            (Array.isArray(meeting.action_items) ? meeting.action_items : [])
+              .map((item, index) => mapMeetingActionItem(item, project, meeting, index))
+          )
+        );
+        const localItems = readLocalManualActionItems(rawProjects);
+        // 로컬 저장분은 대시보드/프로젝트 상세에서 사용자가 바꾼 최신 상태다.
+        // 같은 id의 서버 원본 회의 업무보다 먼저 병합해야 새로고침 후에도 상태가 되돌아가지 않는다.
+        const merged = compactLegacyActionHistoryItems([...localItems, ...myItems, ...meetingItems])
+          .filter((item) => isAssignedToMe(item, userAliases));
+        const dedupedMap = new Map();
+        merged.forEach((item) => {
+          const key = String(item.id || `${item.projectKey}-${item.title}-${item.assignee}`);
+          const prev = dedupedMap.get(key);
+          if (!prev) {
+            dedupedMap.set(key, item);
+            return;
+          }
+          dedupedMap.set(key, {
+            ...item,
+            ...prev,
+            dueDate: prev.dueDate || item.dueDate || item.due || "",
+            due: prev.due || item.due || item.dueDate || "",
+            meetingDate: prev.meetingDate || item.meetingDate || "",
+          });
+        });
+        setActionItems(Array.from(dedupedMap.values()));
+      })
+      .catch(() => {});
+  }, [user, userAliases]);
+
   const handleLogout = () => {
     setUser(null);
     setIsAuthenticated(false);
@@ -873,28 +1089,49 @@ export default function App() {
   // ───────────────────────────────────────────────────────────────────────────
 
   const handleSaveEdit = () => {
-    const shouldComplete = selectedItem?.status === "진행중";
+    const shouldComplete = selectedItem?.status === "검토완료";
+    const updatedItem = {
+      ...selectedItem,
+      ...editForm,
+      status: shouldComplete ? "수행완료" : "검토완료"
+    };
     setActionItems(prev => prev.map(item => {
       if (item.id === selectedItem.id) {
-        return { ...item, ...editForm, status: shouldComplete ? "연동 완료" : "진행중" };
+        return { ...item, ...editForm, status: updatedItem.status };
       }
       return item;
     }));
+    persistActionItemUpdate(selectedItem, updatedItem);
     closePanel();
     triggerToast(
       shouldComplete
-        ? "수행 완료 처리되어 연동 완료 상태로 전환되었습니다."
+        ? "수행 완료 처리되었습니다."
         : "해야 할 일이 성공적으로 수정(사용자 변경)되었습니다.",
       "success"
     );
   };
 
-  const handleVerify = (itemId) => {
+  const handleMarkDone = (itemId) => {
+    const targetItem = actionItems.find((item) => item.id === itemId) || selectedItem;
+    if (!targetItem) return;
+    const updatedItem = { ...targetItem, status: "수행완료" };
     setActionItems(prev => prev.map(item => (
-      item.id === itemId ? { ...item, status: "진행중" } : item
+      item.id === itemId ? { ...item, status: "수행완료" } : item
+    )));
+    setSelectedItem(prev => prev?.id === itemId ? { ...prev, status: "수행완료" } : prev);
+    persistActionItemUpdate(targetItem, updatedItem);
+    closePanel();
+    triggerToast("수행 완료 처리되었습니다.", "success");
+  };
+
+  const handleVerify = (itemId) => {
+    const targetItem = actionItems.find((item) => item.id === itemId) || selectedItem;
+    if (targetItem) persistActionItemUpdate(targetItem, { status: "검토완료" });
+    setActionItems(prev => prev.map(item => (
+      item.id === itemId ? { ...item, status: "검토완료" } : item
     )));
     // 패널 내 selectedItem도 동기화
-    setSelectedItem(prev => prev?.id === itemId ? { ...prev, status: "진행중" } : prev);
+    setSelectedItem(prev => prev?.id === itemId ? { ...prev, status: "검토완료" } : prev);
     triggerToast("해야 할 일이 검증되어 검토 완료 상태로 전환되었습니다.", "success");
   };
 
@@ -911,11 +1148,13 @@ export default function App() {
         ? `https://www.notion.so/NEO-${randomTicketNum}`
         : `https://jira.atlassian.com/browse/NEO-${randomTicketNum}`;
 
+      const targetItem = actionItems.find((item) => item.id === itemId) || selectedItem;
       const updatedItem = {
-        status: "연동 완료",
+        status: targetItem?.status === "수행완료" ? "수행완료" : "연동완료",
         jiraLink: integrationLink,
         integrationProvider: provider
       };
+      if (targetItem) persistActionItemUpdate(targetItem, updatedItem);
 
       setActionItems(prev => prev.map(item => {
         if (item.id === itemId) return { ...item, ...updatedItem };
@@ -976,11 +1215,13 @@ export default function App() {
           id: Date.now(),
           title: `[보안 마스킹 가동] 신규 업로드된 ${uploadFile?.name || "회의록"} 기반 자동 태스크`,
           priority: "높음",
-          projectKey: "TIKI",
-          assignee: CURRENT_USER_NAME,
-          assignees: [CURRENT_USER_NAME],
+          projectKey: projects[0]?.id || '',
+          projectName: projects[0]?.name || '',
+          projectColor: projects[0]?.color || '#0099CC',
+          assignee: user?.name || '나',
+          assignees: [user?.name || '나'],
           avatar: "user",
-          status: "검증 전",
+          status: "검토대기",
           dueDate: "2026-06-25",
           meetingDate: "2026-06-18",
           description: "새로 업로드한 오디오에서 RAG를 기반으로 도메인 전문 용어(Figma, Celery, React)를 식별 및 마스킹한 뒤 추출해 낸 태스크입니다.",
@@ -1009,16 +1250,16 @@ export default function App() {
   const isAnyFilterActive = statusFilter !== "전체" || projectFilter !== "전체" || searchQuery.trim() !== "";
 
   const filteredItems = useMemo(() => {
-    const byAssignee = actionItems.filter((item) => isAssignedToMe(item));
+    const byAssignee = actionItems.filter((item) => isAssignedToMe(item, userAliases));
     const byStatus = statusFilter === "전체" ? byAssignee : byAssignee.filter((item) => item.status === statusFilter);
     const byProject = projectFilter === "전체" ? byStatus : byStatus.filter((item) => item.projectKey === projectFilter);
     const query = searchQuery.trim().toLowerCase();
     if (!query) return byProject;
     return byProject.filter((item) => {
-      const haystack = [item.title, item.assignee, ...(item.assignees || []), PROJECTS[item.projectKey]?.name || ""].join(" ").toLowerCase();
+      const haystack = [item.title, item.assignee, ...(item.assignees || []), item.projectName || ""].join(" ").toLowerCase();
       return haystack.includes(query);
     });
-  }, [actionItems, statusFilter, projectFilter, searchQuery]);
+  }, [actionItems, statusFilter, projectFilter, searchQuery, userAliases]);
 
   const groupedByProject = useMemo(() => {
     const groups = {};
@@ -1028,29 +1269,29 @@ export default function App() {
     });
     Object.keys(groups).forEach((key) => {
       groups[key].sort((a, b) => {
-        const aDone = a.status === "연동 완료" ? 1 : 0;
-        const bDone = b.status === "연동 완료" ? 1 : 0;
+        const aDone = isActionDone(a) ? 1 : 0;
+        const bDone = isActionDone(b) ? 1 : 0;
         return aDone - bDone;
       });
     });
-    return Object.keys(PROJECTS)
+    return Object.keys(groups)
       .filter((key) => groups[key] && groups[key].length > 0)
       .map((key) => ({ projectKey: key, items: groups[key] }));
   }, [filteredItems]);
 
   const firstName = user?.name || "사용자";
-  const myPendingCount = actionItems.filter((item) => item.status !== "연동 완료" && isAssignedToMe(item)).length;
+  const myTotalActionCount = actionItems.filter((item) => isAssignedToMe(item, userAliases) && !isActionDone(item)).length;
 
   const myActiveItems = useMemo(() => {
     const priorityWeight = { "높음": 3, "보통": 2, "낮음": 1 };
     return actionItems
-      .filter((item) => isAssignedToMe(item) && item.status !== "연동 완료")
+      .filter((item) => isAssignedToMe(item, userAliases) && !isActionDone(item))
       .sort((a, b) => {
         const weightDiff = (priorityWeight[b.priority] || 0) - (priorityWeight[a.priority] || 0);
         if (weightDiff !== 0) return weightDiff;
-        return new Date(a.dueDate) - new Date(b.dueDate);
+        return compareDueDate(a, b);
       });
-  }, [actionItems]);
+  }, [actionItems, userAliases]);
 
   const topPriorityItems = myActiveItems.slice(0, 2);
 
@@ -1058,17 +1299,22 @@ export default function App() {
     const priorityWeight = { "높음": 3, "보통": 2, "낮음": 1 };
     return actionItems
       .filter((item) => {
-        if (!isAssignedToMe(item) || item.status === "연동 완료") return false;
+        if (!isAssignedToMe(item, userAliases) || isActionDone(item)) return false;
         return getTodayOrTomorrowLabel(item.dueDate) !== null;
       })
       .sort((a, b) => {
         const weightDiff = (priorityWeight[b.priority] || 0) - (priorityWeight[a.priority] || 0);
         if (weightDiff !== 0) return weightDiff;
-        return new Date(a.dueDate) - new Date(b.dueDate);
+        return compareDueDate(a, b);
       });
-  }, [actionItems]);
+  }, [actionItems, userAliases]);
 
-  const projectFilterOptions = ["전체", ...Object.keys(PROJECTS)];
+  const getProjectMeta = (projectKey) => {
+    const p = projects.find((proj) => proj.id === projectKey);
+    return { name: p?.name || '', color: p?.color || '#0099CC' };
+  };
+
+  const projectFilterOptions = ["전체", ...projects.map((p) => p.id)];
 
   const isPanelOpen = Boolean(selectedItem);
   const isIntegratingSelected = selectedItem && integratingId === selectedItem.id;
@@ -1131,7 +1377,7 @@ export default function App() {
                 <div>
                   <h1 className="text-2xl font-bold text-[#0D1B2A]">안녕하세요, {firstName}님</h1>
                   <p className="text-[#5A6F8A] mt-1">
-                    오늘 처리해야 할 일이 <span className="font-bold text-[#0099CC]">{myPendingCount}개</span> 있어요
+                    전체 해야 할 일이 <span className="font-bold text-[#0099CC]">{myTotalActionCount}개</span> 있어요
                   </p>
                 </div>
                 <button
@@ -1228,7 +1474,7 @@ export default function App() {
                                 </div>
                                 <p className="mt-1.5 text-[11px] text-[#8A9AB0] flex items-center gap-1.5 flex-wrap">
                                   <LucideIcon name="calendar" size={10} className="text-[#9AA7B8]" />
-                                  <span>출처: {MEETING_TITLES[item.projectKey]}</span>
+                                  <span>출처: {item.projectName || item.projectKey}</span>
                                   <span className="text-[#D7DEE8]">·</span>
                                   <span>{item.contextTime}</span>
                                 </p>
@@ -1316,8 +1562,8 @@ export default function App() {
                       className={`flex w-full items-center justify-between gap-1.5 rounded-xl border py-2 pl-3 pr-2.5 text-sm transition ${isProjectFilterOpen ? "border-[#0099CC]/40 bg-white shadow-[0_0_0_3px_rgba(0,153,204,0.10)]" : "border-[rgba(0,0,0,0.09)] bg-white text-[#0D1B2A] hover:border-[rgba(0,153,204,0.35)]"}`}
                     >
                       <span className="inline-flex items-center gap-2 min-w-0">
-                        {projectFilter !== "전체" && <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: PROJECTS[projectFilter].color }}></span>}
-                        <span className="truncate font-medium text-[#0D1B2A]">{projectFilter === "전체" ? "프로젝트: 전체" : PROJECTS[projectFilter].name}</span>
+                        {projectFilter !== "전체" && <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: getProjectMeta(projectFilter).color }}></span>}
+                        <span className="truncate font-medium text-[#0D1B2A]">{projectFilter === "전체" ? "프로젝트: 전체" : getProjectMeta(projectFilter).name}</span>
                       </span>
                       <LucideIcon name="chevronDown" size={13} className={`shrink-0 text-[#A0AFBF] transition-transform ${isProjectFilterOpen ? "rotate-180" : ""}`} />
                     </button>
@@ -1325,9 +1571,11 @@ export default function App() {
                       <div className="absolute left-0 right-0 z-20 mt-1.5 overflow-hidden rounded-xl border border-[rgba(0,0,0,0.08)] bg-white shadow-[0_12px_32px_rgba(0,0,0,0.12)]">
                         {projectFilterOptions.map((key) => {
                           const isActive = projectFilter === key;
-                          const palette = key === "전체" ? { color: "#0099CC" } : PROJECTS[key];
-                          const label = key === "전체" ? "전체" : PROJECTS[key].name;
-                          const count = key === "전체" ? actionItems.filter((i) => isAssignedToMe(i)).length : actionItems.filter((i) => isAssignedToMe(i) && i.projectKey === key).length;
+                          const palette = key === "전체" ? { color: "#0099CC" } : getProjectMeta(key);
+                          const label = key === "전체" ? "전체" : getProjectMeta(key).name;
+                          const count = key === "전체"
+                            ? actionItems.filter((i) => isAssignedToMe(i, userAliases)).length
+                            : actionItems.filter((i) => isAssignedToMe(i, userAliases) && i.projectKey === key).length;
                           return (
                             <button key={key} type="button" onClick={() => { setProjectFilter(key); setIsProjectFilterOpen(false); }}
                               className={`flex w-full items-center justify-between px-3.5 py-2.5 text-sm transition-colors ${isActive ? "bg-[#F5F7FB] font-semibold text-[#0099CC]" : "text-[#0D1B2A] hover:bg-[#F5F7FB]"}`}
@@ -1359,15 +1607,14 @@ export default function App() {
               )}
 
               {groupedByProject.map(({ projectKey, items }) => {
-                const project = PROJECTS[projectKey];
-                const hideTikiGroupHeader = projectKey === "TIKI";
+                const projectMeta = getProjectMeta(projectKey);
                 return (
                   <section key={projectKey}>
                     <div className="mb-3 flex items-center gap-2">
-                      {!hideTikiGroupHeader && <span className="w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: project.color }}></span>}
-                      {!hideTikiGroupHeader && <span className="text-sm font-bold text-[#0D1B2A]">{project.name}</span>}
-                      {!hideTikiGroupHeader && (
-                        <span className="text-xs px-2 py-0.5 rounded-full font-semibold" style={{ backgroundColor: project.bg, color: project.color }}>{items.length}개</span>
+                      {projectMeta.name && <span className="w-2.5 h-2.5 rounded-full bg-[#38BDF8] shadow-[0_0_0_4px_rgba(56,189,248,0.14)]"></span>}
+                      {projectMeta.name && <span className="text-sm font-bold text-[#0D1B2A]">{projectMeta.name}</span>}
+                      {projectMeta.name && (
+                        <span className="rounded-full border border-[#7DD3FC]/70 bg-[#E0F2FE] px-2.5 py-0.5 text-xs font-bold text-[#0284C7]">{items.length}개</span>
                       )}
                     </div>
 
@@ -1394,9 +1641,9 @@ export default function App() {
                                 <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: STATUS_DOT[item.status] || "#94A3B8" }}></span>
                                 <span className="text-[11px] font-medium text-[#6B7280]">{getStatusLabel(item.status)}</span>
                               </div>
-                              {item.projectKey === "TIKI" && (
+                              {item.projectName && (
                                 <div className="mb-1 inline-flex items-center gap-1.5">
-                                  <span className="text-[12px] font-normal text-[#9CA3AF]">프로젝트명: TIKI 앱 개발</span>
+                                  <span className="text-[12px] font-normal text-[#9CA3AF]">프로젝트명: {item.projectName}</span>
                                 </div>
                               )}
                               <h4 className={`text-[15px] font-bold leading-snug transition-colors ${isSelected ? "text-[#0099CC]" : "text-[#111827]"}`}>
@@ -1413,12 +1660,18 @@ export default function App() {
                             </div>
 
                             <div className="hidden sm:flex flex-col items-end justify-center shrink-0 sm:w-[88px] py-1">
-                              <span className={`text-[14px] font-bold leading-[0.8] ${dday.overdue ? "text-[#EF4444]" : dday.urgent ? "text-[#F59E0B]" : "text-[#5A6F8A]"}`}>{dday.label}</span>
-                              <span className="mt-1 text-[11px] font-light leading-[0.8] text-[#9AA7B8]">{item.dueDate.slice(5)}</span>
+                              {dday.missing ? (
+                                <span className="text-[12px] font-semibold leading-none text-[#9AA7B8]">마감일 없음</span>
+                              ) : (
+                                <>
+                                  <span className={`text-[14px] font-bold leading-[0.8] ${dday.overdue ? "text-[#EF4444]" : dday.urgent ? "text-[#F59E0B]" : "text-[#5A6F8A]"}`}>{dday.label}</span>
+                                  <span className="mt-1 text-[11px] font-light leading-[0.8] text-[#9AA7B8]">{formatDueShort(item.dueDate)}</span>
+                                </>
+                              )}
                             </div>
 
                             <div className="flex items-center justify-between sm:justify-end gap-3 shrink-0 sm:w-[180px]">
-                              {item.status !== "검증 전" && (
+                              {item.status !== "검토대기" && (
                                 <span className={`hidden sm:inline-flex items-center gap-1.5 text-[11px] font-semibold px-2 py-1 rounded-full border ${STATUS_BADGE_CLASS[item.status] || "border-gray-300 text-gray-500"}`}>
                                   {getStatusLabel(item.status)}
                                 </span>
@@ -1428,7 +1681,7 @@ export default function App() {
                                 <span className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-[#0099CC]">
                                   <LucideIcon name="loader" size={13} className="spin-slow" />연동 중
                                 </span>
-                              ) : item.status === "연동 완료" ? (
+                              ) : item.status === "연동완료" ? (
                                 (() => {
                                   const isNotion = item.integrationProvider === "notion";
                                   return (
@@ -1440,12 +1693,27 @@ export default function App() {
                                     </a>
                                   );
                                 })()
-                              ) : item.status === "검증 전" ? (
+                              ) : item.status === "검토대기" ? (
                                 <button type="button" onClick={(e) => { e.stopPropagation(); openPanel(item); }}
                                   className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-[#0099CC] border border-[#0099CC]/40 hover:bg-[#0099CC] hover:text-white hover:border-[#0099CC] hover:shadow-[0_4px_12px_rgba(0,153,204,0.25)] px-2.5 py-1.5 rounded-lg transition-all duration-150"
                                 >
                                   <LucideIcon name="checkCircle" size={12} />검토하기
                                 </button>
+                              ) : item.status === "수행완료" ? (
+                                hasExternalLink(item) ? (
+                                  <a href={item.jiraLink || item.externalLink || "#"} onClick={(e) => e.stopPropagation()} target="_blank" rel="noreferrer"
+                                    className="inline-flex items-center gap-1 text-[12px] font-semibold text-[#0099CC] hover:underline"
+                                  >
+                                    <LucideIcon name={item.integrationProvider === "notion" || item.integrationTool === "Notion" ? "arrowUpRight" : "jira"} size={13} className="text-[#0099CC]" />
+                                    {item.integrationProvider === "notion" || item.integrationTool === "Notion" ? "Notion 확인" : "Jira 확인"}
+                                  </a>
+                                ) : (
+                                  <button type="button" onClick={(e) => { e.stopPropagation(); openPanel(item); setPanelView("integrate"); }}
+                                    className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-[#0099CC] border border-[#0099CC]/40 hover:bg-[#0099CC] hover:text-white hover:border-[#0099CC] hover:shadow-[0_4px_12px_rgba(0,153,204,0.25)] px-2.5 py-1.5 rounded-lg transition-all duration-150"
+                                  >
+                                    <LucideIcon name="jira" size={12} />연동하기
+                                  </button>
+                                )
                               ) : (
                                 <button type="button" onClick={(e) => { e.stopPropagation(); openPanel(item); }}
                                   className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-[#0099CC] border border-[#0099CC]/40 hover:bg-[#0099CC] hover:text-white hover:border-[#0099CC] hover:shadow-[0_4px_12px_rgba(0,153,204,0.25)] px-2.5 py-1.5 rounded-lg transition-all duration-150"
@@ -1455,8 +1723,14 @@ export default function App() {
                               )}
 
                               <div className="sm:hidden inline-flex flex-col items-end justify-center py-0.5">
-                                <span className={`text-[13px] font-bold leading-[0.9] ${dday.overdue ? "text-[#EF4444]" : dday.urgent ? "text-[#F59E0B]" : "text-[#5A6F8A]"}`}>{dday.label}</span>
-                                <span className="mt-1 text-[10px] font-light leading-[0.9] text-[#9AA7B8]">{item.dueDate.slice(5)}</span>
+                                {dday.missing ? (
+                                  <span className="text-[11px] font-semibold leading-none text-[#9AA7B8]">마감일 없음</span>
+                                ) : (
+                                  <>
+                                    <span className={`text-[13px] font-bold leading-[0.9] ${dday.overdue ? "text-[#EF4444]" : dday.urgent ? "text-[#F59E0B]" : "text-[#5A6F8A]"}`}>{dday.label}</span>
+                                    <span className="mt-1 text-[10px] font-light leading-[0.9] text-[#9AA7B8]">{formatDueShort(item.dueDate)}</span>
+                                  </>
+                                )}
                               </div>
                             </div>
                           </div>
@@ -1568,15 +1842,15 @@ export default function App() {
                   {/* 프로젝트 + 출처 배지 */}
                   <div className="rounded-2xl border border-[rgba(0,100,180,0.12)] bg-[#F8FAFF] p-3.5">
                     <div className="flex flex-wrap items-center gap-2 mb-2">
-                      {PROJECTS[selectedItem.projectKey] && (
+                      {selectedItem.projectName && (
                         <span
                           className="inline-flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-1 rounded-full bg-[#EEF3FF] text-[#0099CC]"
                         >
-                          #{PROJECTS[selectedItem.projectKey].name}
+                          #{selectedItem.projectName}
                         </span>
                       )}
                       <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-[#5A6F8A] bg-white border border-[rgba(0,100,180,0.12)] px-2.5 py-1 rounded-full">
-                        출처: {MEETING_TITLES[selectedItem.projectKey]}
+                        출처: {selectedItem.projectName || '회의록'}
                       </span>
                     </div>
                     <p className="text-xs text-[#5A6F8A]">타임스탬프: {selectedItem.meetingDate} {selectedItem.contextTime}</p>
@@ -1668,42 +1942,52 @@ export default function App() {
                       </button>
                       {isAssigneeOpen && (
                         <div className="absolute left-0 right-0 z-20 bottom-full mb-1.5 overflow-hidden rounded-xl border border-[rgba(0,0,0,0.08)] bg-white shadow-[0_12px_32px_rgba(0,0,0,0.12)]">
-                          {TEAM_MEMBERS.map((m) => {
-                            const isSelected = editForm.assignee === m.name;
-                            return (
-                              <button key={m.name} type="button"
-                                onClick={() => { setEditForm({ ...editForm, assignee: m.name }); setIsAssigneeOpen(false); }}
-                                className={`flex w-full items-center justify-between px-3.5 py-2.5 text-sm transition-colors cursor-pointer ${isSelected ? "bg-[#F5F7FB] font-semibold text-[#0099CC]" : "text-[#0D1B2A] hover:bg-[#F5F7FB]"}`}
-                              >
-                                <span>{m.name}</span>
-                                {isSelected && <LucideIcon name="check" size={13} className="text-[#0099CC]" />}
-                              </button>
+                          {(() => {
+                            const currentProject = projects.find((p) => p.id === selectedItem?.projectKey);
+                            const memberNames = Array.isArray(currentProject?.members)
+                              ? currentProject.members.map((m) => m?.name || m?.email || '').filter(Boolean)
+                              : [];
+                            const ownerName = currentProject?.owner?.name || currentProject?.team_lead || '';
+                            const allNames = [...new Set([ownerName, ...memberNames].filter(Boolean))];
+                            return allNames.length > 0 ? allNames.map((name) => {
+                              const isSelected = editForm.assignee === name;
+                              return (
+                                <button key={name} type="button"
+                                  onClick={() => { setEditForm({ ...editForm, assignee: name }); setIsAssigneeOpen(false); }}
+                                  className={`flex w-full items-center justify-between px-3.5 py-2.5 text-sm transition-colors cursor-pointer ${isSelected ? "bg-[#F5F7FB] font-semibold text-[#0099CC]" : "text-[#0D1B2A] hover:bg-[#F5F7FB]"}`}
+                                >
+                                  <span>{name}</span>
+                                  {isSelected && <LucideIcon name="check" size={13} className="text-[#0099CC]" />}
+                                </button>
+                              );
+                            }) : (
+                              <div className="px-3.5 py-2.5 text-sm text-[#9AA7B8]">멤버 없음</div>
                             );
-                          })}
+                          })()}
                         </div>
                       )}
                     </div>
                   </div>
 
-                  {/* 연동 완료 상태: Jira/Notion 링크 카드 */}
-                  {selectedItem.status === "연동 완료" && selectedItem.jiraLink && (
+                  {/* 외부 툴 링크 카드 */}
+                  {hasExternalLink(selectedItem) && (selectedItem.jiraLink || selectedItem.externalLink) && (
                     <div className="rounded-2xl border border-[rgba(0,153,204,0.28)] bg-[#EEF8FF] px-3.5 py-3 flex items-center justify-between gap-3">
                       <div className="flex items-center gap-2 min-w-0">
                         <span className="shrink-0 w-7 h-7 rounded-lg bg-[#EEF3FF] text-[#0099CC] flex items-center justify-center">
                           <LucideIcon name="checkCircle" size={15} />
                         </span>
                         <div className="min-w-0">
-                          <p className="text-[12px] font-bold text-[#0D1B2A]">연동완료 | 외부 툴 링크 바로가기</p>
-                          <p className="text-[11px] text-[#5A6F8A] truncate">{selectedItem.jiraLink}</p>
+                          <p className="text-[12px] font-bold text-[#0D1B2A]">외부 툴 링크 바로가기</p>
+                          <p className="text-[11px] text-[#5A6F8A] truncate">{selectedItem.jiraLink || selectedItem.externalLink}</p>
                         </div>
                       </div>
                       <a
-                        href={selectedItem.jiraLink}
+                        href={selectedItem.jiraLink || selectedItem.externalLink}
                         target="_blank"
                         rel="noreferrer"
                         className="shrink-0 inline-flex items-center gap-1 text-[12px] font-semibold text-[#0099CC] hover:underline"
                       >
-                        {selectedItem.integrationProvider === "notion" ? "Notion" : "Jira"} 확인
+                        {selectedItem.integrationProvider === "notion" || selectedItem.integrationTool === "Notion" ? "Notion" : "Jira"} 확인
                         <LucideIcon name="arrowUpRight" size={12} />
                       </a>
                     </div>
@@ -1797,7 +2081,7 @@ export default function App() {
                     </button>
 
                     <div className="flex items-center gap-2">
-                      {selectedItem.status === "검증 전" && (
+                      {selectedItem.status === "검토대기" && (
                         <button
                           type="button"
                           onClick={() => {
@@ -1810,11 +2094,11 @@ export default function App() {
                           검토완료
                         </button>
                       )}
-                      {selectedItem.status === "진행중" && (
+                      {selectedItem.status === "검토완료" && (
                         <>
                           <button
                             type="button"
-                            onClick={handleSaveEdit}
+                            onClick={() => handleMarkDone(selectedItem.id)}
                             className="px-5 py-2.5 text-sm font-bold text-[#7C3AED] bg-white border border-[#7C3AED]/60 hover:bg-[#F6F0FF] rounded-xl shadow-sm transition-all cursor-pointer"
                           >
                             수행완료
@@ -1828,6 +2112,25 @@ export default function App() {
                             연동하기
                           </button>
                         </>
+                      )}
+                      {selectedItem.status === "연동완료" && (
+                        <button
+                          type="button"
+                          onClick={() => handleMarkDone(selectedItem.id)}
+                          className="px-5 py-2.5 text-sm font-bold text-[#7C3AED] bg-white border border-[#7C3AED]/60 hover:bg-[#F6F0FF] rounded-xl shadow-sm transition-all cursor-pointer"
+                        >
+                          수행완료
+                        </button>
+                      )}
+                      {selectedItem.status === "수행완료" && !hasExternalLink(selectedItem) && (
+                        <button
+                          type="button"
+                          onClick={() => setPanelView("integrate")}
+                          className="px-5 py-2.5 text-sm font-bold text-white bg-[linear-gradient(135deg,#10B981,#0D9488)] hover:brightness-105 rounded-xl shadow-md shadow-emerald-500/25 transition-all flex items-center gap-1.5 cursor-pointer"
+                        >
+                          <LucideIcon name="zap" size={14} className="text-white" />
+                          연동하기
+                        </button>
                       )}
                     </div>
                   </>

@@ -3,7 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import Header from "../components/Header";
 import Footer from "../components/Footer";
 import MobileTab from "../components/MobileTab";
-import { clearAuthSession, getSubscription } from "../api/apiClient";
+import { clearAuthSession, getSubscription, listProjects, getProject } from "../api/apiClient";
 import { PLANS, yearlyDiscount } from "../data/subscriptionPlans";
 
 // ── Icons ──────────────────────────────────────────────────────────────────
@@ -393,15 +393,10 @@ function UsageBar({ label, value, max, unit = "" }) {
   );
 }
 
-const RECENT_MEETINGS = [
-  { id: 1, title: "TIKI 앱 개발 - 스프린트 12 리뷰", date: "6월 24일", actionItems: 5, done: 3 },
-  { id: 2, title: "Q3 로드맵 정렬 회의",              date: "6월 22일", actionItems: 3, done: 3 },
-  { id: 3, title: "디자인 시스템 토큰 점검",           date: "6월 19일", actionItems: 4, done: 1 },
-];
-
 function HomeSection({ goTo, name, email, department }) {
-  const totalActionItems = RECENT_MEETINGS.reduce((s, m) => s + m.actionItems, 0);
-  const doneActionItems = RECENT_MEETINGS.reduce((s, m) => s + m.done, 0);
+  const [recentMeetings, setRecentMeetings] = useState([]);
+  const [stats, setStats] = useState({ totalMeetings: 0, totalActionItems: 0, doneActionItems: 0, totalJiraTickets: 0 });
+  const [meetingsLoading, setMeetingsLoading] = useState(true);
   const [planLoading, setPlanLoading] = useState(false);
   const [currentPlanId, setCurrentPlanId] = useState(() => {
     try {
@@ -445,6 +440,44 @@ function HomeSection({ goTo, name, email, department }) {
     };
   }, []);
 
+  useEffect(() => {
+    if (!localStorage.getItem("tiki_access_token")) { setMeetingsLoading(false); return; }
+    let cancelled = false;
+    setMeetingsLoading(true);
+    listProjects()
+      .then((projects) => {
+        if (cancelled) return Promise.resolve([]);
+        const projectList = Array.isArray(projects) ? projects : [];
+        return Promise.all(projectList.map((p) => getProject(p.id).catch(() => null)));
+      })
+      .then((details) => {
+        if (cancelled || !details) return;
+        const allMeetings = details
+          .filter(Boolean)
+          .flatMap((p) =>
+            (Array.isArray(p.meetings) ? p.meetings : []).map((m) => ({
+              id: m.id,
+              title: `${p.name} - ${m.title}`,
+              date: m.date,
+              actionItems: m.action_items_count || 0,
+              done: m.jira_linked_count || 0,
+            }))
+          )
+          .sort((a, b) => b.date.localeCompare(a.date));
+
+        const totalMeetings = allMeetings.length;
+        const totalActionItems = allMeetings.reduce((s, m) => s + m.actionItems, 0);
+        const doneActionItems = allMeetings.reduce((s, m) => s + m.done, 0);
+
+        setStats({ totalMeetings, totalActionItems, doneActionItems, totalJiraTickets: doneActionItems });
+        setRecentMeetings(allMeetings.slice(0, 3));
+      })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setMeetingsLoading(false); });
+
+    return () => { cancelled = true; };
+  }, []);
+
   const currentPlan = PLANS.find((p) => p.id === currentPlanId) || PLANS[0];
   const currentPrice = currentPlan.price[currentBilling] || 0;
   const billingLabel = currentBilling === "yearly" ? "연간" : "월간";
@@ -468,9 +501,9 @@ function HomeSection({ goTo, name, email, department }) {
       <div className="rounded-2xl border border-[rgba(0,100,180,.1)] bg-[linear-gradient(135deg,rgba(0,153,204,.06),rgba(124,58,237,.05))] p-5 sm:p-6">
         <p className="mb-4 text-[12px] font-bold text-[#5A6F8A]">이번 달 활동</p>
         <div className="grid grid-cols-3 gap-4">
-          <StatBlock value="47건" label="총 회의" />
-          <StatBlock value={`${doneActionItems}/${totalActionItems}`} label="처리현황" accent />
-          <StatBlock value="132개" label="Jira 티켓 생성" />
+          <StatBlock value={meetingsLoading ? "..." : `${stats.totalMeetings}건`} label="총 회의" />
+          <StatBlock value={meetingsLoading ? "..." : `${stats.doneActionItems}/${stats.totalActionItems}`} label="처리현황" accent />
+          <StatBlock value={meetingsLoading ? "..." : `${stats.totalJiraTickets}개`} label="Jira 티켓 생성" />
         </div>
       </div>
 
@@ -540,14 +573,18 @@ function HomeSection({ goTo, name, email, department }) {
               <span className="text-[12px] text-[#9BAABE]">최근 3건</span>
             </div>
             <div className="space-y-1">
-              {RECENT_MEETINGS.map((m, i) => (
+              {meetingsLoading ? (
+                <p className="py-6 text-center text-[13px] text-[#9BAABE]">불러오는 중...</p>
+              ) : recentMeetings.length === 0 ? (
+                <p className="py-6 text-center text-[13px] text-[#9BAABE]">아직 회의가 없습니다.</p>
+              ) : recentMeetings.map((m, i) => (
                 <div key={m.id}
                   className={cn(
                     "flex items-center gap-3 py-3",
-                    i !== RECENT_MEETINGS.length - 1 && "border-b border-[rgba(0,100,180,.07)]"
+                    i !== recentMeetings.length - 1 && "border-b border-[rgba(0,100,180,.07)]"
                   )}>
                   <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[rgba(0,153,204,.08)]">
-                    <Icon name="checkCircle" size={15} color={m.done === m.actionItems ? "#10B981" : "#0099CC"} />
+                    <Icon name="checkCircle" size={15} color={m.done === m.actionItems && m.actionItems > 0 ? "#10B981" : "#0099CC"} />
                   </div>
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-[13px] font-semibold text-[#0D1B2A]">{m.title}</p>

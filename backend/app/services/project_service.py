@@ -179,6 +179,10 @@ def create_meeting(db: Session, project_id: UUID, payload: MeetingCreate, user_i
         tags=payload.tags,
         participants=payload.participants,
         summary=payload.summary,
+        action_items=payload.action_items,
+        action_items_count=payload.action_items_count
+        if payload.action_items_count is not None
+        else len(payload.action_items),
     )
     db.add(meeting)
     db.commit()

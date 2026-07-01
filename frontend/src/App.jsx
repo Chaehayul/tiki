@@ -18,19 +18,38 @@ import Subscription from './pages/Subscription';
 import SubscriptionCheckout from './pages/SubscriptionCheckout';
 import SubscriptionComplete from './pages/SubscriptionComplete';
 import ContactPage from './pages/Contact';
+import { clearAuthSession, getCurrentUser } from './api/apiClient';
 
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(() => Boolean(localStorage.getItem('tiki_access_token')));
 
   useEffect(() => {
+    let cancelled = false;
+
+    const verifyStoredSession = async () => {
+      if (!localStorage.getItem('tiki_access_token')) return;
+      try {
+        const user = await getCurrentUser();
+        if (cancelled) return;
+        localStorage.setItem('tiki_user', JSON.stringify(user));
+        setIsAuthenticated(true);
+      } catch {
+        if (cancelled) return;
+        clearAuthSession();
+        setIsAuthenticated(false);
+      }
+    };
+
     const syncAuthSession = () => {
       setIsAuthenticated(Boolean(localStorage.getItem('tiki_access_token')));
     };
 
+    verifyStoredSession();
     window.addEventListener('storage', syncAuthSession);
     window.addEventListener('tiki-auth-changed', syncAuthSession);
 
     return () => {
+      cancelled = true;
       window.removeEventListener('storage', syncAuthSession);
       window.removeEventListener('tiki-auth-changed', syncAuthSession);
     };

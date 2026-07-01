@@ -69,6 +69,15 @@ const readProjectOverrides = () => {
   }
 };
 
+const getStoredUserName = () => {
+  try {
+    const user = JSON.parse(localStorage.getItem('tiki_user') || 'null');
+    return String(user?.name || user?.email || '').trim();
+  } catch {
+    return '';
+  }
+};
+
 const formatDueDate = (raw) => {
   const value = String(raw || '').trim();
   if (!value) return '미정';
@@ -1033,10 +1042,17 @@ export default function MeetingManualDetail() {
 
   const initialRecord = useMemo(() => {
     const all = readManualMeetingRecords();
-    if (recordId && all[recordId]) return all[recordId];
+    const currentUserName = getStoredUserName();
+    if (recordId && all[recordId]) {
+      return {
+        ...all[recordId],
+        participants: currentUserName ? [currentUserName] : [],
+      };
+    }
 
     const fromMeeting = location.state?.meeting;
     if (fromMeeting && typeof fromMeeting === 'object') {
+      const isManualMeeting = fromMeeting.detailType === 'manual' || location.state?.detailType === 'manual';
       return {
         id: recordId || String(fromMeeting.id || '').trim() || `manual-${Date.now()}`,
         projectId: String(location.state?.projectId || '').trim(),
@@ -1045,7 +1061,9 @@ export default function MeetingManualDetail() {
         date: fromMeeting.date || '-',
         rawDate: '',
         type: fromMeeting.type || '정기',
-        participants: Array.isArray(fromMeeting.participants) ? fromMeeting.participants : [],
+        participants: isManualMeeting && currentUserName
+          ? [currentUserName]
+          : Array.isArray(fromMeeting.participants) ? fromMeeting.participants : [],
         summary: fromMeeting.summary || '',
         keywords: Array.isArray(fromMeeting.tags)
           ? fromMeeting.tags.map((tag) => String(tag || '').replace(/^#/, '')).filter(Boolean)

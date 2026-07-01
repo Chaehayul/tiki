@@ -132,7 +132,17 @@ export default function CreateProject() {
       setBuildProgress(45);
       setBuildStepText('AI 가이드라인 및 규칙 컨벤션 프로토콜 바인딩 중...');
 
-      await createProject({ name: projectName, description });
+      await createProject({
+        name: projectName.trim(),
+        description: description.trim(),
+        category: copyTemplate === 'design-system' ? '디자인' : copyTemplate === 'strategy-planning' ? '기획' : '일반',
+        visibility,
+        meetingTemplate: copyTemplate === 'none' ? 'basic' : copyTemplate,
+        members: invitedMembers.map((member) => ({
+          email: member.email,
+          role: member.role === '관리자' ? 'admin' : 'member',
+        })),
+      });
 
       await new Promise((r) => setTimeout(r, 800));
       setBuildProgress(80);

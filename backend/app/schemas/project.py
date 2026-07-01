@@ -15,6 +15,8 @@ class MeetingCreate(BaseModel):
     tags: list[str] = Field(default_factory=list)
     participants: list[str] = Field(default_factory=list)
     summary: str | None = None
+    action_items: list[dict] = Field(default_factory=list)
+    action_items_count: int | None = None
 
 
 class MeetingUpdate(BaseModel):
@@ -25,6 +27,7 @@ class MeetingUpdate(BaseModel):
     tags: list[str] | None = None
     participants: list[str] | None = None
     summary: str | None = None
+    action_items: list[dict] | None = None
     action_items_count: int | None = None
     jira_linked_count: int | None = None
 
@@ -40,6 +43,7 @@ class MeetingResponse(BaseModel):
     tags: list[str]
     participants: list[str]
     summary: str | None
+    action_items: list[dict]
     action_items_count: int
     jira_linked_count: int
     created_at: datetime

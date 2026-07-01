@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import Header from "../components/Header";
 import Footer from "../components/Footer";
 import MobileTab from "../components/MobileTab";
+import { getUploadedFile, listProjects, uploadFiles } from "../api/apiClient";
 
 const icons = {
   fileAudio: ["M17.5 22h.5a2 2 0 0 0 2-2V7l-5-5H6a2 2 0 0 0-2 2v3", "M14 2v4a2 2 0 0 0 2 2h4", "M9 17v-5", "M12 17v-3", "M15 17v-1"],
@@ -110,60 +111,9 @@ function useIsMobile() {
   return mobile;
 }
 
-const PROJECT_OVERRIDE_STORAGE_KEY = "tiki_project_overrides";
 const SUPPORTED_AUDIO_EXTENSIONS = ["mp3", "wav", "m4a", "aac", "ogg", "flac", "webm"];
 const SUPPORTED_DOCUMENT_EXTENSIONS = ["pdf", "doc", "docx", "txt", "md", "hwp", "hwpx"];
 const SUPPORTED_UPLOAD_EXTENSIONS = [...SUPPORTED_AUDIO_EXTENSIONS, ...SUPPORTED_DOCUMENT_EXTENSIONS];
-
-const ACTION_ITEM_TEMPLATES = [
-  { text: "핵심 의사결정 사항 정리 및 공유", dueDays: 2 },
-  { text: "후속 해야 할일 우선순위 확정", dueDays: 4 },
-  { text: "협업 도구 동기화 결과 검증", dueDays: 6 },
-];
-
-const readProjectOverrides = () => {
-  try {
-    const raw = localStorage.getItem(PROJECT_OVERRIDE_STORAGE_KEY);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === "object" ? parsed : {};
-  } catch {
-    return {};
-  }
-};
-
-const writeProjectOverride = (projectId, projectData) => {
-  if (!projectId) return;
-  const next = readProjectOverrides();
-  next[String(projectId)] = projectData;
-  localStorage.setItem(PROJECT_OVERRIDE_STORAGE_KEY, JSON.stringify(next));
-};
-
-const getTodayYMD = (date = new Date()) => {
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, "0");
-  const d = String(date.getDate()).padStart(2, "0");
-  return `${y}.${m}.${d}`;
-};
-
-const addDays = (date, days) => {
-  const next = new Date(date);
-  next.setDate(next.getDate() + days);
-  return next;
-};
-
-const createMeetingTitle = ({ projectName, preferredTitle }) => {
-  const normalizedPreferred = String(preferredTitle || "").trim();
-  if (normalizedPreferred) return normalizedPreferred;
-  return `${projectName || "프로젝트"} 회의`;
-};
-
-const PROJECTS = [
-  { id: 1, name: "AI 회의록 자동화" },
-  { id: 2, name: "디자인 시스템 구축" },
-  { id: 3, name: "사용자 인터뷰 분석" },
-  { id: 4, name: "분기별 기획안" },
-];
 
 const STEPS = [
   { label: "파일 업로드 중...", pct: 25, duration: 1800, icon: "uploadCloud", sub: "서버로 파일을 전송하고 있습니다..." },
@@ -248,10 +198,9 @@ export default function TikiApp() {
     window.scrollTo({ top: 0, left: 0, behavior: "auto" });
   }, []);
 
-  const projectIdFromState = Number(location.state?.projectId);
-  const preselectedProject = Number.isFinite(projectIdFromState)
-    ? PROJECTS.find((project) => project.id === projectIdFromState)
-      || {
+  const projectIdFromState = String(location.state?.projectId || '').trim();
+  const preselectedProject = projectIdFromState
+    ? {
         id: projectIdFromState,
         name: String(location.state?.projectName || `프로젝트 ${projectIdFromState}`),
       }
@@ -274,6 +223,8 @@ export default function TikiApp() {
 
   // 프로젝트 선택 상태
   const [selectedProject, setSelectedProject] = useState(preselectedProject);
+  const [projects, setProjects] = useState([]);
+  const [uploadedFile, setUploadedFile] = useState(null);
   const [projectDropdownOpen, setProjectDropdownOpen] = useState(false);
 
   const uploadNum = useAnimatedNumber(Math.round(uploadPct));
@@ -287,6 +238,30 @@ export default function TikiApp() {
   const dragPreviewRef = useRef(null);
 
   const totalSize = files.reduce((sum, currentFile) => sum + currentFile.size, 0);
+
+  useEffect(() => {
+    let cancelled = false;
+    listProjects()
+      .then((data) => {
+        if (cancelled) return;
+        const mapped = (Array.isArray(data) ? data : []).map((project) => ({
+          id: project.id,
+          name: project.name,
+          key: project.id,
+        }));
+        setProjects(mapped);
+        if (preselectedProject?.id) {
+          const matched = mapped.find((project) => String(project.id) === String(preselectedProject.id));
+          if (matched) setSelectedProject(matched);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setProjects([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [preselectedProject?.id]);
 
   // 드롭다운 외부 클릭 시 닫기
   useEffect(() => {
@@ -402,113 +377,111 @@ export default function TikiApp() {
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
-  const persistUploadResultToProject = () => {
-    if (!selectedProject?.id) return;
-
-    const now = new Date();
-    const meetingTitle = createMeetingTitle({
-      projectName: selectedProject.name,
-      preferredTitle: location.state?.meetingTitle,
-    });
-    const meetingId = `m-${Date.now()}`;
-    const current = readProjectOverrides()[String(selectedProject.id)] || {};
-    const existingMeetings = Array.isArray(current.meetings) ? current.meetings : [];
-    const existingActionItems = Array.isArray(current.myActionItems) ? current.myActionItems : [];
-
-    const meetingRecord = {
-      id: meetingId,
-      date: getTodayYMD(now),
-      title: meetingTitle,
-      status: "완료",
-      type: "수시",
-      tags: ["#업로드", "#AI분석"],
-      participants: Array.isArray(current.participants) ? current.participants : [],
-      summary: `${meetingTitle}에서 추출된 핵심 내용을 기반으로 해야 할일을 생성했습니다.`,
-      actionItems: ACTION_ITEM_TEMPLATES.length,
-      jiraLinked: ACTION_ITEM_TEMPLATES.length,
-    };
-
-    const generatedActionItems = ACTION_ITEM_TEMPLATES.map((template, index) => {
-      const dueDate = getTodayYMD(addDays(now, template.dueDays));
-      return {
-        id: `ai-${Date.now()}-${index + 1}`,
-        text: template.text,
-        due: dueDate,
-        assignee: current.teamLead || "담당자 미지정",
-        status: "검증 전",
-        source: meetingTitle,
-        meeting: { id: meetingId, title: meetingTitle },
-      };
-    });
-
-    writeProjectOverride(selectedProject.id, {
-      ...current,
-      id: selectedProject.id,
-      name: selectedProject.name,
-      meetings: [meetingRecord, ...existingMeetings],
-      myActionItems: [...generatedActionItems, ...existingActionItems],
-    });
-  };
-
-  const startUpload = () => {
+  const startUpload = async () => {
     if (files.length === 0 || !selectedProject) return;
     analyzingRef.current = true;
     setPhase("UPLOADING");
     setUploadPct(0);
+    setProgressPct(0);
+    setStepIdx(0);
+    setUploadedFile(null);
     setError({ title: "", msg: "", cancelStyle: false });
 
-    let pct = 0;
-    const speeds = ["128 KB/s", "256 KB/s", "512 KB/s", "1.2 MB/s"];
-    const interval = setInterval(() => {
-      pct = Math.min(pct + Math.random() * 12 + 4, 100);
-      setUploadPct(pct);
-      setUploadSpeed(speeds[Math.floor(pct / 25)] || speeds[speeds.length - 1]);
-      const remaining = Math.max(0, Math.round((100 - pct) / 15));
-      setUploadRemain(remaining > 0 ? `약 ${remaining}초 남음` : "마무리 중...");
-      if (pct >= 100) {
-        clearInterval(interval);
-        setTimeout(startProcessing, 400);
-      }
-    }, 180);
-    timerRef.current = interval;
+    try {
+      setUploadPct(18);
+      setUploadSpeed("업로드 요청 중");
+      setUploadRemain("서버에 파일을 전송하고 있습니다");
+      const response = await uploadFiles({
+        projectId: selectedProject.id,
+        projectKey: String(selectedProject.id),
+        projectName: selectedProject.name,
+        files,
+      });
+      const first = Array.isArray(response?.files) ? response.files[0] : null;
+      if (!first?.id) throw new Error("업로드 응답에서 파일 ID를 찾을 수 없습니다.");
+
+      setUploadedFile(first);
+      setUploadPct(100);
+      setUploadSpeed("전송 완료");
+      setUploadRemain("분석 상태 확인 중...");
+      setTimeout(() => startProcessing(first.id), 250);
+    } catch (err) {
+      analyzingRef.current = false;
+      setPhase("FAILED");
+      setError({
+        title: "업로드에 실패했습니다",
+        msg: err?.message || "파일을 다시 선택하거나 잠시 후 다시 시도해 주세요.",
+        cancelStyle: false,
+      });
+    }
   };
 
-  const startProcessing = () => {
+  const startProcessing = (fileId) => {
     if (!analyzingRef.current) return;
     setPhase("PROCESSING");
     setStepIdx(-1);
     setProgressPct(0);
     setProgressLabel("AI 분석 준비 중...");
-    runStep(0);
+    pollProcessing(fileId);
   };
 
-  const finish = () => {
+  const finish = (fileInfo = uploadedFile) => {
     setProgressPct(100);
     setProgressLabel("모든 처리 완료!");
     analyzingRef.current = false;
-    persistUploadResultToProject();
     const elapsed = performance.now() - startTimeRef.current;
     const minutes = Math.floor(elapsed / 60000);
     const seconds = Math.floor((elapsed % 60000) / 1000);
     setElapsedTime(minutes > 0 ? `${minutes}분 ${seconds}초` : `${seconds}초`);
+    if (fileInfo) setUploadedFile(fileInfo);
     setTimeout(() => setPhase("COMPLETED"), 600);
   };
 
-  const runStep = (index) => {
-    if (!analyzingRef.current) return;
-    if (index >= STEPS.length) {
-      finish();
-      return;
-    }
-    setStepIdx(index);
-    setProgressPct(STEPS[index].pct);
-    setProgressLabel(STEPS[index].label);
-    setTimeout(() => runStep(index + 1), STEPS[index].duration);
+  const pollProcessing = (fileId) => {
+    if (!analyzingRef.current || !fileId) return;
+    getUploadedFile(fileId)
+      .then((fileInfo) => {
+        if (!analyzingRef.current) return;
+        setUploadedFile(fileInfo);
+        const status = String(fileInfo?.status || "").toLowerCase();
+        const progress = Number(fileInfo?.progress ?? 0);
+        const nextProgress = status === "completed" ? 100 : status === "processing" ? Math.max(progress, 35) : 25;
+        setProgressPct(Math.min(nextProgress, 95));
+        setStepIdx(status === "completed" ? STEPS.length - 1 : status === "processing" ? 2 : 1);
+        setProgressLabel(fileInfo?.status_message || "AI 분석 상태를 확인하고 있습니다...");
+
+        if (status === "completed") {
+          finish(fileInfo);
+          return;
+        }
+        if (status === "failed") {
+          analyzingRef.current = false;
+          setPhase("FAILED");
+          setError({
+            title: "분석에 실패했습니다",
+            msg: fileInfo?.error_message || fileInfo?.status_message || "분석을 다시 시도해 주세요.",
+            cancelStyle: false,
+          });
+          return;
+        }
+        timerRef.current = setTimeout(() => pollProcessing(fileId), 1800);
+      })
+      .catch((err) => {
+        if (!analyzingRef.current) return;
+        analyzingRef.current = false;
+        setPhase("FAILED");
+        setError({
+          title: "분석 상태를 확인하지 못했습니다",
+          msg: err?.message || "잠시 후 다시 시도해 주세요.",
+          cancelStyle: false,
+        });
+      });
   };
 
   const cancel = () => {
     analyzingRef.current = false;
     clearInterval(timerRef.current);
+    clearTimeout(timerRef.current);
     setPhase("FAILED");
     setError({ title: "분석이 취소됐습니다", msg: "파일을 다시 선택하거나 분석을 다시 시작하세요.", cancelStyle: true });
   };
@@ -516,12 +489,14 @@ export default function TikiApp() {
   const resetAll = () => {
     analyzingRef.current = false;
     clearInterval(timerRef.current);
+    clearTimeout(timerRef.current);
     setFiles([]);
     setPhase("IDLE");
     setUploadPct(0);
     setStepIdx(-1);
     setProgressPct(0);
     setProgressLabel("");
+    setUploadedFile(null);
     setError({ title: "", msg: "", cancelStyle: false });
     setSelectedProject(null);
     setProjectDropdownOpen(false);
@@ -557,6 +532,9 @@ export default function TikiApp() {
       state: {
         uploadKind,
         fileName: firstFileName,
+        fileId: uploadedFile?.id || '',
+        projectId: selectedProject?.id || '',
+        projectName: selectedProject?.name || '',
       },
     });
   };
@@ -623,7 +601,7 @@ export default function TikiApp() {
 
               {projectDropdownOpen && (
                 <div className="absolute left-0 right-0 top-[calc(100%+6px)] z-20 overflow-hidden rounded-[12px] border border-[rgba(0,100,180,.12)] bg-white shadow-[0_8px_32px_rgba(0,60,150,.12)]">
-                  {PROJECTS.map((project) => {
+                  {projects.map((project) => {
                     const isSelected = selectedProject?.id === project.id;
                     return (
                       <button
@@ -646,6 +624,11 @@ export default function TikiApp() {
                       </button>
                     );
                   })}
+                  {projects.length === 0 && (
+                    <div className="px-4 py-3 text-sm text-[#5A6F8A]">
+                      참여 중인 프로젝트가 없습니다.
+                    </div>
+                  )}
                 </div>
               )}
             </div>

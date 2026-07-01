@@ -245,8 +245,10 @@ function LucideIcon({ name, size = 16, className = "" }) {
 }
 
 function getDDayInfo(dueDateStr) {
-  const today = new Date("2026-06-18T00:00:00");
-  const due = new Date(`${dueDateStr}T00:00:00`);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const due = parseDueDate(dueDateStr);
+  if (!due) return { label: "미정", urgent: false, overdue: false, missing: true };
   const diffDays = Math.round((due - today) / (1000 * 60 * 60 * 24));
 
   if (diffDays < 0) return { label: `D+${Math.abs(diffDays)}`, urgent: true, overdue: true };
@@ -257,12 +259,42 @@ function getDDayInfo(dueDateStr) {
 
 function getTodayOrTomorrowLabel(dueDateStr) {
   const today = new Date();
-  const due = new Date(`${dueDateStr}T00:00:00`);
+  today.setHours(0, 0, 0, 0);
+  const due = parseDueDate(dueDateStr);
+  if (!due) return null;
   const diffDays = Math.round((due - today) / (1000 * 60 * 60 * 24));
 
   if (diffDays === 0) return "오늘까지";
   if (diffDays === 1) return "내일까지";
   return null;
+}
+
+function parseDueDate(raw) {
+  const value = String(raw || "").trim();
+  if (!value || value === "-") return null;
+  const normalized = value.replace(/[.]/g, "-");
+  const match = normalized.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (!match) return null;
+  const [, year, month, day] = match;
+  const date = new Date(Number(year), Number(month) - 1, Number(day));
+  if (Number.isNaN(date.getTime())) return null;
+  date.setHours(0, 0, 0, 0);
+  return date;
+}
+
+function formatDueShort(raw) {
+  const due = parseDueDate(raw);
+  if (!due) return "미정";
+  return `${String(due.getMonth() + 1).padStart(2, "0")}.${String(due.getDate()).padStart(2, "0")}`;
+}
+
+function compareDueDate(left, right) {
+  const leftDate = parseDueDate(left?.dueDate);
+  const rightDate = parseDueDate(right?.dueDate);
+  if (!leftDate && !rightDate) return 0;
+  if (!leftDate) return 1;
+  if (!rightDate) return -1;
+  return leftDate - rightDate;
 }
 
 function formatAssignees(assignees, fallbackName) {
@@ -1072,7 +1104,7 @@ export default function App() {
   }, [filteredItems]);
 
   const firstName = user?.name || "사용자";
-  const myPendingCount = actionItems.filter((item) => item.status !== "연동 완료" && isAssignedToMe(item, userAliases)).length;
+  const myTotalActionCount = actionItems.filter((item) => isAssignedToMe(item, userAliases)).length;
 
   const myActiveItems = useMemo(() => {
     const priorityWeight = { "높음": 3, "보통": 2, "낮음": 1 };
@@ -1081,7 +1113,7 @@ export default function App() {
       .sort((a, b) => {
         const weightDiff = (priorityWeight[b.priority] || 0) - (priorityWeight[a.priority] || 0);
         if (weightDiff !== 0) return weightDiff;
-        return new Date(a.dueDate) - new Date(b.dueDate);
+        return compareDueDate(a, b);
       });
   }, [actionItems, userAliases]);
 
@@ -1097,7 +1129,7 @@ export default function App() {
       .sort((a, b) => {
         const weightDiff = (priorityWeight[b.priority] || 0) - (priorityWeight[a.priority] || 0);
         if (weightDiff !== 0) return weightDiff;
-        return new Date(a.dueDate) - new Date(b.dueDate);
+        return compareDueDate(a, b);
       });
   }, [actionItems, userAliases]);
 
@@ -1169,7 +1201,7 @@ export default function App() {
                 <div>
                   <h1 className="text-2xl font-bold text-[#0D1B2A]">안녕하세요, {firstName}님</h1>
                   <p className="text-[#5A6F8A] mt-1">
-                    오늘 처리해야 할 일이 <span className="font-bold text-[#0099CC]">{myPendingCount}개</span> 있어요
+                    전체 해야 할 일이 <span className="font-bold text-[#0099CC]">{myTotalActionCount}개</span> 있어요
                   </p>
                 </div>
                 <button
@@ -1453,7 +1485,7 @@ export default function App() {
 
                             <div className="hidden sm:flex flex-col items-end justify-center shrink-0 sm:w-[88px] py-1">
                               <span className={`text-[14px] font-bold leading-[0.8] ${dday.overdue ? "text-[#EF4444]" : dday.urgent ? "text-[#F59E0B]" : "text-[#5A6F8A]"}`}>{dday.label}</span>
-                              <span className="mt-1 text-[11px] font-light leading-[0.8] text-[#9AA7B8]">{item.dueDate.slice(5)}</span>
+                              <span className="mt-1 text-[11px] font-light leading-[0.8] text-[#9AA7B8]">{formatDueShort(item.dueDate)}</span>
                             </div>
 
                             <div className="flex items-center justify-between sm:justify-end gap-3 shrink-0 sm:w-[180px]">
@@ -1495,7 +1527,7 @@ export default function App() {
 
                               <div className="sm:hidden inline-flex flex-col items-end justify-center py-0.5">
                                 <span className={`text-[13px] font-bold leading-[0.9] ${dday.overdue ? "text-[#EF4444]" : dday.urgent ? "text-[#F59E0B]" : "text-[#5A6F8A]"}`}>{dday.label}</span>
-                                <span className="mt-1 text-[10px] font-light leading-[0.9] text-[#9AA7B8]">{item.dueDate.slice(5)}</span>
+                                <span className="mt-1 text-[10px] font-light leading-[0.9] text-[#9AA7B8]">{formatDueShort(item.dueDate)}</span>
                               </div>
                             </div>
                           </div>

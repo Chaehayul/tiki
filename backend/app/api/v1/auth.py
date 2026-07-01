@@ -8,6 +8,7 @@ from app.api.dependencies import get_current_user
 from app.core.exceptions import AppException
 from app.core.security import create_access_token, hash_password, verify_password
 from app.db.database import get_db
+from app.models.project import ProjectMember
 from app.models.user import User
 from app.schemas.auth import AuthResponse, UserCreate, UserLogin, UserResponse, UserUpdate
 
@@ -32,6 +33,17 @@ def signup(payload: UserCreate, db: Session = Depends(get_db)) -> AuthResponse:
         hashed_password=hash_password(payload.password),
     )
     db.add(user)
+    db.flush()
+    invited_members = db.scalars(
+        select(ProjectMember).where(
+            ProjectMember.email == email,
+            ProjectMember.user_id.is_(None),
+        )
+    ).all()
+    for member in invited_members:
+        member.user_id = user.id
+        if not member.name:
+            member.name = user.name
     db.commit()
     db.refresh(user)
 

@@ -4,6 +4,7 @@ import Header from '../components/Header';
 import Footer from '../components/Footer';
 import MobileTab from '../components/MobileTab';
 import ToastPopup from '../components/toastpopup';
+import { createProjectMeeting } from '../api/apiClient';
 
 const ISSUE_PRIORITY_OPTIONS = ['높음', '보통', '낮음'];
 const WEEKDAY_LABELS = ['일', '월', '화', '수', '목', '금', '토'];
@@ -46,9 +47,20 @@ const readProjectOverrides = () => {
 const writeProjectOverrides = (next) => {
   try {
     localStorage.setItem(PROJECT_OVERRIDE_STORAGE_KEY, JSON.stringify(next));
+    window.dispatchEvent(new Event('tiki-projects-changed'));
   } catch {
     // ignore storage write failures in local mock mode
   }
+};
+
+const buildActionDescription = (item, meeting) => {
+  const lines = [
+    item?.text ? `업무: ${item.text}` : '',
+    item?.assignee ? `담당자: ${item.assignee}` : '담당자: 미지정',
+    item?.dueDate ? `마감일: ${item.dueDate}` : '',
+    meeting?.summary ? `회의 내용 기반: ${meeting.summary}` : '',
+  ].filter(Boolean);
+  return lines.join('\n');
 };
 
 const readManualMeetingRecords = () => {
@@ -532,7 +544,7 @@ export default function MeetingMinutesCreate() {
     FAILED: '오류 발생',
   };
 
-  const submit = (e) => {
+  const submit = async (e) => {
     e.preventDefault();
     if (!form.title.trim()) return;
 
@@ -624,41 +636,66 @@ export default function MeetingMinutesCreate() {
     nextManualRecords[manualRecordId] = manualRecord;
     writeManualMeetingRecords(nextManualRecords);
 
+    const generatedActionItems = mergedActionItems.map((item, index) => ({
+      id: `${manualRecordId}-action-${index + 1}`,
+      text: item.text,
+      title: item.text,
+      description: buildActionDescription(item, manualRecord),
+      due: formatStorageDate(item.dueDate),
+      dueDate: formatStorageDate(item.dueDate),
+      assignee: item.assignee || '담당자 미지정',
+      assignees: item.assignee ? [item.assignee] : [],
+      status: '검토대기',
+      source: manualRecord.title,
+      projectId: projectId ? String(projectId) : '',
+      projectName,
+      integrationTool: null,
+      externalLink: '',
+      snapshotOf: null,
+      historySavedAt: null,
+      updatedAt: new Date().toISOString(),
+    }));
+
+    let serverMeetingId = '';
+
     if (projectId) {
+      try {
+        const createdMeeting = await createProjectMeeting(projectId, {
+          title: manualRecord.title,
+          date: meetingDate,
+          round_number: 1,
+          status: '완료',
+          meeting_type: form.type,
+          tags: normalizedKeywords.slice(0, 4).map((tag) => `#${tag}`),
+          participants,
+          summary: manualRecord.summary || '직접 작성된 회의록입니다.',
+          action_items: generatedActionItems,
+          action_items_count: generatedActionItems.length,
+        });
+        serverMeetingId = createdMeeting?.id ? String(createdMeeting.id) : '';
+      } catch {
+        serverMeetingId = '';
+      }
+
       const nextOverrides = readProjectOverrides();
       const key = String(projectId);
       const prev = nextOverrides[key] && typeof nextOverrides[key] === 'object' ? nextOverrides[key] : {};
       const prevMeetings = Array.isArray(prev.meetings) ? prev.meetings : [];
       const prevActionItems = Array.isArray(prev.myActionItems) ? prev.myActionItems : [];
       const meetingRow = {
-        id: manualRecordId,
+        id: serverMeetingId || manualRecordId,
         date: meetingDate,
         title: manualRecord.title,
         status: '완료',
         type: form.type,
         tags: normalizedKeywords.slice(0, 4).map((tag) => `#${tag}`),
-        participants: participants.length > 0 ? participants : ['미지정'],
+        participants,
         summary: manualRecord.summary || '직접 작성된 회의록입니다.',
         actionItems: mergedActionItems.length,
         jiraLinked: 0,
         detailType: 'manual',
         detailRecordId: manualRecordId,
       };
-
-      const generatedActionItems = mergedActionItems.map((item, index) => ({
-        id: `${manualRecordId}-action-${index + 1}`,
-        text: item.text,
-        description: manualRecord.summary || '',
-        due: formatStorageDate(item.dueDate),
-        assignee: item.assignee || '담당자 미지정',
-        status: '검토대기',
-        source: manualRecord.title,
-        integrationTool: null,
-        externalLink: '',
-        snapshotOf: null,
-        historySavedAt: null,
-        updatedAt: new Date().toISOString(),
-      }));
 
       nextOverrides[key] = {
         ...prev,

@@ -73,15 +73,135 @@ export function isUnauthorizedError(error) {
   return error instanceof ApiError && error.status === 401;
 }
 
-export async function createProject({ name, description, category = '일반' }) {
+export async function createProject({
+  name,
+  description,
+  category = '일반',
+  color,
+  visibility,
+  meetingTemplate,
+  meeting_template,
+  members,
+}) {
   return request('/projects', {
     method: 'POST',
-    body: JSON.stringify({ name, description, category }),
+    body: JSON.stringify({
+      name,
+      description,
+      category,
+      ...(color ? { color } : {}),
+      ...(visibility ? { visibility } : {}),
+      ...(meetingTemplate || meeting_template ? { meeting_template: meetingTemplate || meeting_template } : {}),
+      ...(Array.isArray(members) ? { members } : {}),
+    }),
   });
 }
 
 export async function listProjects() {
   return request('/projects');
+}
+
+export async function getProject(projectId) {
+  return request(`/projects/${projectId}`);
+}
+
+export async function updateProject(projectId, payload) {
+  return request(`/projects/${projectId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteProject(projectId) {
+  return request(`/projects/${projectId}`, {
+    method: 'DELETE',
+  });
+}
+
+export async function inviteProjectMember(projectId, payload) {
+  return request(`/projects/${projectId}/members`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function removeProjectMember(projectId, memberId) {
+  return request(`/projects/${projectId}/members/${memberId}`, {
+    method: 'DELETE',
+  });
+}
+
+export async function listProjectTickets(projectId, params = {}) {
+  const search = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== '') search.set(key, value);
+  });
+  const suffix = search.toString() ? `?${search.toString()}` : '';
+  return request(`/projects/${projectId}/tickets${suffix}`);
+}
+
+export async function listProjectMeetings(projectId) {
+  return request(`/projects/${projectId}/meetings`);
+}
+
+export async function createProjectMeeting(projectId, payload) {
+  return request(`/projects/${projectId}/meetings`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateProjectMeeting(projectId, meetingId, payload) {
+  return request(`/projects/${projectId}/meetings/${meetingId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteProjectMeeting(projectId, meetingId) {
+  return request(`/projects/${projectId}/meetings/${meetingId}`, {
+    method: 'DELETE',
+  });
+}
+
+export async function uploadFiles({ projectId, projectKey, projectName, files }) {
+  const formData = new FormData();
+  if (projectId) formData.append('project_id', projectId);
+  formData.append('project_key', projectKey || String(projectId || 'default'));
+  formData.append('project_name', projectName || '프로젝트');
+  files.forEach((file) => formData.append('files', file));
+
+  return request('/uploads', {
+    method: 'POST',
+    body: formData,
+  });
+}
+
+export async function listUploads(params = {}) {
+  const search = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== '') search.set(key, value);
+  });
+  const suffix = search.toString() ? `?${search.toString()}` : '';
+  return request(`/uploads${suffix}`);
+}
+
+export async function getUploadedFile(fileId) {
+  return request(`/uploads/${fileId}`);
+}
+
+export async function retryUploadAnalysis(fileId) {
+  return request(`/uploads/${fileId}/retry`, {
+    method: 'POST',
+  });
+}
+
+export async function getUploadAnalysis(fileId) {
+  return request(`/uploads/${fileId}/analysis`);
+}
+
+export async function listUploadTickets(fileId) {
+  return request(`/uploads/${fileId}/tickets`);
 }
 
 export async function getSubscription() {

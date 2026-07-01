@@ -81,6 +81,7 @@ class Meeting(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     tags: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
     participants: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
     summary: Mapped[str | None] = mapped_column(Text)
+    action_items: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
     action_items_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     jira_linked_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 

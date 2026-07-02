@@ -3,7 +3,14 @@ import { Link, useNavigate } from "react-router-dom";
 import Header from "../components/Header";
 import Footer from "../components/Footer";
 import MobileTab from "../components/MobileTab";
-import { clearAuthSession, getSubscription } from "../api/apiClient";
+import {
+  clearAuthSession,
+  getProject,
+  getSubscription,
+  listProjectMeetings,
+  listProjects,
+  listProjectTickets,
+} from "../api/apiClient";
 import { PLANS, yearlyDiscount } from "../data/subscriptionPlans";
 
 // ── Icons ──────────────────────────────────────────────────────────────────
@@ -393,63 +400,523 @@ function UsageBar({ label, value, max, unit = "" }) {
   );
 }
 
-const RECENT_MEETINGS = [
-  { id: 1, title: "TIKI 앱 개발 - 스프린트 12 리뷰", date: "6월 24일", actionItems: 5, done: 3 },
-  { id: 2, title: "Q3 로드맵 정렬 회의",              date: "6월 22일", actionItems: 3, done: 3 },
-  { id: 3, title: "디자인 시스템 토큰 점검",           date: "6월 19일", actionItems: 4, done: 1 },
-];
+const PROJECT_OVERRIDE_STORAGE_KEY = "tiki_project_overrides";
+const MANUAL_MEETING_RECORDS_KEY = "tiki_manual_minutes_records";
+const PROJECT_CATALOG_STORAGE_KEY = "tiki_project_catalog";
+
+const STATUS_LABELS = {
+  synced: "연동완료",
+  ready: "검토완료",
+  done: "수행완료",
+  completed: "수행완료",
+  "검증 전": "검토대기",
+  "진행중": "검토완료",
+  "연동 완료": "연동완료",
+  "완료": "수행완료",
+  "완료히스토리": "수행완료",
+};
+
+const readJsonObject = (key) => {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(key) || "{}");
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+};
+
+const readJsonArray = (key) => {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(key) || "[]");
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+};
+
+function isTemporaryProject(project) {
+  return String(project?.name || "").toLowerCase().includes("codex invitation check");
+}
+
+function normalizeStatus(status) {
+  const raw = String(status || "").trim();
+  return STATUS_LABELS[raw] || raw || "검토대기";
+}
+
+function parseFlexibleDate(value) {
+  const raw = String(value || "").trim();
+  if (!raw || raw === "-" || raw === "미정") return null;
+  const normalized = raw.replace(/[.]/g, "-");
+  const iso = normalized.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  const korean = raw.match(/^(\d{4})년\s*(\d{1,2})월\s*(\d{1,2})일/);
+  const short = raw.match(/^(\d{1,2})[./-](\d{1,2})$/);
+  const [, year, month, day] = iso
+    ? iso
+    : korean
+      ? korean
+      : short
+        ? [null, new Date().getFullYear(), short[1], short[2]]
+        : [];
+  if (!year || !month || !day) return null;
+  const date = new Date(Number(year), Number(month) - 1, Number(day));
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function getMeetingDate(meeting) {
+  return parseFlexibleDate(
+    meeting?.date ||
+    meeting?.rawDate ||
+    meeting?.created_at ||
+    meeting?.createdAt ||
+    meeting?.updated_at ||
+    meeting?.updatedAt
+  );
+}
+
+function formatMeetingDateLabel(meeting) {
+  const date = getMeetingDate(meeting);
+  if (!date) return "날짜 없음";
+  return `${date.getMonth() + 1}월 ${date.getDate()}일`;
+}
+
+function normalizeKeyText(value) {
+  return String(value || "").trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+function getDateKey(value) {
+  const date = parseFlexibleDate(value);
+  if (!date) return "";
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, "0"),
+    String(date.getDate()).padStart(2, "0"),
+  ].join("-");
+}
+
+function getMeetingDateKey(meeting) {
+  return getDateKey(
+    meeting?.date ||
+    meeting?.rawDate ||
+    meeting?.created_at ||
+    meeting?.createdAt ||
+    meeting?.updated_at ||
+    meeting?.updatedAt
+  );
+}
+
+function getMeetingDedupeKey(meeting) {
+  const projectKey = normalizeKeyText(meeting?.projectId || meeting?.project_id || meeting?.projectName || meeting?.project_name);
+  const titleKey = normalizeKeyText(meeting?.title || "회의 제목 없음");
+  const dateKey = getMeetingDateKey(meeting);
+  return `${projectKey}::${titleKey}::${dateKey}`;
+}
+
+function getActionDedupeKey(item) {
+  const projectKey = normalizeKeyText(item?.projectId || item?.projectName);
+  const sourceKey = normalizeKeyText(item?.source || item?.meetingTitle || item?.meetingId);
+  const titleKey = normalizeKeyText(getActionTitle(item));
+  const assigneeKey = normalizeKeyText(item?.assignee || (Array.isArray(item?.assignees) ? item.assignees.join(",") : ""));
+  return `${projectKey}::${sourceKey}::${titleKey}::${assigneeKey}`;
+}
+
+function mergePreferRicher(prev, next) {
+  const prevActionCount = Array.isArray(prev?.action_items) ? prev.action_items.length : Number(prev?.actionItems || 0);
+  const nextActionCount = Array.isArray(next?.action_items) ? next.action_items.length : Number(next?.actionItems || 0);
+  const base = nextActionCount >= prevActionCount ? { ...prev, ...next } : { ...next, ...prev };
+  return {
+    ...base,
+    date: base.date || prev?.date || next?.date || "",
+    rawDate: base.rawDate || prev?.rawDate || next?.rawDate || "",
+    created_at: base.created_at || prev?.created_at || next?.created_at || "",
+    createdAt: base.createdAt || prev?.createdAt || next?.createdAt || "",
+    action_items: Array.isArray(base.action_items)
+      ? base.action_items
+      : Array.isArray(prev?.action_items)
+        ? prev.action_items
+        : Array.isArray(next?.action_items)
+          ? next.action_items
+          : [],
+  };
+}
+
+function isSameMonth(date, target = new Date()) {
+  if (!date) return false;
+  return date.getFullYear() === target.getFullYear() && date.getMonth() === target.getMonth();
+}
+
+function getActionTitle(item) {
+  return String(item?.title || item?.text || item?.label || "").trim();
+}
+
+function isActionDone(item) {
+  return normalizeStatus(item?.status) === "수행완료" || item?.checked === true;
+}
+
+function getActionStatusRank(status) {
+  const normalized = normalizeStatus(status);
+  if (normalized === "수행완료") return 4;
+  if (normalized === "연동완료") return 3;
+  if (normalized === "검토완료") return 2;
+  if (normalized === "검토대기") return 1;
+  return 0;
+}
+
+function getIntegrationKind(item) {
+  const links = item?.integrationLinks && typeof item.integrationLinks === "object" ? item.integrationLinks : {};
+  const provider = String(item?.integrationProvider || item?.integrationTool || "").toLowerCase();
+  const link = String(item?.externalLink || item?.jiraLink || "").toLowerCase();
+  const status = normalizeStatus(item?.status);
+  const syncProviders = Array.isArray(item?.external_syncs)
+    ? item.external_syncs.map((sync) => String(sync?.provider || "").toLowerCase())
+    : [];
+  if (links.notion || provider.includes("notion") || link.includes("notion") || syncProviders.includes("notion")) return "notion";
+  if (links.jira || provider.includes("jira") || link.includes("jira") || syncProviders.includes("jira")) return "jira";
+  if (status === "연동완료") return "jira";
+  return "";
+}
+
+function getIntegrationKinds(item) {
+  const links = item?.integrationLinks && typeof item.integrationLinks === "object" ? item.integrationLinks : {};
+  const kinds = new Set();
+  if (links.jira) kinds.add("jira");
+  if (links.notion) kinds.add("notion");
+  const singleKind = getIntegrationKind(item);
+  if (singleKind) kinds.add(singleKind);
+  return Array.from(kinds);
+}
+
+function mergeActionItem(prev, next) {
+  const prevRank = getActionStatusRank(prev?.status);
+  const nextRank = getActionStatusRank(next?.status);
+  const preferred = nextRank >= prevRank ? { ...prev, ...next } : { ...next, ...prev };
+  const prevIntegration = getIntegrationKind(prev);
+  const nextIntegration = getIntegrationKind(next);
+  const integrationSource = nextIntegration ? next : prevIntegration ? prev : preferred;
+  return {
+    ...preferred,
+    status: nextRank >= prevRank ? normalizeStatus(next?.status) : normalizeStatus(prev?.status),
+    integrationTool: integrationSource?.integrationTool || integrationSource?.integrationProvider || preferred.integrationTool || preferred.integrationProvider || null,
+    integrationProvider: integrationSource?.integrationProvider || preferred.integrationProvider || null,
+    integrationLinks: {
+      ...(prev?.integrationLinks && typeof prev.integrationLinks === "object" ? prev.integrationLinks : {}),
+      ...(next?.integrationLinks && typeof next.integrationLinks === "object" ? next.integrationLinks : {}),
+      ...(integrationSource?.integrationTool === "Jira" || integrationSource?.integrationProvider === "jira" ? { jira: integrationSource?.externalLink || integrationSource?.jiraLink || "" } : {}),
+      ...(integrationSource?.integrationTool === "Notion" || integrationSource?.integrationProvider === "notion" ? { notion: integrationSource?.externalLink || integrationSource?.jiraLink || "" } : {}),
+    },
+    externalLink: integrationSource?.externalLink || integrationSource?.jiraLink || preferred.externalLink || preferred.jiraLink || "",
+    jiraLink: integrationSource?.jiraLink || integrationSource?.externalLink || preferred.jiraLink || preferred.externalLink || "",
+    external_syncs: Array.isArray(integrationSource?.external_syncs) && integrationSource.external_syncs.length > 0
+      ? integrationSource.external_syncs
+      : Array.isArray(preferred.external_syncs) ? preferred.external_syncs : [],
+    checked: Boolean(prev?.checked || next?.checked || preferred.checked),
+  };
+}
+
+function formatDueLabel(value) {
+  const date = parseFlexibleDate(value);
+  if (!date) return "마감일 없음";
+  return `${date.getMonth() + 1}월 ${date.getDate()}일`;
+}
+
+function isAssignedToCurrentUser(item, aliases = []) {
+  const normalizedAliases = aliases.map((value) => String(value || "").trim().toLowerCase()).filter(Boolean);
+  if (normalizedAliases.length === 0) return false;
+  const assignees = [
+    item?.assignee,
+    item?.assigneeEmail,
+    ...(Array.isArray(item?.assignees) ? item.assignees : []),
+  ].map((value) => String(value || "").trim().toLowerCase()).filter(Boolean);
+  return assignees.some((value) => normalizedAliases.includes(value));
+}
+
+function isMeetingForCurrentUser(meeting, relatedActions = [], aliases = []) {
+  const normalizedAliases = aliases.map((value) => String(value || "").trim().toLowerCase()).filter(Boolean);
+  if (normalizedAliases.length === 0) return true;
+  const participants = [
+    ...(Array.isArray(meeting?.participants) ? meeting.participants : []),
+    ...(Array.isArray(meeting?.attendees) ? meeting.attendees : []),
+    meeting?.owner,
+    meeting?.createdBy,
+    meeting?.created_by,
+  ].map((value) => String(value || "").trim().toLowerCase()).filter(Boolean);
+  if (participants.some((value) => normalizedAliases.includes(value))) return true;
+  return relatedActions.some((item) => isAssignedToCurrentUser(item, aliases));
+}
+
+function dedupeByKey(items, makeKey) {
+  const map = new Map();
+  items.forEach((item, index) => {
+    const key = makeKey(item, index);
+    if (!map.has(key)) {
+      map.set(key, item);
+      return;
+    }
+    map.set(key, mergeActionItem(map.get(key), item));
+  });
+  return Array.from(map.values());
+}
 
 function HomeSection({ goTo, name, email, department }) {
-  const totalActionItems = RECENT_MEETINGS.reduce((s, m) => s + m.actionItems, 0);
-  const doneActionItems = RECENT_MEETINGS.reduce((s, m) => s + m.done, 0);
-  const [planLoading, setPlanLoading] = useState(false);
-  const [currentPlanId, setCurrentPlanId] = useState(() => {
-    try {
-      const raw = localStorage.getItem("tiki_user");
-      return raw ? (JSON.parse(raw).planId ?? "free") : "free";
-    } catch {
-      return "free";
-    }
+  const [homeLoading, setHomeLoading] = useState(true);
+  const [homeStats, setHomeStats] = useState({
+    meetingsThisMonth: 0,
+    doneActionItems: 0,
+    totalActionItems: 0,
+    integrationCounts: { jira: 0, notion: 0 },
+    recentMeetings: [],
+    pendingActions: [],
   });
-  const [currentBilling, setCurrentBilling] = useState(() => {
-    try {
-      const raw = localStorage.getItem("tiki_user");
-      return raw ? (JSON.parse(raw).billing ?? "monthly") : "monthly";
-    } catch {
-      return "monthly";
-    }
-  });
-  const [nextBillingDate, setNextBillingDate] = useState(null);
 
   useEffect(() => {
-    if (!localStorage.getItem("tiki_access_token")) return;
-
     let cancelled = false;
-    setPlanLoading(true);
-    getSubscription()
-      .then((sub) => {
-        if (cancelled) return;
-        setCurrentPlanId(sub.plan_id || "free");
-        setCurrentBilling(sub.billing || "monthly");
-        setNextBillingDate(sub.next_billing_date || null);
-      })
-      .catch(() => {
-        // Keep locally cached plan info when API lookup fails.
-      })
-      .finally(() => {
-        if (!cancelled) setPlanLoading(false);
-      });
+    const userAliases = [name, email].filter(Boolean);
 
+    const mapMeetingActionItem = (item, project, meeting, index) => ({
+      id: item?.id || `${meeting?.id || meeting?.title || "meeting"}-action-${index + 1}`,
+      title: getActionTitle(item) || "해야 할 일",
+      text: getActionTitle(item) || "해야 할 일",
+      assignee: item?.assignee || "",
+      assignees: Array.isArray(item?.assignees) && item.assignees.length > 0
+        ? item.assignees
+        : item?.assignee ? [item.assignee] : [],
+      assigneeEmail: item?.assigneeEmail || item?.assignee_email || "",
+      status: normalizeStatus(item?.status || (item?.checked ? "수행완료" : "검토대기")),
+      checked: Boolean(item?.checked),
+      projectId: String(project?.id || item?.projectId || item?.project_id || ""),
+      projectName: project?.name || item?.projectName || item?.project_name || "",
+      meetingId: String(meeting?.id || item?.meetingId || item?.meeting_id || ""),
+      source: item?.source || meeting?.title || "",
+      dueDate: item?.dueDate || item?.due || item?.due_at || "",
+      jiraLink: item?.jiraLink || item?.externalLink || "",
+      externalLink: item?.externalLink || item?.jiraLink || "",
+      integrationTool: item?.integrationTool || item?.integration_tool || null,
+      integrationProvider: item?.integrationProvider || item?.integration_provider || null,
+      integrationLinks: item?.integrationLinks || item?.integration_links || {},
+      external_syncs: item?.external_syncs || [],
+      updatedAt: item?.updatedAt || item?.updated_at || meeting?.updated_at || meeting?.created_at || "",
+    });
+
+    const mapTicketItem = (ticket, project) => {
+      const sync = Array.isArray(ticket?.external_syncs)
+        ? ticket.external_syncs.find((item) => item?.provider === "jira" || item?.provider === "notion")
+        : null;
+      return {
+        id: ticket?.id,
+        title: ticket?.title || ticket?.text || "해야 할 일",
+        text: ticket?.text || ticket?.title || "해야 할 일",
+        assignee: ticket?.assignee || "",
+        assignees: ticket?.assignee ? [ticket.assignee] : [],
+        assigneeEmail: ticket?.assignee_email || ticket?.assigneeEmail || "",
+        status: normalizeStatus(ticket?.status),
+        projectId: String(project?.id || ticket?.project_id || ""),
+        projectName: project?.name || "",
+        source: ticket?.source || "",
+        dueDate: ticket?.due_at || ticket?.dueDate || ticket?.due || "",
+        jiraLink: sync?.provider === "jira" ? sync.external_url : "",
+        externalLink: sync?.external_url || ticket?.externalLink || ticket?.jiraLink || "",
+        integrationProvider: sync?.provider || ticket?.integrationProvider || null,
+        integrationTool: sync?.provider === "jira" ? "Jira" : sync?.provider === "notion" ? "Notion" : ticket?.integrationTool || null,
+        integrationLinks: ticket?.integrationLinks || ticket?.integration_links || {},
+        external_syncs: ticket?.external_syncs || [],
+        updatedAt: ticket?.updated_at || ticket?.created_at || "",
+      };
+    };
+
+    const loadHomeStats = async () => {
+      setHomeLoading(true);
+      try {
+        const apiProjects = localStorage.getItem("tiki_access_token")
+          ? await listProjects().catch(() => [])
+          : [];
+        const apiProjectList = Array.isArray(apiProjects) ? apiProjects : [];
+        const localProjects = apiProjectList.length > 0 ? [] : readJsonArray(PROJECT_CATALOG_STORAGE_KEY);
+        const projectMap = new Map();
+        [...localProjects, ...apiProjectList]
+          .filter((project) => project?.id && !isTemporaryProject(project))
+          .forEach((project) => projectMap.set(String(project.id), project));
+        const projects = Array.from(projectMap.values());
+
+        const results = await Promise.all(
+          projects.map((project) =>
+            Promise.all([
+              localStorage.getItem("tiki_access_token") ? getProject(project.id).catch(() => null) : null,
+              localStorage.getItem("tiki_access_token") ? listProjectTickets(project.id).catch(() => []) : [],
+              localStorage.getItem("tiki_access_token") ? listProjectMeetings(project.id).catch(() => []) : [],
+            ]).then(([projectDetail, tickets, meetings]) => ({
+              project: projectDetail || project,
+              tickets: Array.isArray(tickets) ? tickets : [],
+              meetings: Array.isArray(meetings) ? meetings : [],
+            }))
+          )
+        );
+
+        const overrides = readJsonObject(PROJECT_OVERRIDE_STORAGE_KEY);
+        const manualRecords = readJsonObject(MANUAL_MEETING_RECORDS_KEY);
+        const currentMonth = new Date();
+
+        const meetings = [];
+        const actionItems = [];
+
+        results.forEach(({ project, tickets, meetings: apiMeetings }) => {
+          const projectId = String(project.id);
+          const override = overrides[projectId] && typeof overrides[projectId] === "object" ? overrides[projectId] : {};
+          const detailMeetings = Array.isArray(project.meetings) ? project.meetings : [];
+          const overrideMeetings = Array.isArray(override.meetings) ? override.meetings : [];
+          const overrideActions = Array.isArray(override.myActionItems) ? override.myActionItems : [];
+          const projectMeetings = [...detailMeetings, ...apiMeetings, ...overrideMeetings]
+            .filter(Boolean)
+            .map((meeting, index) => ({
+              ...meeting,
+              id: String(meeting?.id || `${projectId}-meeting-${index + 1}`),
+              title: meeting?.title || "회의 제목 없음",
+              projectId,
+              projectName: project.name || meeting?.projectName || "",
+            }));
+
+          projectMeetings.forEach((meeting) => {
+            meetings.push(meeting);
+            (Array.isArray(meeting.action_items) ? meeting.action_items : []).forEach((item, index) => {
+              actionItems.push(mapMeetingActionItem(item, project, meeting, index));
+            });
+          });
+
+          overrideActions.forEach((item, index) => {
+            actionItems.push(mapMeetingActionItem(item, project, { id: item?.meetingId || item?.source, title: item?.source || "직접 작성 회의록" }, index));
+          });
+
+          tickets.forEach((ticket) => {
+            actionItems.push(mapTicketItem(ticket, project));
+          });
+        });
+
+        Object.values(manualRecords).forEach((record) => {
+          const project = projectMap.get(String(record?.projectId || ""));
+          if (!project || !Array.isArray(record?.actions)) return;
+          const meeting = {
+            id: String(record?.id || ""),
+            title: record?.title || "직접 작성 회의록",
+            date: record?.date || record?.rawDate || record?.createdAt || "",
+            createdAt: record?.createdAt || "",
+            projectId: String(record?.projectId || ""),
+            projectName: record?.projectName || project.name || "",
+            action_items: record.actions,
+          };
+          meetings.push(meeting);
+          record.actions.forEach((item, index) => {
+            actionItems.push(mapMeetingActionItem(item, project, meeting, index));
+          });
+        });
+
+        const meetingMap = new Map();
+        meetings.forEach((meeting) => {
+          const key = getMeetingDedupeKey(meeting);
+          if (!key.replace(/:/g, "")) return;
+          if (!meetingMap.has(key)) {
+            meetingMap.set(key, meeting);
+            return;
+          }
+          meetingMap.set(key, mergePreferRicher(meetingMap.get(key), meeting));
+        });
+        const uniqueMeetings = Array.from(meetingMap.values());
+        const uniqueActions = dedupeByKey(
+          actionItems.filter((item) => getActionTitle(item)),
+          (item) => getActionDedupeKey(item)
+        );
+        const assignedActions = uniqueActions.filter((item) => isAssignedToCurrentUser(item, userAliases));
+        const scopedActions = userAliases.length > 0 ? assignedActions : uniqueActions;
+        const pendingActions = scopedActions
+          .filter((item) => !isActionDone(item))
+          .sort((left, right) => {
+            const leftDate = parseFlexibleDate(left?.dueDate);
+            const rightDate = parseFlexibleDate(right?.dueDate);
+            if (!leftDate && !rightDate) return 0;
+            if (!leftDate) return 1;
+            if (!rightDate) return -1;
+            return leftDate - rightDate;
+          })
+          .slice(0, 3)
+          .map((item) => ({
+            id: item.id || getActionDedupeKey(item),
+            title: getActionTitle(item) || "해야 할 일",
+            projectName: item.projectName || "프로젝트",
+            dueLabel: formatDueLabel(item.dueDate),
+            status: normalizeStatus(item.status),
+          }));
+        const integrationCounts = uniqueActions.reduce(
+          (counts, item) => {
+            getIntegrationKinds(item).forEach((kind) => {
+              if (kind === "jira") counts.jira += 1;
+              if (kind === "notion") counts.notion += 1;
+            });
+            return counts;
+          },
+          { jira: 0, notion: 0 }
+        );
+
+        const enrichedMeetings = uniqueMeetings.map((meeting) => {
+          const meetingTitle = String(meeting?.title || "").trim();
+          const meetingId = String(meeting?.id || "").trim();
+          const relatedActions = uniqueActions.filter((item) => {
+            const sameMeetingId = meetingId && String(item?.meetingId || "") === meetingId;
+            const sameSource = meetingTitle && String(item?.source || "").trim() === meetingTitle;
+            const sameProject = String(item?.projectId || "") === String(meeting?.projectId || "");
+            return sameProject && (sameMeetingId || sameSource);
+          });
+          return { meeting, meetingTitle, meetingId, relatedActions };
+        });
+        const userMeetings = enrichedMeetings.filter(({ meeting, relatedActions }) =>
+          isMeetingForCurrentUser(meeting, relatedActions, userAliases)
+        );
+
+        const recentMeetings = userMeetings
+          .map((meeting) => {
+            const inlineActions = Array.isArray(meeting.meeting?.action_items) ? meeting.meeting.action_items : [];
+            const relatedActions = meeting.relatedActions;
+            const displayActions = relatedActions.length > 0 ? relatedActions : inlineActions;
+            const meetingDate = getMeetingDate(meeting.meeting);
+            return {
+              id: meeting.meetingId || `${meeting.meeting?.projectId || ""}-${meeting.meetingTitle}`,
+              title: meeting.meetingTitle || "회의 제목 없음",
+              date: formatMeetingDateLabel(meeting.meeting),
+              dateValue: meetingDate ? meetingDate.getTime() : 0,
+              actionItems: displayActions.length,
+              done: displayActions.filter((item) => isActionDone(item)).length,
+            };
+          })
+          .sort((a, b) => b.dateValue - a.dateValue)
+          .slice(0, 3);
+
+        if (!cancelled) {
+          setHomeStats({
+            meetingsThisMonth: userMeetings.filter(({ meeting }) => isSameMonth(getMeetingDate(meeting), currentMonth)).length,
+            doneActionItems: scopedActions.filter((item) => isActionDone(item)).length,
+            totalActionItems: scopedActions.length,
+            integrationCounts,
+            recentMeetings,
+            pendingActions,
+          });
+        }
+      } catch {
+        if (!cancelled) {
+          setHomeStats({
+            meetingsThisMonth: 0,
+            doneActionItems: 0,
+            totalActionItems: 0,
+            integrationCounts: { jira: 0, notion: 0 },
+            recentMeetings: [],
+            pendingActions: [],
+          });
+        }
+      } finally {
+        if (!cancelled) setHomeLoading(false);
+      }
+    };
+
+    loadHomeStats();
     return () => {
       cancelled = true;
     };
-  }, []);
-
-  const currentPlan = PLANS.find((p) => p.id === currentPlanId) || PLANS[0];
-  const currentPrice = currentPlan.price[currentBilling] || 0;
-  const billingLabel = currentBilling === "yearly" ? "연간" : "월간";
-  const priceLabel = currentPrice === 0 ? "무료" : `${currentPrice.toLocaleString("ko-KR")}원/월`;
-  const topFeatures = currentPlan.features.filter((f) => f.included).slice(0, 3);
+  }, [name, email]);
 
   return (
     <div className="space-y-7">
@@ -468,86 +935,40 @@ function HomeSection({ goTo, name, email, department }) {
       <div className="rounded-2xl border border-[rgba(0,100,180,.1)] bg-[linear-gradient(135deg,rgba(0,153,204,.06),rgba(124,58,237,.05))] p-5 sm:p-6">
         <p className="mb-4 text-[12px] font-bold text-[#5A6F8A]">이번 달 활동</p>
         <div className="grid grid-cols-3 gap-4">
-          <StatBlock value="47건" label="총 회의" />
-          <StatBlock value={`${doneActionItems}/${totalActionItems}`} label="처리현황" accent />
-          <StatBlock value="132개" label="Jira 티켓 생성" />
+          <StatBlock value={homeLoading ? "..." : `${homeStats.meetingsThisMonth}건`} label="이번 달 회의" />
+          <StatBlock value={homeLoading ? "..." : `${homeStats.doneActionItems}/${homeStats.totalActionItems}`} label="내 업무 처리" accent />
+          <StatBlock
+            value={homeLoading ? "..." : `${homeStats.integrationCounts.jira + homeStats.integrationCounts.notion}건`}
+            label="연동 완료"
+          />
         </div>
       </div>
 
-      <div className="grid gap-5 lg:grid-cols-[280px_1fr]">
-        {/* 좌측: 프로필(계정) + 구독권 */}
-        <div className="space-y-5">
-          <div
-            onClick={() => goTo("subscription")}
-            role="button"
-            tabIndex={0}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                goTo("subscription");
-              }
-            }}
-            className="cursor-pointer rounded-2xl border border-[rgba(0,100,180,.1)] bg-white p-5 transition-colors hover:border-[rgba(0,153,204,.35)]"
-          >
-            <div className="mb-3 flex items-center justify-between">
-              <div className="flex items-center gap-1.5">
-                <p className="text-[14px] font-black text-[#0D1B2A]">TIKI {currentPlan.name}</p>
-                <Badge label="이용중" variant="cyan" />
-                {planLoading && <span className="text-[11px] text-[#9BAABE]">동기화 중...</span>}
-              </div>
-              <Icon name="chevronRight" size={14} color="#9BAABE" />
-            </div>
-            <p className="text-[12px] text-[#5A6F8A]">
-              {billingLabel} 결제 · {priceLabel}
-              {nextBillingDate ? ` · 다음 결제일 ${nextBillingDate}` : ""}
-            </p>
-            <PlanFeatureList features={topFeatures} />
-          </div>
-
-          {/* 계정 카드: 아바타·이름을 한 줄에, 이메일·부서를 보조 메타로 한 줄에 정리 */}
-          <div className="rounded-2xl border border-[rgba(0,100,180,.1)] bg-white p-5">
-            <div className="flex items-center gap-3">
-              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-[linear-gradient(135deg,#0099CC,#7C3AED)] text-[16px] font-black text-white select-none">
-                {(name || "사")[0]}
-              </div>
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-[14px] font-bold text-[#0D1B2A]">{name}</p>
-                <div className="mt-1 flex items-center gap-1.5 text-[11px] text-[#9BAABE]">
-                  <Icon name="mail" size={11} color="#9BAABE" />
-                  <span className="truncate">{email}</span>
-                </div>
-              </div>
-            </div>
-
-            <div className="my-3.5 h-px bg-[rgba(0,100,180,.07)]" />
-
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex items-center gap-1.5 min-w-0">
-                <Icon name="briefcase" size={12} color="#5A6F8A" />
-                <span className="truncate text-[14px] font-semibold text-[#5A6F8A]">
-                  {department || "부서 미설정"}
-                </span>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* 우측: 최근 회의 */}
-        <div className="space-y-5">
+      <div className="space-y-5">
           <div className="rounded-2xl border border-[rgba(0,100,180,.1)] bg-white p-5">
             <div className="mb-4 flex items-center justify-between">
               <h3 className="text-[14px] font-bold text-[#0D1B2A]">최근 회의</h3>
               <span className="text-[12px] text-[#9BAABE]">최근 3건</span>
             </div>
             <div className="space-y-1">
-              {RECENT_MEETINGS.map((m, i) => (
-                <div key={m.id}
+              {homeLoading && (
+                <div className="rounded-xl bg-[rgba(0,100,180,.04)] px-4 py-5 text-center text-[12px] font-semibold text-[#9BAABE]">
+                  실제 회의 데이터를 불러오는 중입니다.
+                </div>
+              )}
+              {!homeLoading && homeStats.recentMeetings.length === 0 && (
+                <div className="rounded-xl bg-[rgba(0,100,180,.04)] px-4 py-5 text-center text-[12px] font-semibold text-[#9BAABE]">
+                  최근 회의가 없습니다.
+                </div>
+              )}
+              {!homeLoading && homeStats.recentMeetings.map((m, i) => (
+                <div key={m.id || i}
                   className={cn(
                     "flex items-center gap-3 py-3",
-                    i !== RECENT_MEETINGS.length - 1 && "border-b border-[rgba(0,100,180,.07)]"
+                    i !== homeStats.recentMeetings.length - 1 && "border-b border-[rgba(0,100,180,.07)]"
                   )}>
                   <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[rgba(0,153,204,.08)]">
-                    <Icon name="checkCircle" size={15} color={m.done === m.actionItems ? "#10B981" : "#0099CC"} />
+                    <Icon name="checkCircle" size={15} color={m.actionItems > 0 && m.done === m.actionItems ? "#10B981" : "#0099CC"} />
                   </div>
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-[13px] font-semibold text-[#0D1B2A]">{m.title}</p>
@@ -556,6 +977,110 @@ function HomeSection({ goTo, name, email, department }) {
                   <Icon name="chevronRight" size={14} color="#9BAABE" />
                 </div>
               ))}
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-[rgba(0,100,180,.1)] bg-white p-5">
+            <div className="mb-4 flex items-center justify-between">
+              <h3 className="text-[14px] font-bold text-[#0D1B2A]">내가 해야 할 일</h3>
+              <Link to="/dashboard" className="text-[11px] font-bold text-[#0099CC]">
+                전체 보기
+              </Link>
+            </div>
+            <div className="space-y-1">
+              {homeLoading && (
+                <div className="rounded-xl bg-[rgba(0,100,180,.04)] px-4 py-5 text-center text-[12px] font-semibold text-[#9BAABE]">
+                  내 업무 데이터를 불러오는 중입니다.
+                </div>
+              )}
+              {!homeLoading && homeStats.pendingActions.length === 0 && (
+                <div className="rounded-xl bg-[rgba(0,100,180,.04)] px-4 py-5 text-center text-[12px] font-semibold text-[#9BAABE]">
+                  지금 남은 내 업무가 없습니다.
+                </div>
+              )}
+              {!homeLoading && homeStats.pendingActions.map((item, index) => (
+                <div
+                  key={item.id || index}
+                  className={cn(
+                    "flex items-center gap-3 py-3",
+                    index !== homeStats.pendingActions.length - 1 && "border-b border-[rgba(0,100,180,.07)]"
+                  )}
+                >
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[rgba(245,158,11,.1)]">
+                    <Icon name="alertTriangle" size={15} color="#F59E0B" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-[13px] font-semibold text-[#0D1B2A]">{item.title}</p>
+                    <p className="mt-0.5 truncate text-[11px] text-[#9BAABE]">
+                      {item.projectName} · {item.status} · {item.dueLabel}
+                    </p>
+                  </div>
+                  <Icon name="chevronRight" size={14} color="#9BAABE" />
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="grid gap-5 md:grid-cols-2">
+            <div className="rounded-2xl border border-[rgba(0,100,180,.1)] bg-white p-5">
+              <div className="flex items-center gap-3">
+                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-[linear-gradient(135deg,#0099CC,#7C3AED)] text-[16px] font-black text-white select-none">
+                  {(name || "사")[0]}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-[14px] font-bold text-[#0D1B2A]">{name}</p>
+                  <div className="mt-1 flex items-center gap-1.5 text-[11px] text-[#9BAABE]">
+                    <Icon name="mail" size={11} color="#9BAABE" />
+                    <span className="truncate">{email}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="my-3.5 h-px bg-[rgba(0,100,180,.07)]" />
+
+              <div className="flex items-center gap-1.5 min-w-0">
+                <Icon name="briefcase" size={12} color="#5A6F8A" />
+                <span className="truncate text-[14px] font-semibold text-[#5A6F8A]">
+                  {department || "부서 미설정"}
+                </span>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-[rgba(0,100,180,.1)] bg-white p-5">
+              <div className="mb-4 flex items-center justify-between">
+                <h3 className="text-[14px] font-bold text-[#0D1B2A]">연동 현황</h3>
+                <button
+                  type="button"
+                  onClick={() => goTo("integrations")}
+                  className="text-[11px] font-bold text-[#0099CC]"
+                >
+                  관리
+                </button>
+              </div>
+              <div className="grid grid-cols-2 gap-2.5">
+                {[
+                  { id: "jira", label: "Jira", count: homeStats.integrationCounts.jira, color: "#0052CC" },
+                  { id: "notion", label: "Notion", count: homeStats.integrationCounts.notion, color: "#111827" },
+                ].map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => goTo("integrations")}
+                    className="rounded-xl border border-[rgba(0,100,180,.1)] bg-[#FAFCFF] p-3 text-left transition hover:border-[rgba(0,153,204,.35)]"
+                  >
+                    <span
+                      className="mb-2 inline-flex h-7 w-7 items-center justify-center rounded-lg text-[12px] font-black text-white"
+                      style={{ backgroundColor: item.color }}
+                    >
+                      {item.label[0]}
+                    </span>
+                    <p className="text-[12px] font-bold text-[#0D1B2A]">{item.label}</p>
+                    <p className="mt-0.5 text-[13px] font-black text-[#0099CC]">
+                      {homeLoading ? "..." : `${item.count}건`}
+                    </p>
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
 
@@ -578,7 +1103,6 @@ function HomeSection({ goTo, name, email, department }) {
               </div>
             </div>
           </div>
-        </div>
       </div>
     </div>
   );

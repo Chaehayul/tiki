@@ -90,8 +90,32 @@ function compactLegacyActionHistoryItems(items) {
     return Array.from(byId.values());
 }
 
+function getActionIntegrationLinks(item) {
+    const links = item?.integrationLinks && typeof item.integrationLinks === 'object' ? item.integrationLinks : {};
+    const legacyTool = String(item?.integrationTool || '').toLowerCase();
+    const legacyLink = item?.externalLink || '';
+    return {
+        jira: links.jira || (legacyTool === 'jira' ? legacyLink : ''),
+        notion: links.notion || (legacyTool === 'notion' ? legacyLink : ''),
+    };
+}
+
 function hasActionIntegration(item) {
-    return Boolean(item?.externalLink || item?.integrationTool);
+    const links = getActionIntegrationLinks(item);
+    return Boolean(links.jira || links.notion || item?.externalLink || item?.integrationTool);
+}
+
+function hasActionIntegrationTool(item, tool) {
+    const links = getActionIntegrationLinks(item);
+    return Boolean(links[String(tool || '').toLowerCase()]);
+}
+
+function getActionIntegrationEntries(item) {
+    const links = getActionIntegrationLinks(item);
+    return [
+        links.jira ? { id: 'jira', label: 'Jira', link: links.jira } : null,
+        links.notion ? { id: 'notion', label: 'Notion', link: links.notion } : null,
+    ].filter(Boolean);
 }
 
 function getMeetingDisplayStatus(meeting, actionItems) {
@@ -879,6 +903,7 @@ export default function ProjectMeetings() {
     const [isActionEditMode, setIsActionEditMode] = useState(false);
     const [projectCatalog, setProjectCatalog] = useState(() => readProjectCatalog());
     const [pendingIntegrationTarget, setPendingIntegrationTarget] = useState('');
+    const [selectedIntegrationTools, setSelectedIntegrationTools] = useState([]);
     const [isDueDateOpen, setIsDueDateOpen] = useState(false);
     const [isDrawerAssigneeOpen, setIsDrawerAssigneeOpen] = useState(false);
     const [openMoreMenuId, setOpenMoreMenuId] = useState(null);
@@ -1166,6 +1191,7 @@ export default function ProjectMeetings() {
                     String(item.meeting?.title || '').trim() ||
                     fallbackMeetingTitle,
                 integrationTool: item.integrationTool || null,
+                integrationLinks: getActionIntegrationLinks(item),
                 externalLink: item.externalLink || '',
                 snapshotOf: item.snapshotOf || null,
                 historySavedAt: item.historySavedAt || null,
@@ -1424,6 +1450,7 @@ export default function ProjectMeetings() {
 
     const openActionDrawer = (item) => {
         setActiveActionItemId(item.id);
+        setSelectedIntegrationTools([]);
         setActionDraft({
             id: item.id,
             text: item.text,
@@ -1433,6 +1460,7 @@ export default function ProjectMeetings() {
             status: normalizeActionStatus(item.status),
             source: item.source || '-',
             integrationTool: item.integrationTool || null,
+            integrationLinks: getActionIntegrationLinks(item),
             externalLink: item.externalLink || '',
             updatedAt: item.updatedAt || getKSTTimestampLabel(),
         });
@@ -1451,12 +1479,13 @@ export default function ProjectMeetings() {
         setActionDraft(null);
         setIsActionEditMode(false);
         setPendingIntegrationTarget('');
+        setSelectedIntegrationTools([]);
         setActionDrawerView('detail');
         setIsDueDateOpen(false);
         setIsDrawerAssigneeOpen(false);
     };
 
-    const saveActionDraft = ({ nextStatus = null, integrationTool = null, closeAfterSave = false } = {}) => {
+    const saveActionDraft = ({ nextStatus = null, integrationTool = null, integrationTools = null, closeAfterSave = false } = {}) => {
         if (!actionDraft) return false;
         const nextText = String(actionDraft.text || '').trim();
         if (!nextText) {
@@ -1467,9 +1496,20 @@ export default function ProjectMeetings() {
             ? normalizeActionStatus(nextStatus)
             : normalizeActionStatus(actionDraft.status);
         const now = getKSTTimestampLabel();
-        const resolvedExternalLink = integrationTool
-            ? buildExternalLink(integrationTool, nextText)
-            : actionDraft.externalLink || '';
+        const targetTools = Array.isArray(integrationTools) && integrationTools.length > 0
+            ? integrationTools
+            : integrationTool ? [integrationTool] : [];
+        const draftLinks = getActionIntegrationLinks(actionDraft);
+        const addedLinks = targetTools.reduce((acc, tool) => {
+            const key = String(tool || '').toLowerCase();
+            if (key === 'jira' || key === 'notion') acc[key] = buildExternalLink(tool, nextText);
+            return acc;
+        }, {});
+        const nextIntegrationLinks = targetTools.length > 0 ? { ...draftLinks, ...addedLinks } : draftLinks;
+        const primaryTool = targetTools[targetTools.length - 1] || actionDraft.integrationTool || null;
+        const primaryKey = String(primaryTool || '').toLowerCase();
+        const nextPrimaryTool = primaryTool || null;
+        const nextPrimaryLink = nextIntegrationLinks[primaryKey] || actionDraft.externalLink || '';
         const nextItems = allActionItems.map((item) => {
             if (item.id !== actionDraft.id) return item;
             return {
@@ -1480,8 +1520,9 @@ export default function ProjectMeetings() {
                 assignee: actionDraft.assignee || project.teamLead || '담당자 미지정',
                 status: normalizedStatus,
                 source: actionDraft.source || item.source || '-',
-                integrationTool: integrationTool || actionDraft.integrationTool || item.integrationTool || null,
-                externalLink: resolvedExternalLink,
+                integrationTool: nextPrimaryTool || item.integrationTool || null,
+                integrationLinks: nextIntegrationLinks,
+                externalLink: nextPrimaryLink || item.externalLink || '',
                 updatedAt: now,
             };
         });
@@ -1492,8 +1533,9 @@ export default function ProjectMeetings() {
             return {
                 ...prev,
                 status: normalizedStatus,
-                integrationTool: integrationTool || prev.integrationTool || null,
-                externalLink: resolvedExternalLink,
+                integrationTool: nextPrimaryTool || prev.integrationTool || null,
+                integrationLinks: nextIntegrationLinks,
+                externalLink: nextPrimaryLink || prev.externalLink || '',
                 updatedAt: now,
             };
         });
@@ -1501,22 +1543,31 @@ export default function ProjectMeetings() {
         return true;
     };
 
-    const startActionIntegration = (tool) => {
+    const toggleIntegrationTool = (tool) => {
+        if (!actionDraft || hasActionIntegrationTool(actionDraft, tool)) return;
+        setSelectedIntegrationTools((prev) =>
+            prev.includes(tool) ? prev.filter((item) => item !== tool) : [...prev, tool]
+        );
+    };
+
+    const startActionIntegration = (tools) => {
         if (!actionDraft) return;
-        setPendingIntegrationTarget(tool);
+        const targetTools = (Array.isArray(tools) ? tools : [tools])
+            .filter(Boolean)
+            .filter((tool) => !hasActionIntegrationTool(actionDraft, tool));
+        if (targetTools.length === 0) return;
+        setPendingIntegrationTarget(targetTools.join(','));
         window.setTimeout(() => {
-            const isNotion = tool === 'notion';
             const ok = saveActionDraft({
                 nextStatus: normalizeActionStatus(actionDraft.status) === '수행완료' ? '수행완료' : '연동완료',
-                integrationTool: isNotion ? 'Notion' : 'Jira',
+                integrationTools: targetTools.map((tool) => (tool === 'notion' ? 'Notion' : 'Jira')),
                 closeAfterSave: true,
             });
             setPendingIntegrationTarget('');
+            setSelectedIntegrationTools([]);
             if (ok)
                 showToast(
-                    isNotion
-                        ? 'Notion 연동이 완료되어 연동 완료로 전환되었습니다.'
-                        : 'Jira 연동이 완료되어 연동 완료로 전환되었습니다.',
+                    `${targetTools.map((tool) => (tool === 'notion' ? 'Notion' : 'Jira')).join(', ')} 연동이 완료되어 연동 완료로 전환되었습니다.`,
                     'success'
                 );
         }, 650);
@@ -3067,33 +3118,36 @@ export default function ProjectMeetings() {
                                         </div>
                                     </div>
 
-                                    {normalizeActionStatus(actionDraft.status) === '연동완료' &&
-                                        actionDraft.externalLink && (
-                                            <div className="rounded-xl border border-[#10B981]/30 bg-[#E6F4EA] p-4 flex items-center justify-between gap-3">
-                                                <div className="flex items-center gap-2 min-w-0">
-                                                    <span className="shrink-0 w-7 h-7 rounded-lg bg-[#10B981]/15 text-[#10B981] flex items-center justify-center">
-                                                        <CheckCircleIcon className="text-[#10B981]" />
-                                                    </span>
-                                                    <div className="min-w-0">
-                                                        <p className="text-[12px] font-bold text-[#0E8F69]">
-                                                            연동 완료
-                                                        </p>
-                                                        <p className="text-[11px] text-[#5A6F8A] truncate">
-                                                            {actionDraft.externalLink}
-                                                        </p>
+                                    {hasActionIntegration(actionDraft) && (
+                                        <div className="space-y-2">
+                                            {getActionIntegrationEntries(actionDraft).map((entry) => (
+                                                <div key={entry.id} className="rounded-xl border border-[#10B981]/30 bg-[#E6F4EA] p-4 flex items-center justify-between gap-3">
+                                                    <div className="flex items-center gap-2 min-w-0">
+                                                        <span className="shrink-0 w-7 h-7 rounded-lg bg-[#10B981]/15 text-[#10B981] flex items-center justify-center">
+                                                            <CheckCircleIcon className="text-[#10B981]" />
+                                                        </span>
+                                                        <div className="min-w-0">
+                                                            <p className="text-[12px] font-bold text-[#0E8F69]">
+                                                                {entry.label} 연동 완료
+                                                            </p>
+                                                            <p className="text-[11px] text-[#5A6F8A] truncate">
+                                                                {entry.link}
+                                                            </p>
+                                                        </div>
                                                     </div>
+                                                    <a
+                                                        href={entry.link}
+                                                        target="_blank"
+                                                        rel="noreferrer"
+                                                        className="shrink-0 inline-flex items-center gap-1 text-[12px] font-semibold text-[#0099CC] hover:underline"
+                                                    >
+                                                        {entry.label} 확인
+                                                        <ArrowUpRightIcon />
+                                                    </a>
                                                 </div>
-                                                <a
-                                                    href={actionDraft.externalLink}
-                                                    target="_blank"
-                                                    rel="noreferrer"
-                                                    className="shrink-0 inline-flex items-center gap-1 text-[12px] font-semibold text-[#0099CC] hover:underline"
-                                                >
-                                                    {actionDraft.integrationTool === 'Notion' ? 'Notion' : 'Jira'} 확인
-                                                    <ArrowUpRightIcon />
-                                                </a>
-                                            </div>
-                                        )}
+                                            ))}
+                                        </div>
+                                    )}
                                 </div>
                             ) : (
                                 <div className="view-enter-right p-5 space-y-4">
@@ -3132,8 +3186,9 @@ export default function ProjectMeetings() {
                                         <div className="flex flex-col gap-3">
                                             <button
                                                 type="button"
-                                                onClick={() => startActionIntegration('jira')}
-                                                className="group w-full flex items-center gap-4 p-4 rounded-2xl border-2 border-[#0099CC]/30 bg-white hover:border-[#0099CC] hover:bg-[#EEF3FF] hover:shadow-md transition-all text-left"
+                                                onClick={() => toggleIntegrationTool('jira')}
+                                                disabled={hasActionIntegrationTool(actionDraft, 'jira')}
+                                                className={`group w-full flex items-center gap-4 p-4 rounded-2xl border-2 bg-white transition-all text-left ${hasActionIntegrationTool(actionDraft, 'jira') ? 'border-[#10B981]/30 bg-[#F8FFFB] opacity-70 cursor-default' : selectedIntegrationTools.includes('jira') ? 'border-[#0099CC] bg-[#EEF3FF] shadow-md' : 'border-[#0099CC]/30 hover:border-[#0099CC] hover:bg-[#EEF3FF] hover:shadow-md'}`}
                                             >
                                                 <span className="shrink-0 w-12 h-12 rounded-xl bg-[#EEF3FF] group-hover:bg-[#0099CC]/15 text-[#0099CC] flex items-center justify-center transition-colors">
                                                     <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
@@ -3154,7 +3209,7 @@ export default function ProjectMeetings() {
                                                     </svg>
                                                 </span>
                                                 <div className="min-w-0">
-                                                    <p className="text-sm font-bold text-[#0D1B2A]">Jira로 연동</p>
+                                                    <p className="text-sm font-bold text-[#0D1B2A]">{hasActionIntegrationTool(actionDraft, 'jira') ? 'Jira 연동완료' : 'Jira로 연동'}</p>
                                                     <p className="text-[12px] text-[#5A6F8A] mt-0.5">
                                                         Jira API를 통해 해야 할 일을 자동 생성합니다.
                                                     </p>
@@ -3176,8 +3231,9 @@ export default function ProjectMeetings() {
 
                                             <button
                                                 type="button"
-                                                onClick={() => startActionIntegration('notion')}
-                                                className="group w-full flex items-center gap-4 p-4 rounded-2xl border-2 border-[#7C3AED]/20 bg-white hover:border-[#7C3AED] hover:bg-[#F6F0FF] hover:shadow-md transition-all text-left"
+                                                onClick={() => toggleIntegrationTool('notion')}
+                                                disabled={hasActionIntegrationTool(actionDraft, 'notion')}
+                                                className={`group w-full flex items-center gap-4 p-4 rounded-2xl border-2 bg-white transition-all text-left ${hasActionIntegrationTool(actionDraft, 'notion') ? 'border-[#10B981]/30 bg-[#F8FFFB] opacity-70 cursor-default' : selectedIntegrationTools.includes('notion') ? 'border-[#7C3AED] bg-[#F6F0FF] shadow-md' : 'border-[#7C3AED]/20 hover:border-[#7C3AED] hover:bg-[#F6F0FF] hover:shadow-md'}`}
                                             >
                                                 <span className="shrink-0 w-12 h-12 rounded-xl bg-[#7C3AED]/10 group-hover:bg-[#7C3AED]/20 text-[#7C3AED] flex items-center justify-center transition-colors">
                                                     <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
@@ -3185,7 +3241,7 @@ export default function ProjectMeetings() {
                                                     </svg>
                                                 </span>
                                                 <div className="min-w-0">
-                                                    <p className="text-sm font-bold text-[#0D1B2A]">Notion으로 연동</p>
+                                                    <p className="text-sm font-bold text-[#0D1B2A]">{hasActionIntegrationTool(actionDraft, 'notion') ? 'Notion 연동완료' : 'Notion으로 연동'}</p>
                                                     <p className="text-[12px] text-[#5A6F8A] mt-0.5">
                                                         Notion 페이지에 태스크로 자동 추가합니다.
                                                     </p>
@@ -3203,6 +3259,15 @@ export default function ProjectMeetings() {
                                                 >
                                                     <polyline points="9 18 15 12 9 6" />
                                                 </svg>
+                                            </button>
+
+                                            <button
+                                                type="button"
+                                                disabled={selectedIntegrationTools.length === 0}
+                                                onClick={() => startActionIntegration(selectedIntegrationTools)}
+                                                className={`mt-1 w-full rounded-2xl px-4 py-3 text-sm font-bold text-white transition ${selectedIntegrationTools.length === 0 ? 'bg-slate-300 cursor-not-allowed' : 'bg-[linear-gradient(135deg,#0099CC,#7C3AED)] hover:-translate-y-0.5 shadow-[0_8px_20px_rgba(0,100,180,0.18)]'}`}
+                                            >
+                                                선택한 도구로 연동
                                             </button>
                                         </div>
                                     )}
@@ -3305,7 +3370,7 @@ export default function ProjectMeetings() {
                                                 >
                                                     수정 저장
                                                 </button>
-                                                {!hasActionIntegration(actionDraft) && (
+                                                {getActionIntegrationEntries(actionDraft).length < 2 && (
                                                     <button
                                                         type="button"
                                                         onClick={() => setActionDrawerView('integrate')}
@@ -3353,6 +3418,21 @@ export default function ProjectMeetings() {
                                                 >
                                                     수행완료
                                                 </button>
+                                                {getActionIntegrationEntries(actionDraft).length < 2 && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setActionDrawerView('integrate')}
+                                                        className="flex items-center gap-1.5 text-sm font-bold px-5 py-2 rounded-xl text-white transition-all hover:-translate-y-0.5"
+                                                        style={{
+                                                            background:
+                                                                'linear-gradient(135deg,#0099CC,#7C3AED)',
+                                                            boxShadow: '0 4px 12px rgba(0,100,180,0.18)',
+                                                        }}
+                                                    >
+                                                        <ZapIcon className="text-white" />
+                                                        추가 연동
+                                                    </button>
+                                                )}
                                             </>
                                         )}
                                     </div>

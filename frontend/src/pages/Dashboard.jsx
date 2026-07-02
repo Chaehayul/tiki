@@ -48,8 +48,26 @@ function getPanelStatusStyle(status) {
   return { bg: "#FEF7E0", color: "#F59E0B", border: "#F59E0B" };
 }
 
+function getIntegrationLinks(item) {
+  const links = item?.integrationLinks && typeof item.integrationLinks === "object" ? item.integrationLinks : {};
+  const provider = String(item?.integrationProvider || item?.integrationTool || "").toLowerCase();
+  const legacyLink = item?.jiraLink || item?.externalLink || "";
+  return {
+    jira: links.jira || (provider.includes("jira") ? legacyLink : item?.jiraLink || ""),
+    notion: links.notion || (provider.includes("notion") ? legacyLink : ""),
+  };
+}
+
+function getIntegrationEntries(item) {
+  const links = getIntegrationLinks(item);
+  return [
+    { id: "jira", label: "Jira", url: links.jira, icon: "jira" },
+    { id: "notion", label: "Notion", url: links.notion, icon: "arrowUpRight" },
+  ].filter((entry) => Boolean(entry.url));
+}
+
 function hasExternalLink(item) {
-  return Boolean(item?.jiraLink || item?.externalLink || item?.integrationProvider || item?.integrationTool);
+  return getIntegrationEntries(item).length > 0;
 }
 
 function isActionDone(item) {
@@ -85,6 +103,10 @@ function compactLegacyActionHistoryItems(items) {
       externalLink: base?.externalLink || history.externalLink || history.jiraLink || "",
       integrationProvider: base?.integrationProvider || history.integrationProvider || null,
       integrationTool: base?.integrationTool || history.integrationTool || null,
+      integrationLinks: {
+        ...(history.integrationLinks && typeof history.integrationLinks === "object" ? history.integrationLinks : {}),
+        ...(base?.integrationLinks && typeof base.integrationLinks === "object" ? base.integrationLinks : {}),
+      },
       snapshotOf: null,
       historySavedAt: null,
     };
@@ -739,6 +761,7 @@ export default function App() {
   const [isStatusSortOpen, setIsStatusSortOpen] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [integratingId, setIntegratingId] = useState(null);
+  const [selectedIntegrationTools, setSelectedIntegrationTools] = useState([]);
   const [justCompletedId, setJustCompletedId] = useState(null);
   const [isPanelEditable, setIsPanelEditable] = useState(false);
 
@@ -763,6 +786,8 @@ export default function App() {
 
   const buildPersistedActionItem = (item, patch = {}) => {
     const next = { ...item, ...patch };
+    const links = getIntegrationLinks(next);
+    const firstLink = links.jira || links.notion || "";
     return {
       id: next.id,
       text: next.text || next.title || "해야 할 일",
@@ -779,8 +804,9 @@ export default function App() {
       projectId: next.projectKey ? String(next.projectKey) : "",
       projectName: next.projectName || "",
       integrationTool: next.integrationProvider || next.integrationTool || null,
-      externalLink: next.jiraLink || next.externalLink || "",
-      jiraLink: next.jiraLink || next.externalLink || "",
+      integrationLinks: links,
+      externalLink: firstLink,
+      jiraLink: links.jira || firstLink,
       updatedAt: new Date().toISOString(),
     };
   };
@@ -924,6 +950,7 @@ export default function App() {
     contextTime: item.contextTime || "",
     jiraLink: item.externalLink || item.jiraLink || "",
     externalLink: item.externalLink || item.jiraLink || "",
+    integrationLinks: item.integrationLinks && typeof item.integrationLinks === "object" ? item.integrationLinks : {},
     integrationTool: item.integrationTool || null,
     integrationProvider: item.integrationProvider || null,
     snapshotOf: item.snapshotOf || null,
@@ -1012,6 +1039,11 @@ export default function App() {
               meetingDate: t.created_at ? t.created_at.slice(0, 10) : '',
               contextTime: '',
               jiraLink: t.external_syncs?.find((s) => s.provider === 'jira')?.external_url || '',
+              externalLink: t.external_syncs?.find((s) => s.provider === 'jira')?.external_url || t.external_syncs?.find((s) => s.provider === 'notion')?.external_url || '',
+              integrationLinks: {
+                jira: t.external_syncs?.find((s) => s.provider === 'jira')?.external_url || '',
+                notion: t.external_syncs?.find((s) => s.provider === 'notion')?.external_url || '',
+              },
             }))
         );
         const meetingItems = results.flatMap(({ project, meetings }) =>
@@ -1039,6 +1071,10 @@ export default function App() {
             dueDate: prev.dueDate || item.dueDate || item.due || "",
             due: prev.due || item.due || item.dueDate || "",
             meetingDate: prev.meetingDate || item.meetingDate || "",
+            integrationLinks: {
+              ...(item.integrationLinks && typeof item.integrationLinks === "object" ? item.integrationLinks : {}),
+              ...(prev.integrationLinks && typeof prev.integrationLinks === "object" ? prev.integrationLinks : {}),
+            },
           });
         });
         setActionItems(Array.from(dedupedMap.values()));
@@ -1056,6 +1092,7 @@ export default function App() {
   const openPanel = (item) => {
     setSelectedItem(item);
     setPanelView("detail");
+    setSelectedIntegrationTools([]);
     setIsPanelEditable(false);
     setIsAssigneeOpen(false);
     setIsDueDateOpen(false);
@@ -1070,6 +1107,7 @@ export default function App() {
   const closePanel = () => {
     setSelectedItem(null);
     setPanelView("detail");
+    setSelectedIntegrationTools([]);
     setIsPanelEditable(false);
     setDeleteConfirmOpen(false);
     setIsAssigneeOpen(false);
@@ -1140,19 +1178,32 @@ export default function App() {
     handleVerify(itemId);
   };
 
-  const handleApprove = (itemId, provider = "jira") => {
+  const handleApprove = (itemId, providers = "jira") => {
+    const requestedProviders = (Array.isArray(providers) ? providers : [providers])
+      .map((provider) => String(provider || "").toLowerCase())
+      .filter((provider) => provider === "jira" || provider === "notion");
+    if (requestedProviders.length === 0) return;
     setIntegratingId(itemId);
     setTimeout(() => {
-      const randomTicketNum = Math.floor(Math.random() * 800) + 100;
-      const integrationLink = provider === "notion"
-        ? `https://www.notion.so/NEO-${randomTicketNum}`
-        : `https://jira.atlassian.com/browse/NEO-${randomTicketNum}`;
-
       const targetItem = actionItems.find((item) => item.id === itemId) || selectedItem;
+      const previousLinks = getIntegrationLinks(targetItem);
+      const nextLinks = { ...previousLinks };
+      requestedProviders.forEach((provider) => {
+        if (nextLinks[provider]) return;
+        const randomTicketNum = Math.floor(Math.random() * 800) + 100;
+        nextLinks[provider] = provider === "notion"
+          ? `https://www.notion.so/NEO-${randomTicketNum}`
+          : `https://jira.atlassian.com/browse/NEO-${randomTicketNum}`;
+      });
+      const primaryProvider = requestedProviders[requestedProviders.length - 1] || "jira";
+      const primaryLink = nextLinks[primaryProvider] || nextLinks.jira || nextLinks.notion || "";
       const updatedItem = {
         status: targetItem?.status === "수행완료" ? "수행완료" : "연동완료",
-        jiraLink: integrationLink,
-        integrationProvider: provider
+        integrationLinks: nextLinks,
+        externalLink: primaryLink,
+        jiraLink: nextLinks.jira || primaryLink,
+        integrationProvider: primaryProvider,
+        integrationTool: primaryProvider === "notion" ? "Notion" : "Jira",
       };
       if (targetItem) persistActionItemUpdate(targetItem, updatedItem);
 
@@ -1163,14 +1214,11 @@ export default function App() {
       setSelectedItem(prev => prev?.id === itemId ? { ...prev, ...updatedItem } : prev);
       setIntegratingId(null);
       setPanelView("detail");
+      setSelectedIntegrationTools([]);
       setJustCompletedId(itemId);
       setTimeout(() => setJustCompletedId(null), 1200);
-      triggerToast(
-        provider === "notion"
-          ? "Notion 연동이 완료되었습니다!"
-          : "Jira API를 호출하여 티켓 생성이 승인 완료되었습니다!",
-        "ai"
-      );
+      const linkedNames = requestedProviders.map((provider) => provider === "notion" ? "Notion" : "Jira").join(", ");
+      triggerToast(`${linkedNames} 연동이 완료되었습니다!`, "ai");
     }, 700);
   };
 
@@ -1683,9 +1731,10 @@ export default function App() {
                                 </span>
                               ) : item.status === "연동완료" ? (
                                 (() => {
-                                  const isNotion = item.integrationProvider === "notion";
+                                  const entry = getIntegrationEntries(item)[0];
+                                  const isNotion = entry?.id === "notion";
                                   return (
-                                    <a href={item.jiraLink || "#"} onClick={(e) => e.stopPropagation()} target="_blank" rel="noreferrer"
+                                    <a href={entry?.url || "#"} onClick={(e) => e.stopPropagation()} target="_blank" rel="noreferrer"
                                       className="inline-flex items-center gap-1 text-[12px] font-semibold text-[#0099CC] hover:underline"
                                     >
                                       <LucideIcon name={isNotion ? "arrowUpRight" : "jira"} size={13} className="text-[#0099CC]" />
@@ -1701,12 +1750,17 @@ export default function App() {
                                 </button>
                               ) : item.status === "수행완료" ? (
                                 hasExternalLink(item) ? (
-                                  <a href={item.jiraLink || item.externalLink || "#"} onClick={(e) => e.stopPropagation()} target="_blank" rel="noreferrer"
-                                    className="inline-flex items-center gap-1 text-[12px] font-semibold text-[#0099CC] hover:underline"
-                                  >
-                                    <LucideIcon name={item.integrationProvider === "notion" || item.integrationTool === "Notion" ? "arrowUpRight" : "jira"} size={13} className="text-[#0099CC]" />
-                                    {item.integrationProvider === "notion" || item.integrationTool === "Notion" ? "Notion 확인" : "Jira 확인"}
-                                  </a>
+                                  (() => {
+                                    const entry = getIntegrationEntries(item)[0];
+                                    return (
+                                      <a href={entry?.url || "#"} onClick={(e) => e.stopPropagation()} target="_blank" rel="noreferrer"
+                                        className="inline-flex items-center gap-1 text-[12px] font-semibold text-[#0099CC] hover:underline"
+                                      >
+                                        <LucideIcon name={entry?.id === "notion" ? "arrowUpRight" : "jira"} size={13} className="text-[#0099CC]" />
+                                        {entry?.label || "외부 툴"} 확인
+                                      </a>
+                                    );
+                                  })()
                                 ) : (
                                   <button type="button" onClick={(e) => { e.stopPropagation(); openPanel(item); setPanelView("integrate"); }}
                                     className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-[#0099CC] border border-[#0099CC]/40 hover:bg-[#0099CC] hover:text-white hover:border-[#0099CC] hover:shadow-[0_4px_12px_rgba(0,153,204,0.25)] px-2.5 py-1.5 rounded-lg transition-all duration-150"
@@ -1970,26 +2024,30 @@ export default function App() {
                   </div>
 
                   {/* 외부 툴 링크 카드 */}
-                  {hasExternalLink(selectedItem) && (selectedItem.jiraLink || selectedItem.externalLink) && (
-                    <div className="rounded-2xl border border-[rgba(0,153,204,0.28)] bg-[#EEF8FF] px-3.5 py-3 flex items-center justify-between gap-3">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <span className="shrink-0 w-7 h-7 rounded-lg bg-[#EEF3FF] text-[#0099CC] flex items-center justify-center">
-                          <LucideIcon name="checkCircle" size={15} />
-                        </span>
-                        <div className="min-w-0">
-                          <p className="text-[12px] font-bold text-[#0D1B2A]">외부 툴 링크 바로가기</p>
-                          <p className="text-[11px] text-[#5A6F8A] truncate">{selectedItem.jiraLink || selectedItem.externalLink}</p>
+                  {hasExternalLink(selectedItem) && (
+                    <div className="space-y-2">
+                      {getIntegrationEntries(selectedItem).map((entry) => (
+                        <div key={entry.id} className="rounded-2xl border border-[rgba(0,153,204,0.28)] bg-[#EEF8FF] px-3.5 py-3 flex items-center justify-between gap-3">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className="shrink-0 w-7 h-7 rounded-lg bg-[#EEF3FF] text-[#0099CC] flex items-center justify-center">
+                              <LucideIcon name="checkCircle" size={15} />
+                            </span>
+                            <div className="min-w-0">
+                              <p className="text-[12px] font-bold text-[#0D1B2A]">{entry.label} 링크 바로가기</p>
+                              <p className="text-[11px] text-[#5A6F8A] truncate">{entry.url}</p>
+                            </div>
+                          </div>
+                          <a
+                            href={entry.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="shrink-0 inline-flex items-center gap-1 text-[12px] font-semibold text-[#0099CC] hover:underline"
+                          >
+                            {entry.label} 확인
+                            <LucideIcon name="arrowUpRight" size={12} />
+                          </a>
                         </div>
-                      </div>
-                      <a
-                        href={selectedItem.jiraLink || selectedItem.externalLink}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="shrink-0 inline-flex items-center gap-1 text-[12px] font-semibold text-[#0099CC] hover:underline"
-                      >
-                        {selectedItem.integrationProvider === "notion" || selectedItem.integrationTool === "Notion" ? "Notion" : "Jira"} 확인
-                        <LucideIcon name="arrowUpRight" size={12} />
-                      </a>
+                      ))}
                     </div>
                   )}
                 </div>
@@ -2010,36 +2068,65 @@ export default function App() {
                     </div>
                   ) : (
                     <div className="flex flex-col gap-3">
-                      {/* Jira */}
-                      <button
-                        type="button"
-                        onClick={() => handleApprove(selectedItem.id, "jira")}
-                        className="group w-full flex items-center gap-4 p-4 rounded-2xl border-2 border-[#0099CC]/30 bg-white hover:border-[#0099CC] hover:bg-[#EEF3FF] hover:shadow-md transition-all cursor-pointer text-left"
-                      >
-                        <span className="shrink-0 w-12 h-12 rounded-xl bg-[#EEF3FF] group-hover:bg-[#0099CC]/15 text-[#0099CC] flex items-center justify-center transition-colors">
-                          <LucideIcon name="jira" size={24} />
-                        </span>
-                        <div className="min-w-0">
-                          <p className="text-sm font-bold text-[#0D1B2A]">Jira로 연동</p>
-                          <p className="text-[12px] text-[#5A6F8A] mt-0.5">Jira API를 통해 이슈 티켓을 자동 생성합니다.</p>
-                        </div>
-                        <LucideIcon name="chevronRight" size={16} className="shrink-0 text-[#C0CFDC] group-hover:text-[#0099CC] ml-auto transition-colors" />
-                      </button>
+                      {[
+                        {
+                          id: "jira",
+                          icon: "jira",
+                          title: "Jira로 연동",
+                          desc: "Jira API를 통해 이슈 티켓을 자동 생성합니다.",
+                          tone: "#0099CC",
+                          bg: "#EEF3FF",
+                        },
+                        {
+                          id: "notion",
+                          icon: "notion",
+                          title: "Notion으로 연동",
+                          desc: "Notion 페이지에 태스크로 자동 추가합니다.",
+                          tone: "#7C3AED",
+                          bg: "#F6F0FF",
+                        },
+                      ].map((tool) => {
+                        const alreadyLinked = Boolean(getIntegrationLinks(selectedItem)[tool.id]);
+                        const selected = selectedIntegrationTools.includes(tool.id);
+                        return (
+                          <button
+                            key={tool.id}
+                            type="button"
+                            disabled={alreadyLinked}
+                            onClick={() => {
+                              if (alreadyLinked) return;
+                              setSelectedIntegrationTools((prev) =>
+                                prev.includes(tool.id) ? prev.filter((id) => id !== tool.id) : [...prev, tool.id]
+                              );
+                            }}
+                            className="group w-full flex items-center gap-4 p-4 rounded-2xl border-2 bg-white transition-all text-left disabled:cursor-not-allowed disabled:opacity-70 cursor-pointer"
+                            style={{
+                              borderColor: alreadyLinked || selected ? tool.tone : "rgba(0,100,180,0.12)",
+                              background: alreadyLinked || selected ? tool.bg : "#fff",
+                            }}
+                          >
+                            <span className="shrink-0 w-12 h-12 rounded-xl flex items-center justify-center transition-colors" style={{ background: tool.bg, color: tool.tone }}>
+                              <LucideIcon name={tool.icon} size={tool.id === "jira" ? 24 : 22} />
+                            </span>
+                            <div className="min-w-0 flex-1">
+                              <p className="text-sm font-bold text-[#0D1B2A]">{tool.title}</p>
+                              <p className="text-[12px] text-[#5A6F8A] mt-0.5">{alreadyLinked ? "이미 연동 완료된 도구입니다." : tool.desc}</p>
+                            </div>
+                            <span className="shrink-0 w-6 h-6 rounded-full border flex items-center justify-center" style={{ borderColor: alreadyLinked || selected ? tool.tone : "#C0CFDC", background: alreadyLinked || selected ? tool.tone : "#fff" }}>
+                              {(alreadyLinked || selected) && <LucideIcon name="check" size={13} className="text-white" />}
+                            </span>
+                          </button>
+                        );
+                      })}
 
-                      {/* Notion */}
                       <button
                         type="button"
-                        onClick={() => handleApprove(selectedItem.id, "notion")}
-                        className="group w-full flex items-center gap-4 p-4 rounded-2xl border-2 border-[#7C3AED]/20 bg-white hover:border-[#7C3AED] hover:bg-[#F6F0FF] hover:shadow-md transition-all cursor-pointer text-left"
+                        disabled={selectedIntegrationTools.length === 0}
+                        onClick={() => handleApprove(selectedItem.id, selectedIntegrationTools)}
+                        className="mt-1 w-full rounded-xl px-4 py-3 text-sm font-bold text-white transition disabled:cursor-not-allowed disabled:opacity-40"
+                        style={{ background: "linear-gradient(135deg,#0099CC,#7C3AED)" }}
                       >
-                        <span className="shrink-0 w-12 h-12 rounded-xl bg-[#7C3AED]/10 group-hover:bg-[#7C3AED]/20 text-[#7C3AED] flex items-center justify-center transition-colors">
-                          <LucideIcon name="notion" size={22} />
-                        </span>
-                        <div className="min-w-0">
-                          <p className="text-sm font-bold text-[#0D1B2A]">Notion으로 연동</p>
-                          <p className="text-[12px] text-[#5A6F8A] mt-0.5">Notion 페이지에 태스크로 자동 추가합니다.</p>
-                        </div>
-                        <LucideIcon name="chevronRight" size={16} className="shrink-0 text-[#C0CFDC] group-hover:text-[#7C3AED] ml-auto transition-colors" />
+                        선택한 도구로 연동
                       </button>
                     </div>
                   )}
@@ -2114,22 +2201,34 @@ export default function App() {
                         </>
                       )}
                       {selectedItem.status === "연동완료" && (
-                        <button
-                          type="button"
-                          onClick={() => handleMarkDone(selectedItem.id)}
-                          className="px-5 py-2.5 text-sm font-bold text-[#7C3AED] bg-white border border-[#7C3AED]/60 hover:bg-[#F6F0FF] rounded-xl shadow-sm transition-all cursor-pointer"
-                        >
-                          수행완료
-                        </button>
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => handleMarkDone(selectedItem.id)}
+                            className="px-5 py-2.5 text-sm font-bold text-[#7C3AED] bg-white border border-[#7C3AED]/60 hover:bg-[#F6F0FF] rounded-xl shadow-sm transition-all cursor-pointer"
+                          >
+                            수행완료
+                          </button>
+                          {getIntegrationEntries(selectedItem).length < 2 && (
+                            <button
+                              type="button"
+                              onClick={() => setPanelView("integrate")}
+                              className="px-5 py-2.5 text-sm font-bold text-white bg-[linear-gradient(135deg,#10B981,#0D9488)] hover:brightness-105 rounded-xl shadow-md shadow-emerald-500/25 transition-all flex items-center gap-1.5 cursor-pointer"
+                            >
+                              <LucideIcon name="zap" size={14} className="text-white" />
+                              추가 연동
+                            </button>
+                          )}
+                        </>
                       )}
-                      {selectedItem.status === "수행완료" && !hasExternalLink(selectedItem) && (
+                      {selectedItem.status === "수행완료" && getIntegrationEntries(selectedItem).length < 2 && (
                         <button
                           type="button"
                           onClick={() => setPanelView("integrate")}
                           className="px-5 py-2.5 text-sm font-bold text-white bg-[linear-gradient(135deg,#10B981,#0D9488)] hover:brightness-105 rounded-xl shadow-md shadow-emerald-500/25 transition-all flex items-center gap-1.5 cursor-pointer"
                         >
                           <LucideIcon name="zap" size={14} className="text-white" />
-                          연동하기
+                          {hasExternalLink(selectedItem) ? "추가 연동" : "연동하기"}
                         </button>
                       )}
                     </div>

@@ -1268,6 +1268,7 @@ export default function MeetingManualDetail() {
   );
   const issuedIssueKeySet = useMemo(() => {
     if (!selectedIssueSvc) return new Set();
+    if (selectedIssueSvc === 'both') return new Set();
     return new Set(
       mergedAuditLog
         .filter((log) => log.svcId === selectedIssueSvc)
@@ -1776,14 +1777,17 @@ export default function MeetingManualDetail() {
     setIssuing(true);
     await new Promise((resolve) => setTimeout(resolve, 900));
 
-    const targetSvc = selectedIssueSvc === 'notion' ? 'notion' : 'jira';
-    const selectedTicketItems = services.find((svc) => svc.id === targetSvc)?.tickets
-      ?.map((ticket, idx) => ({ ...ticket, index: idx }))
-      .filter((ticket) => issueCheckedItems.has(ticket.index)) || [];
+    const targetSvcs = selectedIssueSvc === 'both' ? ['jira', 'notion'] : [selectedIssueSvc === 'notion' ? 'notion' : 'jira'];
+    const selectedTicketItemsBySvc = targetSvcs.map((targetSvc) => ({
+      targetSvc,
+      items: services.find((svc) => svc.id === targetSvc)?.tickets
+        ?.map((ticket, idx) => ({ ...ticket, index: idx }))
+        .filter((ticket) => issueCheckedItems.has(ticket.index)) || [],
+    }));
 
     setServices((prev) =>
       prev.map((svc) => {
-        if (svc.id !== targetSvc) return svc;
+        if (!targetSvcs.includes(svc.id)) return svc;
         return {
           ...svc,
           tickets: svc.tickets.map((ticket, idx) => {
@@ -1798,12 +1802,12 @@ export default function MeetingManualDetail() {
 
     const now = new Date();
     const time = `${now.getFullYear()}년 ${now.getMonth() + 1}월 ${now.getDate()}일`;
-    const nextLogs = selectedTicketItems.map((ticket) => ({
+    const nextLogs = selectedTicketItemsBySvc.flatMap(({ targetSvc, items }) => items.map((ticket) => ({
       svcId: targetSvc,
       label: ticket.title,
       time,
       user: ticket.assignee || getStoredUserName() || '담당자',
-    }));
+    })));
     setAuditLog((prev) => [...prev, ...nextLogs]);
 
     if (minutes?.projectId && minutes?.title && nextLogs.length > 0) {
@@ -1812,9 +1816,14 @@ export default function MeetingManualDetail() {
       const prevProject = overrides[projectId] && typeof overrides[projectId] === 'object' ? overrides[projectId] : {};
       const prevItems = Array.isArray(prevProject.myActionItems) ? prevProject.myActionItems : [];
       const nextItems = [...prevItems];
-      selectedTicketItems.forEach((ticket) => {
-        const id = `${minutes.id || minutes.title}-${targetSvc}-${ticket.index + 1}`;
+      selectedTicketItemsBySvc.forEach(({ targetSvc, items }) => items.forEach((ticket) => {
+        const id = `${minutes.id || minutes.title}-action-${ticket.index + 1}`;
+        const existingIndex = nextItems.findIndex((item) => String(item?.id || '') === id);
+        const existing = existingIndex >= 0 ? nextItems[existingIndex] : {};
+        const existingLinks = existing?.integrationLinks && typeof existing.integrationLinks === 'object' ? existing.integrationLinks : {};
+        const externalLink = buildExternalLink(targetSvc, ticket.title);
         const persisted = {
+          ...existing,
           id,
           text: ticket.title,
           title: ticket.title,
@@ -1828,13 +1837,16 @@ export default function MeetingManualDetail() {
           projectId,
           projectName: minutes.projectName || '',
           integrationTool: targetSvc === 'notion' ? 'Notion' : 'Jira',
-          externalLink: buildExternalLink(targetSvc, ticket.title),
+          integrationLinks: {
+            ...existingLinks,
+            [targetSvc]: externalLink,
+          },
+          externalLink,
           updatedAt: new Date().toISOString(),
         };
-        const existingIndex = nextItems.findIndex((item) => String(item?.id || '') === id);
         if (existingIndex >= 0) nextItems[existingIndex] = { ...nextItems[existingIndex], ...persisted };
         else nextItems.unshift(persisted);
-      });
+      }));
       overrides[projectId] = { ...prevProject, myActionItems: nextItems };
       writeProjectOverrides(overrides);
     }
@@ -1842,7 +1854,7 @@ export default function MeetingManualDetail() {
     setIssuing(false);
     setIssueOpen(false);
     setIssueStep(1);
-    showToast(targetSvc === 'jira' ? 'Jira에 연동되었습니다.' : 'Notion에 연동되었습니다.');
+    showToast(selectedIssueSvc === 'both' ? 'Jira와 Notion에 연동되었습니다.' : selectedIssueSvc === 'jira' ? 'Jira에 연동되었습니다.' : 'Notion에 연동되었습니다.');
   };
 
   if (!minutes) {
@@ -1907,7 +1919,22 @@ export default function MeetingManualDetail() {
       (Array.isArray(minutes.issues) && minutes.issues.length > 0) ||
       String(minutes.nextAgenda || '').trim()
   );
-  const selectedIssueSvcObj = services.find((svc) => svc.id === selectedIssueSvc);
+  const selectedIssueSvcObj = selectedIssueSvc === 'both'
+    ? { id: 'both', name: 'Jira + Notion', iconBg: '#7C3AED', iconLabel: 'J+N' }
+    : services.find((svc) => svc.id === selectedIssueSvc);
+  const selectedIssueSvcIds = selectedIssueSvc === 'both'
+    ? ['jira', 'notion']
+    : selectedIssueSvc ? [selectedIssueSvc] : [];
+  const toggleIssueSvc = (svcId) => {
+    setSelectedIssueSvc((prev) => {
+      const current = prev === 'both' ? ['jira', 'notion'] : prev ? [prev] : [];
+      const next = current.includes(svcId)
+        ? current.filter((id) => id !== svcId)
+        : [...current, svcId];
+      if (next.length === 2) return 'both';
+      return next[0] || '';
+    });
+  };
   const canIssueNext = Boolean(selectedIssueSvc) && issueCheckedItems.size > 0;
   const issueIsMultiple = issueCheckedItems.size > 1;
   const canIssueSubmit = issueMode !== 'merged' || !issueIsMultiple || String(issueAssignee || '').trim().length > 0;
@@ -2525,7 +2552,7 @@ export default function MeetingManualDetail() {
                 onClick={handleIssue}
                 disabled={issuing || !canIssueSubmit}
                 className="text-sm font-bold px-5 py-2 rounded-xl text-white transition-all hover:-translate-y-0.5 disabled:opacity-70 disabled:cursor-not-allowed disabled:translate-y-0 flex items-center justify-center gap-2 cursor-pointer"
-                style={{ background: selectedIssueSvc ? SVC_ISSUE_BTN[selectedIssueSvc] : '#10B981', minWidth: 130 }}
+                style={{ background: selectedIssueSvc === 'both' ? 'linear-gradient(135deg,#0099CC,#7C3AED)' : selectedIssueSvc ? SVC_ISSUE_BTN[selectedIssueSvc] : '#10B981', minWidth: 130 }}
               >
                 {issuing ? (
                   <>
@@ -2563,12 +2590,12 @@ export default function MeetingManualDetail() {
                   { id: 'jira', name: 'Jira', iconBg: '#0099CC', iconLabel: 'J' },
                   { id: 'notion', name: 'Notion', iconBg: '#0D1B2A', iconLabel: 'N' },
                 ].map((svc) => {
-                  const selected = selectedIssueSvc === svc.id;
+                  const selected = selectedIssueSvcIds.includes(svc.id);
                   return (
                     <button
                       key={svc.id}
                       type="button"
-                      onClick={() => setSelectedIssueSvc(svc.id)}
+                      onClick={() => toggleIssueSvc(svc.id)}
                       className="flex flex-col items-center gap-2 py-3 px-2 rounded-xl border transition-all hover:-translate-y-0.5 cursor-pointer"
                       style={{
                         borderColor: selected ? '#0099CC' : 'rgba(0,100,180,0.12)',

@@ -285,22 +285,29 @@ function buildStoredIntegrationLogs({ projectId = "", sourceTitle = "" } = {}) {
   return projects.flatMap(([currentProjectId, projectOverride]) => {
     const items = Array.isArray(projectOverride?.myActionItems) ? projectOverride.myActionItems : [];
     return items
-      .filter((item) => item?.integrationTool || item?.externalLink || item?.jiraLink)
+      .filter((item) => item?.integrationTool || item?.externalLink || item?.jiraLink || item?.integrationLinks)
       .filter((item) => {
         const projectMatches = !normalizedProjectId || String(item?.projectId || currentProjectId) === normalizedProjectId;
         const sourceMatches = !normalizedSource || String(item?.source || "").trim() === normalizedSource;
         return projectMatches && sourceMatches;
       })
-      .map((item, index) => {
-        const rawTool = String(item?.integrationTool || item?.integrationProvider || item?.externalLink || item?.jiraLink || "").toLowerCase();
-        const svcId = rawTool.includes("notion") ? "notion" : "jira";
-        return {
+      .flatMap((item, index) => {
+        const links = item?.integrationLinks && typeof item.integrationLinks === "object" ? item.integrationLinks : {};
+        const linkedSvcs = Object.entries(links)
+          .filter(([, url]) => Boolean(url))
+          .map(([svcId]) => String(svcId).toLowerCase())
+          .filter((svcId) => svcId === "jira" || svcId === "notion");
+        if (linkedSvcs.length === 0) {
+          const rawTool = String(item?.integrationTool || item?.integrationProvider || item?.externalLink || item?.jiraLink || "").toLowerCase();
+          linkedSvcs.push(rawTool.includes("notion") ? "notion" : "jira");
+        }
+        return linkedSvcs.map((svcId) => ({
           svcId,
           label: item?.title || item?.text || `대시보드 연동 업무 ${index + 1}`,
           time: toAuditTimestamp(item?.updatedAt || item?.updated_at),
           user: item?.assignee || "담당자",
           source: "dashboard",
-        };
+        }));
       });
   });
 }
@@ -1200,6 +1207,7 @@ function IssueModal({ open, onClose, onIssued, services, isMobile, assigneeOptio
   }, []);
   const issuedIssueKeySet = useMemo(() => {
     if (!selectedSvc) return new Set();
+    if (selectedSvc === "both") return new Set();
     const svc = services.find((item) => item.id === selectedSvc);
     return new Set(
       (svc?.tickets || [])
@@ -1332,25 +1340,47 @@ function IssueModal({ open, onClose, onIssued, services, isMobile, assigneeOptio
       return;
     }
 
-    const svcName = services.find(s => s.id === selectedSvc)?.name || "";
-    if (issueMode === "merged") {
-      onIssued(svcName, [{ label: title, user: assignee || "미지정", due: mergedDue }]);
-    } else {
-      onIssued(
-        svcName,
-        selectedItemsList.map((item) => ({
+    const targetSvcIds = selectedSvc === "both"
+      ? ["jira", "notion"]
+      : [selectedSvc === "notion" ? "notion" : "jira"];
+    const svcNames = targetSvcIds.map((svcId) => services.find((s) => s.id === svcId)?.name || svcId);
+    const buildIssuedItems = (svcId) => {
+      const baseItems = issueMode === "merged"
+        ? [{ label: title, user: assignee || "미지정", due: mergedDue }]
+        : selectedItemsList.map((item) => ({
           label: item.text,
           user: item.assignee || "미지정",
           due: item.due || "미정",
-        }))
-      );
+        }));
+      return baseItems.map((item) => ({ ...item, svcId }));
+    };
+    const issuedPayload = targetSvcIds.flatMap((svcId) => buildIssuedItems(svcId));
+    if (issueMode === "merged") {
+      onIssued(svcNames, issuedPayload);
+    } else {
+      onIssued(svcNames, issuedPayload);
     }
     setIssuing(false);
     handleClose();
   };
 
   const canNext = selectedSvc && checkedItems.size > 0;
-  const selectedSvcObj = services.find(s => s.id === selectedSvc);
+  const selectedSvcObj = selectedSvc === "both"
+    ? { id: "both", name: "Jira + Notion", iconBg: "#7C3AED", iconLabel: "J+N" }
+    : services.find(s => s.id === selectedSvc);
+  const selectedSvcIds = selectedSvc === "both"
+    ? ["jira", "notion"]
+    : selectedSvc ? [selectedSvc] : [];
+  const toggleSvc = (svcId) => {
+    setSelectedSvc((prev) => {
+      const current = prev === "both" ? ["jira", "notion"] : prev ? [prev] : [];
+      const next = current.includes(svcId)
+        ? current.filter((id) => id !== svcId)
+        : [...current, svcId];
+      if (next.length === 2) return "both";
+      return next[0] || null;
+    });
+  };
   const selectedItemsList = [...checkedItems].map((i) => ({
     ...ACTION_ITEMS_FOR_ISSUE[i],
     due: getDueLabel(i),
@@ -1395,7 +1425,7 @@ function IssueModal({ open, onClose, onIssued, services, isMobile, assigneeOptio
               onClick={handleIssue}
               disabled={issuing || !canIssue}
               className="text-sm font-bold px-5 py-2 rounded-xl text-white transition-all hover:-translate-y-0.5 disabled:opacity-70 disabled:cursor-not-allowed disabled:translate-y-0 flex items-center justify-center gap-2 cursor-pointer"
-              style={{ background: selectedSvc ? SVC_ISSUE_BTN[selectedSvc] : "#10B981", minWidth: 130 }}
+              style={{ background: selectedSvc === "both" ? "linear-gradient(135deg,#0099CC,#7C3AED)" : selectedSvc ? SVC_ISSUE_BTN[selectedSvc] : "#10B981", minWidth: 130 }}
             >
               {issuing ? (
                 <>
@@ -1427,14 +1457,16 @@ function IssueModal({ open, onClose, onIssued, services, isMobile, assigneeOptio
             <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-2.5">어디에 등록할까요?</p>
             <div
               className="grid gap-2"
-              style={{ gridTemplateColumns: `repeat(${Math.max(1, Math.min(services.length, 2))}, minmax(0, 1fr))` }}
+              style={{ gridTemplateColumns: "repeat(2, minmax(0, 1fr))" }}
             >
-              {services.map(svc => {
-                const isSelected = selectedSvc === svc.id;
+              {[
+                ...services,
+              ].map(svc => {
+                const isSelected = selectedSvcIds.includes(svc.id);
                 return (
                   <button
                     key={svc.id}
-                    onClick={() => setSelectedSvc(svc.id)}
+                    onClick={() => toggleSvc(svc.id)}
                     className="flex flex-col items-center gap-2 py-3 px-2 rounded-xl border transition-all hover:-translate-y-0.5 cursor-pointer"
                     style={{
                       borderColor: isSelected ? "#0099CC" : "rgba(0,100,180,0.12)",
@@ -3302,9 +3334,12 @@ export default function TikiSprint12() {
   }, [allCollapsed]);
 
   const handleIssued = useCallback((svcName, issuedItems = []) => {
-    const svcId = INITIAL_INTEGRATION_SERVICES.find(s => s.name === svcName)?.id || "jira";
+    const svcIds = Array.isArray(svcName)
+      ? svcName.map((name) => INITIAL_INTEGRATION_SERVICES.find(s => s.name === name)?.id || String(name).toLowerCase()).filter((id) => id === "jira" || id === "notion")
+      : [INITIAL_INTEGRATION_SERVICES.find(s => s.name === svcName)?.id || "jira"];
     const logs = (Array.isArray(issuedItems) ? issuedItems : [{ label: issuedItems }])
       .map((item) => ({
+        svcId: String(item?.svcId || svcIds[0] || "jira").toLowerCase(),
         label: String(item?.label || item || "연동 업무").trim(),
         user: String(item?.user || "담당자").trim() || "담당자",
         due: String(item?.due || "").trim(),
@@ -3313,11 +3348,11 @@ export default function TikiSprint12() {
 
     setServices(prev =>
       prev.map(svc => {
-        if (svc.id !== svcId) return svc;
-        let updated = false;
+        if (!svcIds.includes(svc.id)) return svc;
+        let updatedCount = logs.filter((item) => item.svcId === svc.id).length;
         const tickets = svc.tickets.map(t => {
-          if (!updated && t.status === "todo") {
-            updated = true;
+          if (updatedCount > 0 && t.status === "todo") {
+            updatedCount -= 1;
             return { ...t, status: "done" };
           }
           return t;
@@ -3328,7 +3363,7 @@ export default function TikiSprint12() {
 
     const now = new Date();
     const timeStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2,"0")}-${String(now.getDate()).padStart(2,"0")} ${String(now.getHours()).padStart(2,"0")}:${String(now.getMinutes()).padStart(2,"0")}`;
-    setAuditLog(prev => [...prev, ...logs.map((item) => ({ svcId, label: item.label, time: timeStr, user: item.user }))]);
+    setAuditLog(prev => [...prev, ...logs.map((item) => ({ svcId: item.svcId, label: item.label, time: timeStr, user: item.user }))]);
 
     const state = location?.state || {};
     const projectId = String(state.projectId || "").trim();
@@ -3339,8 +3374,14 @@ export default function TikiSprint12() {
       const prevItems = Array.isArray(prevProject.myActionItems) ? prevProject.myActionItems : [];
       const nextItems = [...prevItems];
       logs.forEach((item, index) => {
-        const id = `${sourceTitle}-${svcId}-${item.label}-${index}`;
+        const svcId = item.svcId === "notion" ? "notion" : "jira";
+        const id = `${sourceTitle}-action-${item.label}-${index}`;
+        const existingIndex = nextItems.findIndex((existing) => String(existing?.id || "") === id);
+        const existing = existingIndex >= 0 ? nextItems[existingIndex] : {};
+        const existingLinks = existing?.integrationLinks && typeof existing.integrationLinks === "object" ? existing.integrationLinks : {};
+        const externalLink = buildExternalLink(svcId, item.label);
         const persisted = {
+          ...existing,
           id,
           text: item.label,
           title: item.label,
@@ -3354,10 +3395,13 @@ export default function TikiSprint12() {
           projectId,
           projectName: state.projectName || state.project?.name || "",
           integrationTool: svcId === "notion" ? "Notion" : "Jira",
-          externalLink: buildExternalLink(svcId, item.label),
+          integrationLinks: {
+            ...existingLinks,
+            [svcId]: externalLink,
+          },
+          externalLink,
           updatedAt: new Date().toISOString(),
         };
-        const existingIndex = nextItems.findIndex((existing) => String(existing?.id || "") === id);
         if (existingIndex >= 0) nextItems[existingIndex] = { ...nextItems[existingIndex], ...persisted };
         else nextItems.unshift(persisted);
       });
@@ -3365,7 +3409,7 @@ export default function TikiSprint12() {
       writeProjectOverrides(overrides);
     }
 
-    showToast(svcName === "Jira" ? "Jira에 연동되었습니다." : "Notion에 연동되었습니다.");
+    showToast(svcIds.length > 1 ? "Jira와 Notion에 연동되었습니다." : svcIds[0] === "jira" ? "Jira에 연동되었습니다." : "Notion에 연동되었습니다.");
   }, [location?.state, showToast, summaryData.summary]);
 
   const txData = TX

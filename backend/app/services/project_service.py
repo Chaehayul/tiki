@@ -1,5 +1,5 @@
 from datetime import UTC, datetime
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
@@ -178,6 +178,12 @@ def create_meeting(db: Session, project_id: UUID, payload: MeetingCreate, user_i
     project = _get_project_or_404(db, project_id)
     _assert_member(project, user_id)
 
+    action_items = [
+        {**item, "id": str(item.get("id") or item.get("task_id") or uuid4())}
+        if isinstance(item, dict)
+        else item
+        for item in payload.action_items
+    ]
     meeting = Meeting(
         project_id=project_id,
         title=payload.title,
@@ -188,14 +194,21 @@ def create_meeting(db: Session, project_id: UUID, payload: MeetingCreate, user_i
         tags=payload.tags,
         participants=payload.participants,
         summary=payload.summary,
-        action_items=payload.action_items,
+        action_items=action_items,
         action_items_count=payload.action_items_count
         if payload.action_items_count is not None
-        else len(payload.action_items),
+        else len(action_items),
     )
     db.add(meeting)
     db.commit()
     db.refresh(meeting)
+    try:
+        from app.services import external_integration_service
+
+        external_integration_service.sync_connected_meeting_resources(db, meeting)
+        db.refresh(meeting)
+    except Exception:
+        pass
     return meeting
 
 
@@ -213,6 +226,13 @@ def update_meeting(
     meeting = _get_meeting_or_404(db, project_id, meeting_id)
 
     for field, value in payload.model_dump(exclude_unset=True).items():
+        if field == "action_items" and isinstance(value, list):
+            value = [
+                {**item, "id": str(item.get("id") or item.get("task_id") or uuid4())}
+                if isinstance(item, dict)
+                else item
+                for item in value
+            ]
         setattr(meeting, field, value)
 
     db.commit()
@@ -224,6 +244,21 @@ def delete_meeting(db: Session, project_id: UUID, meeting_id: UUID, user_id: UUI
     project = _get_project_or_404(db, project_id)
     _assert_member(project, user_id)
     meeting = _get_meeting_or_404(db, project_id, meeting_id)
+    action_titles = {
+        str(item.get("title") or item.get("text") or "").strip()
+        for item in (meeting.action_items or [])
+        if isinstance(item, dict) and str(item.get("title") or item.get("text") or "").strip()
+    }
+    if action_titles:
+        related_tickets = db.scalars(
+            select(Ticket)
+            .join(AnalysisResult, AnalysisResult.id == Ticket.analysis_result_id)
+            .join(ExtractedContent, ExtractedContent.id == AnalysisResult.extracted_content_id)
+            .join(UploadedFile, UploadedFile.id == ExtractedContent.uploaded_file_id)
+            .where(UploadedFile.project_id == project_id, Ticket.title.in_(action_titles))
+        ).all()
+        for ticket in related_tickets:
+            db.delete(ticket)
     db.delete(meeting)
     db.commit()
 

@@ -3,7 +3,7 @@ import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import Header from '../components/Header';
 import Footer from '../components/Footer';
 import MobileTab from '../components/MobileTab';
-import { deleteProjectMeeting, getProject, listProjects, updateProjectMeeting } from '../api/apiClient';
+import { deleteProjectMeeting, getProject, listProjectMeetings, listProjects, sendMeetingTasks, updateProjectMeeting } from '../api/apiClient';
 
 
 function statusBadgeClass(status) {
@@ -1554,27 +1554,56 @@ export default function ProjectMeetings() {
         );
     };
 
-    const startActionIntegration = (tools) => {
+    const startActionIntegration = async (tools) => {
         if (!actionDraft) return;
         const targetTools = (Array.isArray(tools) ? tools : [tools])
             .filter(Boolean)
             .filter((tool) => !hasActionIntegrationTool(actionDraft, tool));
         if (targetTools.length === 0) return;
         setPendingIntegrationTarget(targetTools.join(','));
-        window.setTimeout(() => {
+        try {
+            if (!actionDraft.meetingId) {
+                throw new Error('회의록 출처가 없는 업무는 외부 서비스로 보낼 수 없습니다.');
+            }
+            const nextLinks = { ...getActionIntegrationLinks(actionDraft) };
+            for (const tool of targetTools) {
+                const response = await sendMeetingTasks(actionDraft.meetingId, {
+                    provider: tool,
+                    taskIds: [actionDraft.id],
+                });
+                const synced = (response?.results || []).find((item) => item.taskId === actionDraft.id || item.taskId === String(actionDraft.id));
+                if (!synced || synced.syncStatus === 'failed') {
+                    throw new Error(synced?.errorMessage || `${tool === 'notion' ? 'Notion' : 'Jira'} 전송에 실패했습니다.`);
+                }
+                nextLinks[tool] = synced.externalUrl || nextLinks[tool] || '';
+            }
             const ok = saveActionDraft({
                 nextStatus: normalizeActionStatus(actionDraft.status) === '수행완료' ? '수행완료' : '연동완료',
-                integrationTools: targetTools.map((tool) => (tool === 'notion' ? 'Notion' : 'Jira')),
-                closeAfterSave: true,
+                closeAfterSave: false,
             });
+            if (ok) {
+                const nextItems = allActionItems.map((item) =>
+                    item.id === actionDraft.id
+                        ? {
+                              ...item,
+                              status: normalizeActionStatus(actionDraft.status) === '수행완료' ? '수행완료' : '연동완료',
+                              integrationLinks: nextLinks,
+                              externalLink: nextLinks.jira || nextLinks.notion || item.externalLink || '',
+                              integrationTool: targetTools[targetTools.length - 1] === 'notion' ? 'Notion' : 'Jira',
+                          }
+                        : item
+                );
+                setActionItems(nextItems);
+                persistProjectActionItems(nextItems);
+                showToast(`${targetTools.map((tool) => (tool === 'notion' ? 'Notion' : 'Jira')).join(', ')} 전송이 완료되었습니다.`, 'success');
+                closeActionDrawer();
+            }
+        } catch (err) {
+            showToast(err?.message || '업무 보내기에 실패했습니다.', 'error');
+        } finally {
             setPendingIntegrationTarget('');
             setSelectedIntegrationTools([]);
-            if (ok)
-                showToast(
-                    `${targetTools.map((tool) => (tool === 'notion' ? 'Notion' : 'Jira')).join(', ')} 연동이 완료되어 연동 완료로 전환되었습니다.`,
-                    'success'
-                );
-        }, 650);
+        }
     };
 
     const removeActionItem = (itemId) => {

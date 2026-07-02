@@ -259,6 +259,34 @@ export async function deleteProjectMeeting(projectId, meetingId) {
   });
 }
 
+export async function getProjectIntegrations(projectId) {
+  return request(`/projects/${projectId}/integrations`);
+}
+
+export async function connectProjectIntegration(projectId, provider) {
+  const search = new URLSearchParams({ projectId });
+  return request(`/integrations/${provider}/connect?${search.toString()}`);
+}
+
+export async function disconnectProjectIntegration(projectId, provider) {
+  return request(`/projects/${projectId}/integrations/${provider}`, {
+    method: 'DELETE',
+  });
+}
+
+export async function syncProjectIntegrationMeetings(projectId, provider) {
+  return request(`/projects/${projectId}/integrations/${provider}/sync-meetings`, {
+    method: 'POST',
+  });
+}
+
+export async function sendMeetingTasks(meetingId, { provider, taskIds }) {
+  return request(`/meetings/${meetingId}/tasks/send`, {
+    method: 'POST',
+    body: JSON.stringify({ provider, taskIds }),
+  });
+}
+
 export async function uploadFiles({ projectId, projectKey, projectName, files }) {
   const formData = new FormData();
   if (projectId) formData.append('project_id', projectId);

@@ -3,7 +3,15 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import Header from '../components/Header';
 import Footer from '../components/Footer';
 import MobileTab from '../components/MobileTab';
-import { getProject, inviteProjectMember } from '../api/apiClient';
+import {
+  connectProjectIntegration,
+  createProjectMeeting,
+  disconnectProjectIntegration,
+  getProject,
+  getProjectIntegrations,
+  inviteProjectMember,
+  syncProjectIntegrationMeetings,
+} from '../api/apiClient';
 
 const icons = {
   save: ["M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z", "M17 21v-8H7v8", "M7 3v5h8"],
@@ -67,6 +75,7 @@ const VISIBILITY_OPTIONS = [
 const avatarPalette = ['bg-sky-500', 'bg-violet-500', 'bg-amber-500', 'bg-emerald-500', 'bg-rose-500', 'bg-indigo-500'];
 
 const PROJECT_OVERRIDE_STORAGE_KEY = 'tiki_project_overrides';
+const MANUAL_MEETING_RECORDS_KEY = 'tiki_manual_minutes_records';
 
 
 const TOAST_COLORS = {
@@ -101,6 +110,64 @@ const writeProjectOverride = (projectId, projectData) => {
   const next = readProjectOverrides();
   next[String(projectId)] = projectData;
   localStorage.setItem(PROJECT_OVERRIDE_STORAGE_KEY, JSON.stringify(next));
+};
+
+const readManualMeetingRecords = () => {
+  try {
+    const raw = localStorage.getItem(MANUAL_MEETING_RECORDS_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+};
+
+const localMeetingToPayload = (meeting = {}) => {
+  const actions = Array.isArray(meeting.action_items)
+    ? meeting.action_items
+    : Array.isArray(meeting.actionItemsList)
+      ? meeting.actionItemsList
+      : Array.isArray(meeting.actions)
+        ? meeting.actions
+        : [];
+  const actionItems = actions
+    .filter((item) => item && typeof item === 'object')
+    .map((item, index) => ({
+      id: item.id || item.task_id || `${meeting.id || 'local'}-task-${index + 1}`,
+      title: item.title || item.text || item.name || '업무',
+      text: item.text || item.title || item.name || '업무',
+      description: item.description || item.detail || '',
+      assignee: item.assignee || item.owner || '',
+      due: item.due || item.due_at || item.dueDate || '',
+      status: item.status || '검토대기',
+      priority: item.priority || '',
+    }));
+
+  const decisions = Array.isArray(meeting.decisions)
+    ? meeting.decisions.map((item) => (typeof item === 'string' ? item : item?.text)).filter(Boolean)
+    : [];
+  const issues = Array.isArray(meeting.issues)
+    ? meeting.issues.map((item) => (typeof item === 'string' ? item : item?.text)).filter(Boolean)
+    : [];
+  const extraSections = [
+    decisions.length ? `\n\n주요 결정\n${decisions.map((item) => `- ${item}`).join('\n')}` : '',
+    issues.length ? `\n\n이슈 및 리스크\n${issues.map((item) => `- ${item}`).join('\n')}` : '',
+    meeting.nextAgenda ? `\n\n다음 회의 안건\n${meeting.nextAgenda}` : '',
+  ].join('');
+
+  return {
+    title: String(meeting.title || meeting.name || '회의록').trim(),
+    date: String(meeting.date || meeting.meeting_date || meeting.createdAt || new Date().toISOString().slice(0, 10)).slice(0, 20),
+    round_number: Number(meeting.round_number || meeting.roundNumber || 1),
+    status: meeting.status || '진행 중',
+    meeting_type: meeting.meeting_type || meeting.type || '정기',
+    tags: Array.isArray(meeting.tags) ? meeting.tags.map(String) : [],
+    participants: Array.isArray(meeting.participants) ? meeting.participants.map(String) : [],
+    summary: `${meeting.summary || meeting.fullSummary || meeting.content || ''}${extraSections}`,
+    action_items: actionItems,
+    action_items_count: actionItems.length,
+  };
 };
 
 const avatarColor = (name = '') => {
@@ -145,11 +212,18 @@ function StatusBadge({ status }) {
 const Configuration = () => {
   const location = useLocation();
   const navigate = useNavigate();
-  const selectedProject = location.state?.project;
+  const stateProject = location.state?.project || null;
+  const searchParams = useMemo(() => new URLSearchParams(location.search), [location.search]);
+  const projectIdFromQuery = searchParams.get('projectId') || searchParams.get('project_id') || '';
+  const oauthProviderFromQuery = searchParams.has('jira') ? 'jira' : searchParams.has('notion') ? 'notion' : '';
+  const oauthStatusFromQuery = oauthProviderFromQuery ? searchParams.get(oauthProviderFromQuery) : '';
 
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
   const [activeTab, setActiveTab] = useState('settings');
-  const [settingsTab, setSettingsTab] = useState('basic');
+  const [settingsTab, setSettingsTab] = useState(() => (oauthProviderFromQuery ? 'integration' : 'basic'));
+  const [resolvedProject, setResolvedProject] = useState(stateProject);
+  const [isResolvingProject, setIsResolvingProject] = useState(Boolean(projectIdFromQuery && !stateProject?.id));
+  const selectedProject = resolvedProject || stateProject;
 
   useEffect(() => {
     window.scrollTo(0, 0);
@@ -176,6 +250,12 @@ const Configuration = () => {
 
   const [formData, setFormData] = useState(() => buildInitialState(selectedProject));
   const [status, setStatus] = useState({ jira: 'disconnected', notion: 'disconnected' });
+  const [integrationStatus, setIntegrationStatus] = useState({
+    jira: { connected: false, status: 'disconnected' },
+    notion: { connected: false, status: 'disconnected' },
+  });
+  const [integrationLoading, setIntegrationLoading] = useState({ jira: false, notion: false });
+  const [integrationSyncing, setIntegrationSyncing] = useState({ jira: false, notion: false });
   const [toast, setToast] = useState({ message: '', type: 'info' });
   const toastTimerRef = useRef(null);
   const [guideModal, setGuideModal] = useState(null);
@@ -190,7 +270,25 @@ const Configuration = () => {
   const [visibilityMenuOpen, setVisibilityMenuOpen] = useState(false);
   const templateMenuRef = useRef(null);
   const visibilityMenuRef = useRef(null);
+  const oauthToastShownRef = useRef('');
   const currentToastVariant = TOAST_VARIANTS[toast.type] || TOAST_VARIANTS.info;
+
+  const refreshIntegrationStatus = async (projectId = selectedProject?.id) => {
+    if (!projectId) return;
+    try {
+      const next = await getProjectIntegrations(projectId);
+      setIntegrationStatus({
+        jira: next?.jira || { connected: false, status: 'disconnected' },
+        notion: next?.notion || { connected: false, status: 'disconnected' },
+      });
+      setStatus({
+        jira: next?.jira?.connected ? 'connected' : 'disconnected',
+        notion: next?.notion?.connected ? 'connected' : 'disconnected',
+      });
+    } catch (err) {
+      showToast(err?.message || '외부 연동 상태를 불러오지 못했습니다.', 'error');
+    }
+  };
 
   const buildInitialAdminNames = (project, participants) => {
     const fromProject = Array.isArray(project?.admins)
@@ -209,11 +307,70 @@ const Configuration = () => {
   };
 
   useEffect(() => {
+    if (stateProject?.id) {
+      setResolvedProject(stateProject);
+    }
+  }, [stateProject?.id]);
+
+  useEffect(() => {
+    if (!projectIdFromQuery) return;
+    if (selectedProject?.id === projectIdFromQuery) {
+      setIsResolvingProject(false);
+      return;
+    }
+
+    let cancelled = false;
+    setIsResolvingProject(true);
+    getProject(projectIdFromQuery)
+      .then((project) => {
+        if (cancelled) return;
+        setResolvedProject(project);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setResolvedProject(null);
+      })
+      .finally(() => {
+        if (!cancelled) setIsResolvingProject(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [projectIdFromQuery, selectedProject?.id]);
+
+  useEffect(() => {
+    if (!oauthProviderFromQuery) return;
+    setSettingsTab('integration');
+
+    const providerLabel = oauthProviderFromQuery === 'jira' ? 'Jira' : 'Notion';
+    const toastKey = `${projectIdFromQuery}:${oauthProviderFromQuery}:${oauthStatusFromQuery}`;
+    if (oauthToastShownRef.current !== toastKey) {
+      oauthToastShownRef.current = toastKey;
+      if (oauthStatusFromQuery === 'connected') {
+        showToast(`${providerLabel} 연동이 완료되었습니다.`, 'success');
+      } else if (oauthStatusFromQuery === 'failed') {
+        showToast(`${providerLabel} 연동에 실패했습니다. 다시 시도해 주세요.`, 'error');
+      }
+    }
+
+    const projectId = selectedProject?.id || projectIdFromQuery;
+    if (projectId) {
+      refreshIntegrationStatus(projectId);
+    }
+  }, [oauthProviderFromQuery, oauthStatusFromQuery, projectIdFromQuery, selectedProject?.id]);
+
+  useEffect(() => {
     setFormData(buildInitialState(selectedProject));
     setInviteQuery('');
     const initialParticipants = projectParticipants(selectedProject);
     setAdminNames(buildInitialAdminNames(selectedProject, initialParticipants));
   }, [selectedProject]);
+
+  useEffect(() => {
+    if (!selectedProject?.id) return;
+    refreshIntegrationStatus(selectedProject.id);
+  }, [selectedProject?.id]);
 
   useEffect(() => {
     const projectId = selectedProject?.id;
@@ -226,6 +383,9 @@ const Configuration = () => {
     getProject(projectId)
       .then((project) => {
         if (cancelled) return;
+        if (project?.id) {
+          setResolvedProject(project);
+        }
         const participants = projectParticipants(project);
         setFormData((prev) => ({
           ...prev,
@@ -291,6 +451,114 @@ const Configuration = () => {
 
     setStatus(prev => ({ ...prev, [tool]: 'testing' }));
     setTimeout(() => setStatus(prev => ({ ...prev, [tool]: 'connected' })), 1500);
+  };
+
+  const handleConnectIntegration = async (provider) => {
+    if (!selectedProject?.id) {
+      showToast('프로젝트 정보가 없습니다.', 'error');
+      return;
+    }
+    setIntegrationLoading((prev) => ({ ...prev, [provider]: true }));
+    try {
+      const result = await connectProjectIntegration(selectedProject.id, provider);
+      if (result?.authorization_url) {
+        window.location.href = result.authorization_url;
+        return;
+      }
+      showToast('OAuth 연결 URL을 받지 못했습니다.', 'error');
+    } catch (err) {
+      showToast(err?.message || '외부 연동을 시작하지 못했습니다.', 'error');
+    } finally {
+      setIntegrationLoading((prev) => ({ ...prev, [provider]: false }));
+    }
+  };
+
+  const handleDisconnectIntegration = async (provider) => {
+    if (!selectedProject?.id) return;
+    setIntegrationLoading((prev) => ({ ...prev, [provider]: true }));
+    try {
+      await disconnectProjectIntegration(selectedProject.id, provider);
+      await refreshIntegrationStatus(selectedProject.id);
+      showToast(`${provider === 'jira' ? 'Jira' : 'Notion'} 연동을 해제했습니다.`, 'success');
+    } catch (err) {
+      showToast(err?.message || '연동 해제에 실패했습니다.', 'error');
+    } finally {
+      setIntegrationLoading((prev) => ({ ...prev, [provider]: false }));
+    }
+  };
+
+  const syncLocalMeetingsToBackend = async () => {
+    const projectId = selectedProject?.id;
+    if (!projectId) return 0;
+    const override = readProjectOverrides()[String(projectId)] || {};
+    const manualRecords = Object.values(readManualMeetingRecords()).filter((record) => String(record?.projectId || '') === String(projectId));
+    const sources = [
+      ...(Array.isArray(stateProject?.meetings) ? stateProject.meetings : []),
+      ...(Array.isArray(selectedProject?.meetings) ? selectedProject.meetings : []),
+      ...(Array.isArray(override?.meetings) ? override.meetings : []),
+      ...manualRecords,
+    ];
+    const localMeetings = [];
+    const seenLocal = new Set();
+    sources.forEach((meeting) => {
+      const payload = localMeetingToPayload(meeting);
+      const key = `${payload.title.trim()}::${payload.date}`;
+      if (!payload.title.trim() || seenLocal.has(key)) return;
+      seenLocal.add(key);
+      localMeetings.push(payload);
+    });
+    if (localMeetings.length === 0) return 0;
+
+    let backendProject = null;
+    try {
+      backendProject = await getProject(projectId);
+    } catch {
+      backendProject = null;
+    }
+    const backendMeetings = Array.isArray(backendProject?.meetings) ? backendProject.meetings : [];
+    const existing = new Set(backendMeetings.map((meeting) => `${String(meeting.title || '').trim()}::${String(meeting.date || '').slice(0, 20)}`));
+    let created = 0;
+    for (const payload of localMeetings) {
+      const key = `${payload.title.trim()}::${payload.date}`;
+      if (existing.has(key)) continue;
+      await createProjectMeeting(projectId, payload);
+      existing.add(key);
+      created += 1;
+    }
+    if (created > 0) {
+      const refreshed = await getProject(projectId);
+      if (refreshed?.id) setResolvedProject(refreshed);
+    }
+    return created;
+  };
+
+  const handleSyncExistingMeetings = async (provider) => {
+    if (!selectedProject?.id) {
+      showToast('프로젝트 정보가 없습니다.', 'error');
+      return;
+    }
+    setIntegrationSyncing((prev) => ({ ...prev, [provider]: true }));
+    try {
+      await syncLocalMeetingsToBackend();
+      const result = await syncProjectIntegrationMeetings(selectedProject.id, provider);
+      await refreshIntegrationStatus(selectedProject.id);
+      const providerLabel = provider === 'jira' ? 'Jira' : 'Notion';
+      const total = result?.total || 0;
+      const synced = result?.synced || 0;
+      const failed = result?.failed || 0;
+      const firstError = Array.isArray(result?.errors) ? result.errors.find((item) => item?.message)?.message : '';
+      if (total === 0) {
+        showToast('백엔드에 저장된 회의록이 없습니다. 회의록을 다시 생성하면 동기화할 수 있습니다.', 'error');
+      } else if (failed > 0) {
+        showToast(`${providerLabel} 동기화 ${synced}/${total}건 완료, ${failed}건 실패${firstError ? `: ${firstError}` : ''}`, 'error');
+      } else {
+        showToast(`${providerLabel} 기존 회의록 동기화 완료: ${synced}/${total}건`, 'success');
+      }
+    } catch (err) {
+      showToast(err?.message || '기존 회의록 동기화에 실패했습니다.', 'error');
+    } finally {
+      setIntegrationSyncing((prev) => ({ ...prev, [provider]: false }));
+    }
   };
 
   const handleReset = () => {
@@ -387,14 +655,6 @@ const Configuration = () => {
   };
 
   const goBack = () => {
-    if (window.history.length > 1) {
-      navigate(-1);
-      return;
-    }
-    if (selectedProject?.id) {
-      navigate(`/project/${selectedProject.id}/meetings`, { state: { project: selectedProject } });
-      return;
-    }
     navigate('/project-list');
   };
 
@@ -447,7 +707,13 @@ const Configuration = () => {
               </div>
             </div>
 
-            {!selectedProject && (
+            {isResolvingProject && (
+              <div className="mt-4 rounded-2xl border border-sky-100 bg-sky-50 px-4 py-3.5 text-sm font-semibold text-sky-700">
+                프로젝트 연동 정보를 불러오는 중입니다.
+              </div>
+            )}
+
+            {!selectedProject && !isResolvingProject && (
               <div className="mt-4 flex flex-col gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3.5 sm:flex-row sm:items-center sm:justify-between">
                 <p className="text-sm text-amber-800">프로젝트 정보 없이 열렸습니다. 프로젝트 목록 또는 프로젝트 상세에서 진입하면 해당 프로젝트를 수정할 수 있습니다.</p>
                 <button
@@ -830,6 +1096,90 @@ const Configuration = () => {
               )}
 
               {settingsTab === 'integration' && (
+                <div className="space-y-5">
+                  <div className={cardClass}>
+                    <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                      <div>
+                        <h2 className="text-base font-bold text-slate-900">Jira</h2>
+                        <p className="mt-1 text-sm text-slate-500">회의록은 대표 Issue로, 선택한 업무는 Jira Task로 중복 없이 동기화됩니다.</p>
+                      </div>
+                      <StatusBadge status={integrationStatus.jira.connected ? 'connected' : 'disconnected'} />
+                    </div>
+                    <div className="mt-5 rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3">
+                      <p className="text-sm font-semibold text-slate-800">상태: {integrationStatus.jira.connected ? '연동됨' : '미연동'}</p>
+                      {integrationStatus.jira.connected && (
+                        <p className="mt-1 text-sm text-slate-500">
+                          사이트: {integrationStatus.jira.siteName || 'Jira'} {integrationStatus.jira.siteUrl ? `· ${integrationStatus.jira.siteUrl}` : ''}
+                        </p>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => integrationStatus.jira.connected ? handleDisconnectIntegration('jira') : handleConnectIntegration('jira')}
+                      disabled={integrationLoading.jira || !selectedProject?.id}
+                      className={`mt-5 rounded-xl px-4 py-2.5 text-sm font-semibold transition-colors ${integrationStatus.jira.connected ? 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-50' : 'bg-sky-600 text-white hover:bg-sky-700'} ${integrationLoading.jira || !selectedProject?.id ? 'cursor-not-allowed opacity-60' : ''}`}
+                    >
+                      {integrationLoading.jira ? '처리 중...' : integrationStatus.jira.connected ? '연동 해제' : 'Jira 연동하기'}
+                    </button>
+                    {integrationStatus.jira.connected && (
+                      <button
+                        type="button"
+                        onClick={() => handleSyncExistingMeetings('jira')}
+                        disabled={integrationSyncing.jira || !selectedProject?.id}
+                        className={`mt-2 rounded-xl border border-sky-200 bg-sky-50 px-4 py-2.5 text-sm font-semibold text-sky-700 transition-colors hover:bg-sky-100 ${integrationSyncing.jira || !selectedProject?.id ? 'cursor-not-allowed opacity-60' : ''}`}
+                      >
+                        {integrationSyncing.jira ? '동기화 중...' : '기존 회의록 동기화'}
+                      </button>
+                    )}
+                  </div>
+
+                  <div className={cardClass}>
+                    <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                      <div>
+                        <h2 className="text-base font-bold text-slate-900">Notion</h2>
+                        <p className="mt-1 text-sm text-slate-500">회의록은 Notion 페이지로, 선택한 업무는 Task Database 또는 회의록 페이지에 동기화됩니다.</p>
+                      </div>
+                      <StatusBadge status={integrationStatus.notion.connected ? 'connected' : 'disconnected'} />
+                    </div>
+                    <div className="mt-5 rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3">
+                      <p className="text-sm font-semibold text-slate-800">상태: {integrationStatus.notion.connected ? '연동됨' : '미연동'}</p>
+                      {integrationStatus.notion.connected && (
+                        <p className="mt-1 text-sm text-slate-500">워크스페이스: {integrationStatus.notion.workspaceName || 'Notion Workspace'}</p>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => integrationStatus.notion.connected ? handleDisconnectIntegration('notion') : handleConnectIntegration('notion')}
+                      disabled={integrationLoading.notion || !selectedProject?.id}
+                      className={`mt-5 rounded-xl px-4 py-2.5 text-sm font-semibold transition-colors ${integrationStatus.notion.connected ? 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-50' : 'bg-sky-600 text-white hover:bg-sky-700'} ${integrationLoading.notion || !selectedProject?.id ? 'cursor-not-allowed opacity-60' : ''}`}
+                    >
+                      {integrationLoading.notion ? '처리 중...' : integrationStatus.notion.connected ? '연동 해제' : 'Notion 연동하기'}
+                    </button>
+                    {integrationStatus.notion.connected && (
+                      <button
+                        type="button"
+                        onClick={() => handleSyncExistingMeetings('notion')}
+                        disabled={integrationSyncing.notion || !selectedProject?.id}
+                        className={`mt-2 rounded-xl border border-sky-200 bg-sky-50 px-4 py-2.5 text-sm font-semibold text-sky-700 transition-colors hover:bg-sky-100 ${integrationSyncing.notion || !selectedProject?.id ? 'cursor-not-allowed opacity-60' : ''}`}
+                      >
+                        {integrationSyncing.notion ? '동기화 중...' : '기존 회의록 동기화'}
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="space-y-3 rounded-2xl border border-sky-100 bg-sky-50/60 p-6 sm:p-7">
+                    <h3 className="flex items-center gap-2 text-sm font-bold text-sky-700">
+                      <IIcon name="zap" size={16} /> 실제 동기화 안내
+                    </h3>
+                    <p className="text-sm text-slate-600">OAuth 연동 후 생성되는 회의록은 외부 대표 리소스로 연결되고, 업무 보내기에서는 선택한 업무만 외부 서비스에 생성 또는 업데이트됩니다.</p>
+                    <ul className="space-y-1.5 text-sm text-slate-600">
+                      <li className="flex items-center gap-2"><span className="h-1 w-1 rounded-full bg-sky-400" />프로젝트마다 서로 다른 Jira / Notion 계정을 연결할 수 있습니다.</li>
+                      <li className="flex items-center gap-2"><span className="h-1 w-1 rounded-full bg-sky-400" />이미 전송된 업무는 중복 생성하지 않고 기존 외부 항목을 업데이트합니다.</li>
+                    </ul>
+                  </div>
+                </div>
+              )}
+              {false && (
                 <div className="space-y-5">
                   <div className={cardClass}>
                     <div className="flex items-center justify-between border-b border-slate-100 pb-5">

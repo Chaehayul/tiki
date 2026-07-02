@@ -117,6 +117,283 @@ class NotionClient:
             logger.error("Notion API error %s: %s", exc.code, body_text)
             raise RuntimeError(f"Notion API {exc.code}: {body_text}") from exc
 
+    @staticmethod
+    def _rich_text(content: str) -> list[dict[str, Any]]:
+        return [{"type": "text", "text": {"content": str(content or "")[:2000]}}]
+
+    @staticmethod
+    def _split_text(content: str, size: int = 1800) -> list[str]:
+        text = str(content or "").strip()
+        if not text:
+            return []
+        chunks: list[str] = []
+        while text:
+            chunk = text[:size]
+            cut = max(chunk.rfind("\n"), chunk.rfind(". "), chunk.rfind("다."))
+            if cut > size * 0.45:
+                chunk = text[: cut + 1]
+            chunks.append(chunk.strip())
+            text = text[len(chunk):].strip()
+        return chunks
+
+    @staticmethod
+    def _paragraph(content: str) -> dict[str, Any]:
+        return {
+            "object": "block",
+            "type": "paragraph",
+            "paragraph": {"rich_text": NotionClient._rich_text(content)},
+        }
+
+    @staticmethod
+    def _paragraphs(content: str, fallback: str = "") -> list[dict[str, Any]]:
+        chunks = NotionClient._split_text(content)
+        if not chunks and fallback:
+            chunks = [fallback]
+        return [NotionClient._paragraph(chunk) for chunk in chunks]
+
+    @staticmethod
+    def _heading(content: str) -> dict[str, Any]:
+        return {
+            "object": "block",
+            "type": "heading_2",
+            "heading_2": {"rich_text": NotionClient._rich_text(content)},
+        }
+
+    @staticmethod
+    def _todo(content: str, checked: bool = False) -> dict[str, Any]:
+        return {
+            "object": "block",
+            "type": "to_do",
+            "to_do": {"rich_text": NotionClient._rich_text(content), "checked": checked},
+        }
+
+    def create_meeting_page(
+        self,
+        *,
+        title: str,
+        meeting_date: str,
+        summary: str,
+        decisions: list[str],
+        action_items: list[dict[str, Any]],
+        database_id: str | None = None,
+        parent_page_id: str | None = None,
+    ) -> NotionPageResult:
+        if database_id:
+            parent = {"type": "database_id", "database_id": database_id}
+            properties = {
+                "Name": {"title": self._rich_text(title)},
+                "Date": {"rich_text": self._rich_text(meeting_date)},
+            }
+        elif parent_page_id:
+            parent = {"type": "page_id", "page_id": parent_page_id}
+            properties = {"title": self._rich_text(title)}
+        else:
+            raise ValueError("Notion meeting database or parent page is required")
+
+        children: list[dict[str, Any]] = [
+            self._heading("회의 요약"),
+            self._paragraph(summary or "요약이 없습니다."),
+            self._heading("결정사항"),
+            *(self._paragraph(f"- {item}") for item in decisions),
+            self._heading("업무"),
+            *(
+                self._todo(
+                    f"{item.get('title') or item.get('text') or '업무'} / 담당자: {item.get('assignee') or '-'} / 마감일: {item.get('due') or item.get('due_at') or item.get('dueDate') or '-'}"
+                )
+                for item in action_items
+            ),
+        ]
+        result = self._request("POST", "pages", {"parent": parent, "properties": properties, "children": children[:100]})
+        page_id_result = result["id"]
+        return NotionPageResult(page_id=page_id_result, page_url=result.get("url", f"https://notion.so/{page_id_result.replace('-', '')}"))
+
+    def create_meeting_page(
+        self,
+        *,
+        title: str,
+        meeting_date: str,
+        summary: str,
+        decisions: list[str],
+        action_items: list[dict[str, Any]],
+        database_id: str | None = None,
+        parent_page_id: str | None = None,
+    ) -> NotionPageResult:
+        if database_id:
+            parent = {"type": "database_id", "database_id": database_id}
+            properties = {
+                "Name": {"title": self._rich_text(title)},
+                "Date": {"rich_text": self._rich_text(meeting_date)},
+            }
+        elif parent_page_id:
+            parent = {"type": "page_id", "page_id": parent_page_id}
+            properties = {"title": self._rich_text(title)}
+        else:
+            raise ValueError("Notion meeting database or parent page is required")
+
+        children: list[dict[str, Any]] = [
+            self._heading("회의 요약"),
+            *self._paragraphs(summary, "요약이 없습니다."),
+            self._heading("결정사항"),
+        ]
+        for item in decisions:
+            children.extend(self._paragraphs(f"- {item}"))
+        children.append(self._heading("해야 할 일"))
+        for item in action_items:
+            if not isinstance(item, dict):
+                continue
+            title_text = item.get("title") or item.get("text") or "업무"
+            due_text = item.get("due") or item.get("due_at") or item.get("dueDate") or "-"
+            children.append(self._todo(f"{title_text} / 담당자: {item.get('assignee') or '-'} / 마감일: {due_text}"))
+            children.extend(self._paragraphs(item.get("description") or item.get("detail") or ""))
+
+        result = self._request("POST", "pages", {"parent": parent, "properties": properties, "children": children[:100]})
+        page_id_result = result["id"]
+        return NotionPageResult(page_id=page_id_result, page_url=result.get("url", f"https://notion.so/{page_id_result.replace('-', '')}"))
+
+    def find_accessible_page_id(self) -> str | None:
+        result = self._request(
+            "POST",
+            "search",
+            {
+                "filter": {"value": "page", "property": "object"},
+                "sort": {"direction": "descending", "timestamp": "last_edited_time"},
+                "page_size": 1,
+            },
+        )
+        pages = result.get("results") or []
+        if not pages:
+            return None
+        page_id = pages[0].get("id")
+        return str(page_id) if page_id else None
+
+    @staticmethod
+    def _page_title(page: dict[str, Any]) -> str:
+        properties = page.get("properties") or {}
+        for prop in properties.values():
+            if not isinstance(prop, dict) or prop.get("type") != "title":
+                continue
+            parts = prop.get("title") or []
+            return "".join(str(part.get("plain_text") or "") for part in parts if isinstance(part, dict)).strip()
+        return ""
+
+    def find_page_by_title(self, title: str) -> str | None:
+        result = self._request(
+            "POST",
+            "search",
+            {
+                "query": title,
+                "filter": {"value": "page", "property": "object"},
+                "sort": {"direction": "descending", "timestamp": "last_edited_time"},
+                "page_size": 20,
+            },
+        )
+        for page in result.get("results") or []:
+            if self._page_title(page) == title:
+                page_id = page.get("id")
+                return str(page_id) if page_id else None
+        return None
+
+    def create_child_page(self, *, parent_page_id: str, title: str, description: str = "") -> NotionPageResult:
+        children = self._paragraphs(description) if description else []
+        result = self._request(
+            "POST",
+            "pages",
+            {
+                "parent": {"type": "page_id", "page_id": parent_page_id},
+                "properties": {"title": self._rich_text(title)},
+                "children": children[:100],
+            },
+        )
+        page_id_result = result["id"]
+        return NotionPageResult(page_id=page_id_result, page_url=result.get("url", f"https://notion.so/{page_id_result.replace('-', '')}"))
+
+    def ensure_workspace_page_id(self, title: str = "TIKI 회의록") -> str | None:
+        existing = self.find_page_by_title(title)
+        if existing:
+            return existing
+        parent_page_id = self.find_accessible_page_id()
+        if not parent_page_id:
+            return None
+        page = self.create_child_page(
+            parent_page_id=parent_page_id,
+            title=title,
+            description="TIKI에서 프로젝트 회의록을 자동으로 모아두는 페이지입니다.",
+        )
+        return page.page_id
+
+    def archive_page(self, page_id: str) -> None:
+        if page_id:
+            self._request("PATCH", f"pages/{page_id}", {"archived": True})
+
+    def append_task_blocks(self, page_id: str, action_items: list[dict[str, Any]]) -> None:
+        children = [
+            self._todo(
+                f"{item.get('title') or item.get('text') or '업무'} / 담당자: {item.get('assignee') or '-'} / 마감일: {item.get('due') or item.get('due_at') or item.get('dueDate') or '-'}"
+            )
+            for item in action_items
+        ]
+        if children:
+            self._request("PATCH", f"blocks/{page_id}/children", {"children": children[:100]})
+
+    def create_task_item(
+        self,
+        *,
+        database_id: str,
+        title: str,
+        assignee: str | None,
+        due_date: str | None,
+        status: str,
+        priority: str | None,
+        meeting_title: str,
+        tiki_task_id: str,
+        description: str,
+    ) -> NotionPageResult:
+        properties: dict[str, Any] = {
+            "Name": {"title": self._rich_text(title)},
+            "Status": {"select": {"name": status or "검토대기"}},
+            "TIKI task id": {"rich_text": self._rich_text(tiki_task_id)},
+            "Meeting": {"rich_text": self._rich_text(meeting_title)},
+        }
+        if assignee:
+            properties["Assignee"] = {"rich_text": self._rich_text(assignee)}
+        if due_date:
+            properties["Due"] = {"date": {"start": due_date[:10]}}
+        if priority:
+            properties["Priority"] = {"select": {"name": str(priority).capitalize()}}
+        result = self._request(
+            "POST",
+            "pages",
+            {
+                "parent": {"type": "database_id", "database_id": database_id},
+                "properties": properties,
+                "children": [self._paragraph(description or title)],
+            },
+        )
+        page_id_result = result["id"]
+        return NotionPageResult(page_id=page_id_result, page_url=result.get("url", f"https://notion.so/{page_id_result.replace('-', '')}"))
+
+    def update_task_item(
+        self,
+        *,
+        page_id: str,
+        title: str,
+        assignee: str | None,
+        due_date: str | None,
+        status: str,
+        priority: str | None,
+    ) -> None:
+        properties: dict[str, Any] = {
+            "Name": {"title": self._rich_text(title)},
+            "Status": {"select": {"name": status or "검토대기"}},
+        }
+        if assignee:
+            properties["Assignee"] = {"rich_text": self._rich_text(assignee)}
+        if due_date:
+            properties["Due"] = {"date": {"start": due_date[:10]}}
+        if priority:
+            properties["Priority"] = {"select": {"name": str(priority).capitalize()}}
+        self._request("PATCH", f"pages/{page_id}", {"properties": properties})
+
     # ── 페이지 생성 ───────────────────────────────────────────────────────────
 
     def create_page(

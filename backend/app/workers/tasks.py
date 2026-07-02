@@ -2,7 +2,7 @@
 
 import logging
 from datetime import UTC, datetime
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import select
 
@@ -10,7 +10,7 @@ from app.db.database import SessionLocal
 from app.models.analysis import AnalysisResult
 from app.models.enums import FileKind, ProcessingStatus
 from app.models.file import ExtractedContent, UploadedFile
-from app.models.project import Project, ProjectMember
+from app.models.project import Meeting, Project, ProjectMember
 from app.models.ticket import Ticket
 from app.services.ai_engine import get_default_ai_engine
 
@@ -96,10 +96,17 @@ def _run_pipeline(db, file_id: UUID) -> None:
     db.flush()
     _log_progress(file_id, 85, "추출된 본문을 저장했습니다")
 
+    action_items = [
+        {**item, "id": str(item.get("id") or item.get("task_id") or uuid4())}
+        if isinstance(item, dict)
+        else item
+        for item in result.analysis.action_items
+    ]
+
     analysis_result = AnalysisResult(
         extracted_content_id=extracted_content.id,
         summary=result.analysis.summary,
-        action_items=result.analysis.action_items,
+        action_items=action_items,
         model_name=result.analysis.model_name,
         prompt_version=result.analysis.prompt_version,
         extra_data=result.analysis.extra_data,
@@ -108,7 +115,36 @@ def _run_pipeline(db, file_id: UUID) -> None:
     db.flush()
     _log_progress(file_id, 92, "분석 결과를 저장했습니다")
 
-    for item in result.analysis.action_items:
+    meeting = None
+    if uploaded_file.project_id is not None:
+        title = (
+            getattr(result.analysis, "meeting_title", None)
+            or result.analysis.extra_data.get("meeting_title")
+            or uploaded_file.original_filename
+        )
+        raw_keywords = result.analysis.extra_data.get("keywords") or result.analysis.keywords or []
+        tags = []
+        for keyword in raw_keywords:
+            text = str(keyword.get("text") if isinstance(keyword, dict) else keyword).strip()
+            if text:
+                tags.append(text if text.startswith("#") else f"#{text}")
+        meeting = Meeting(
+            project_id=uploaded_file.project_id,
+            title=str(title).strip()[:255] or uploaded_file.original_filename,
+            date=uploaded_file.created_at.strftime("%Y.%m.%d"),
+            round_number=1,
+            status="검토대기",
+            meeting_type="업로드",
+            tags=tags[:12] or ["#회의록"],
+            participants=[],
+            summary=result.analysis.summary,
+            action_items=action_items,
+            action_items_count=len(action_items),
+        )
+        db.add(meeting)
+        db.flush()
+
+    for item in action_items:
         due_at = None
         if item.get("due_at"):
             raw = datetime.fromisoformat(item["due_at"])
@@ -127,6 +163,14 @@ def _run_pipeline(db, file_id: UUID) -> None:
     uploaded_file.status = ProcessingStatus.COMPLETED
     uploaded_file.completed_at = datetime.now(UTC)
     db.commit()
+
+    if meeting is not None:
+        try:
+            from app.services import external_integration_service
+
+            external_integration_service.sync_connected_meeting_resources(db, meeting)
+        except Exception:
+            logger.exception("Failed to sync meeting %s to external providers", meeting.id)
 
     _log_progress(file_id, 100, "파이프라인이 완료되었습니다")
 

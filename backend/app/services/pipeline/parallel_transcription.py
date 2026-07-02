@@ -101,6 +101,16 @@ def transcribe_chunks_parallel(
     )
 
     results: dict[int, dict[str, Any]] = {}
+    if effective_workers <= 1:
+        logger.info(
+            "Parallel STT: running sequential chunk inference for %d chunks on the current thread",
+            len(chunks),
+        )
+        for chunk in chunks:
+            chunk_index, raw = _transcribe_one_chunk(chunk, model_name, options, resolved_device_name)
+            results[chunk_index] = raw
+        return results
+
     with ThreadPoolExecutor(
         max_workers=effective_workers,
         thread_name_prefix="whisper-worker",

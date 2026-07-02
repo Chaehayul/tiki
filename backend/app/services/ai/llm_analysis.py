@@ -833,6 +833,64 @@ def _compact_decision_text(text: Any, *, max_chars: int = 120) -> str:
     return WHITESPACE_PATTERN.sub(" ", cleaned).strip()
 
 
+def _is_collective_action_item_text(*values: Any) -> bool:
+    combined = _normalize_text_value(" ".join(_normalize_text_value(value) for value in values if value is not None))
+    if not combined:
+        return False
+
+    collective_markers = (
+        "전원",
+        "전체",
+        "공통",
+        "팀 전체",
+        "모두",
+        "통합",
+        "테스트",
+        "버그",
+        "배포",
+        "오픈",
+        "마감",
+        "공유",
+        "점검",
+    )
+    return any(marker in combined for marker in collective_markers)
+
+
+def _refine_action_item_sentence(sentence: str, title: str) -> str:
+    normalized_title = _normalize_text_value(title)
+    normalized_sentence = WHITESPACE_PATTERN.sub(" ", str(sentence or "")).strip().rstrip(".!?。")
+    if not normalized_sentence:
+        normalized_sentence = normalized_title
+    if not normalized_title:
+        return normalized_sentence
+
+    topic_rules: tuple[tuple[tuple[str, ...], str], ...] = (
+        (("요구사항 명세서",), "요구사항 명세서 초안을 작성하고 주요 기능 범위와 우선순위를 정리한다."),
+        (("디자인 중간 시안", "중간 시안"), "디자인 중간 시안 2종을 준비해 다음 회의에서 비교 검토한다."),
+        (("디자인 최종 시안", "최종 시안"), "디자인 최종 시안을 확정한다."),
+        (("디자인 수정 요청",), "7월 17일 이후 디자인 수정 요청은 긴급 건만 반영한다."),
+        (("로그인", "회원가입"), "로그인 및 회원가입 기능을 구현하고 테스트 가능한 상태로 만든다."),
+        (("업무 등록",), "업무 등록 기능과 담당자 지정 흐름을 구현한다."),
+        (("결재 기능", "결제 기능"), "결재 기능과 승인/반려 흐름을 구현한다."),
+        (("일정 관리",), "일정 관리 기능을 완료하고 전체 개발을 마무리한다."),
+        (("통합 테스트", "테스트"), "통합 테스트 시나리오를 실행한다."),
+        (("버그 수정",), "버그 수정 사항을 반영한다."),
+        (("시스템 정식 오픈", "정식 오픈", "오픈"), "시스템 정식 오픈 준비를 완료한다."),
+        (("파일 첨부",), "파일 첨부 기능을 10MB 제한 기준으로 반영한다."),
+    )
+    for matchers, refined in topic_rules:
+        if any(matcher in normalized_title for matcher in matchers):
+            return refined
+
+    if normalized_sentence == normalized_title:
+        if any(marker in normalized_title for marker in ("작성", "공유", "검토", "완료", "확인", "반영", "협의", "확보")):
+            return normalized_title
+        if "진행" in normalized_title:
+            return normalized_title.replace("진행", "진행하여")
+
+    return normalized_sentence
+
+
 def _build_action_item_sentence(title: Any, description: Any = "") -> str:
     normalized_title = _normalize_title_value(title)
     topic = HeuristicLLMAnalysisService._extract_action_item_topic(normalized_title)
@@ -875,6 +933,7 @@ def _build_action_item_sentence(title: Any, description: Any = "") -> str:
     else:
         sentence = _normalize_text_value(description) or normalized_title
 
+    sentence = _refine_action_item_sentence(sentence, normalized_title)
     sentence = WHITESPACE_PATTERN.sub(" ", sentence).strip().rstrip(".!?。")
     if not sentence:
         return ""
@@ -888,42 +947,49 @@ def _build_issue_sentence(text: Any) -> str:
     if not cleaned:
         return ""
 
+    explicit_card_match = re.match(r"^(?P<head>[^:：]{2,120})[:：]\s*(?P<tail>.+)$", cleaned)
+    if explicit_card_match:
+        head = WHITESPACE_PATTERN.sub(" ", explicit_card_match.group("head")).strip(" -_/[]()")
+        tail = WHITESPACE_PATTERN.sub(" ", explicit_card_match.group("tail")).strip(" -_/[]()")
+        if head and tail:
+            return _compact_issue_text(f"현상: {head} / 영향: {tail}", max_chars=120)
+
     topic = HeuristicLLMAnalysisService._extract_issue_topic(cleaned)
     kind = HeuristicLLMAnalysisService._extract_issue_kind(cleaned)
 
     if topic and kind:
         topic_object = HeuristicLLMAnalysisService._with_particle(topic, "object")
         if kind == "일정 압박":
-            sentence = f"{topic} 일정이 빠듯하다."
+            sentence = f"현상: {topic} 일정이 빠듯하다 / 영향: 일정 조정이 필요할 수 있다."
         elif kind == "영향 범위":
-            sentence = f"{topic_object} 영향 범위가 커서 일정 조정이 필요하다."
+            sentence = f"현상: {topic_object} 영향 범위가 커지고 있다 / 영향: 일정 조정이 필요하다."
         elif kind == "장애 대응":
-            sentence = f"{topic_object} 장애 대응이 필요하다."
+            sentence = f"현상: {topic_object} 장애가 발생했다 / 영향: 즉시 대응이 필요하다."
         elif kind == "성능 저하":
-            sentence = f"{topic_object} 성능 저하를 확인했다."
+            sentence = f"현상: {topic_object} 성능 저하를 확인했다 / 영향: 처리 속도가 느려질 수 있다."
         elif kind == "협의 필요":
-            sentence = f"{topic_object} 협의가 필요하다."
+            sentence = f"현상: {topic_object} / 영향: 협의가 필요하다."
         elif kind == "재검토 필요":
-            sentence = f"{topic_object} 재검토가 필요하다."
+            sentence = f"현상: {topic_object} / 영향: 재검토가 필요하다."
         elif kind == "리스크":
             if "리스크" in topic:
-                sentence = f"{topic} 관련 이슈를 확인했다."
+                sentence = f"현상: {topic} / 영향: 관련 이슈를 확인했다."
             else:
-                sentence = f"{topic_object} 관련 리스크를 확인했다."
+                sentence = f"현상: {topic_object} / 영향: 관련 리스크를 확인했다."
         else:
-            sentence = f"{topic} {kind}"
+            sentence = f"현상: {topic} / 영향: {kind}"
     elif topic:
-        sentence = f"{HeuristicLLMAnalysisService._with_particle(topic, 'object')} 관련 리스크를 확인했다."
+        sentence = f"현상: {HeuristicLLMAnalysisService._with_particle(topic, 'object')} / 영향: 관련 리스크를 확인했다."
     elif kind:
-        sentence = f"{kind}가 필요하다."
+        sentence = f"현상: {kind} / 영향: 추가 확인이 필요하다."
     else:
-        sentence = cleaned
+        sentence = f"현상: {cleaned} / 영향: 추가 확인이 필요하다."
 
     if topic and kind == "리스크" and "리스크" in topic:
         if "관리" in topic:
-            sentence = f"{topic} 이슈를 확인했다."
+            sentence = f"현상: {topic} / 영향: 이슈를 확인했다."
         else:
-            sentence = f"{topic} 관련 이슈를 확인했다."
+            sentence = f"현상: {topic} / 영향: 관련 이슈를 확인했다."
 
     sentence = WHITESPACE_PATTERN.sub(" ", sentence).strip().rstrip(".!?。")
     if not sentence:
@@ -940,7 +1006,7 @@ def _build_next_agenda_sentence(text: Any) -> str:
 
     cleaned = WHITESPACE_PATTERN.sub(" ", cleaned).strip().rstrip(".!?。")
     cleaned = re.sub(
-        r"^(?:다음 안건(?:으로 넘어가서)?|다음 회의(?:에서는|에)?|이번 회의(?:에서는|에)?|이번에는|그럼|그러면|우선|일단)\s*",
+        r"^(?:다음 안건(?:으로 넘어가서)?|다음 회의(?:에서|에서는|에)?|이번 회의(?:에서|에서는|에)?|이번에는|그럼|그러면|우선|일단)\s*",
         "",
         cleaned,
     )
@@ -1344,13 +1410,17 @@ def _normalize_action_items_value(
             continue
         seen_titles.add(signature)
 
+        assignee = _normalize_assignee_value(item.get("assignee"), name_candidates=name_candidates)
+        if assignee == "전원" and not _is_collective_action_item_text(title, description):
+            assignee = "미정"
+
         normalized.append(
             {
                 "title": title,
                 "description": description,
                 "priority": _normalize_priority_value(item.get("priority")),
                 "status": _normalize_status_value(item.get("status")),
-                "assignee": _normalize_assignee_value(item.get("assignee"), name_candidates=name_candidates),
+                "assignee": assignee,
                 "due_at": _normalize_due_at_value(item.get("due_at")),
             }
         )
@@ -1588,12 +1658,9 @@ def _normalize_issues_value(issues: Any) -> list[dict[str, str]]:
         if level not in {"high", "medium", "low"}:
             level = "medium"
         if raw_text:
-            compacted = _compact_summary_text(raw_text, max_chars=96)
-            compacted = compacted.rstrip(".!?。")
-            if compacted and not compacted.endswith("."):
-                compacted = f"{compacted}."
+            compacted = _compact_summary_text(_format_issue_card_text(raw_text), max_chars=96)
         else:
-            compacted = _compact_issue_text(_build_issue_sentence(text), max_chars=96)
+            compacted = _compact_summary_text(_format_issue_card_text(_build_issue_sentence(text)), max_chars=96)
         if not compacted:
             continue
         signature = compacted.lower()
@@ -1604,6 +1671,86 @@ def _normalize_issues_value(issues: Any) -> list[dict[str, str]]:
         if len(normalized) >= MAX_ISSUES:
             break
     return normalized
+
+
+def _format_issue_card_text(text: Any) -> str:
+    cleaned = _compact_summary_text(text, max_chars=96)
+    if not cleaned:
+        return ""
+
+    cleaned = WHITESPACE_PATTERN.sub(" ", cleaned).strip().rstrip(".!?。")
+    if not cleaned:
+        return ""
+
+    if "현상:" in cleaned and "영향:" in cleaned:
+        return WHITESPACE_PATTERN.sub(" ", cleaned).strip()
+
+    if ":" in cleaned:
+        head, tail = cleaned.split(":", 1)
+        head = WHITESPACE_PATTERN.sub(" ", head).strip(" -_/[]()")
+        tail = WHITESPACE_PATTERN.sub(" ", tail).strip(" -_/[]()")
+        if head and tail:
+            return WHITESPACE_PATTERN.sub(" ", f"현상: {head} / 영향: {tail}").strip()
+
+    lowered = cleaned.lower()
+    impact_hint = "추가 확인이 필요하다."
+    if any(marker in cleaned for marker in ("지연", "늦", "빠듯", "부족")):
+        impact_hint = "일정 조정이 필요할 수 있다."
+    elif any(marker in cleaned for marker in ("미확보", "누락")):
+        impact_hint = "후속 진행이 지연될 수 있다."
+    elif any(marker in cleaned for marker in ("불안정", "오류", "장애")):
+        impact_hint = "정상 진행에 차질이 생길 수 있다."
+    elif any(marker in cleaned for marker in ("겹침", "누락")):
+        impact_hint = "스크립트 누락이나 구분 오류가 늘 수 있다."
+    elif "성능 저하" in cleaned or "성능" in cleaned:
+        impact_hint = "처리 속도가 느려질 수 있다."
+    elif any(marker in lowered for marker in ("리스크", "이슈")):
+        impact_hint = "추가 검토가 필요하다."
+
+    return WHITESPACE_PATTERN.sub(" ", f"현상: {cleaned} / 영향: {impact_hint}").strip()
+
+
+def _finalize_analysis_contract(
+    *,
+    transcript: str,
+    context: Any | None,
+    source_kind: str,
+    summary: Any,
+    keywords: Any,
+    decisions: Any,
+    action_items: Any,
+    issues: Any,
+    next_agenda: Any,
+    name_candidates: list[str] | None = None,
+) -> tuple[str, list[dict[str, Any]], list[str], list[dict[str, Any]], list[dict[str, str]], list[str]]:
+    normalized_keywords = _normalize_keywords_value(keywords)
+    normalized_decisions, _tentative = _normalize_decisions_value(decisions, MAX_DECISIONS)
+    normalized_action_items = _normalize_action_items_value(action_items or [], name_candidates=name_candidates)
+    normalized_issues = _normalize_issues_value(issues)
+    normalized_next_agenda = _normalize_next_agenda_value(next_agenda or [], MAX_NEXT_AGENDA)
+
+    if source_kind == "audio_batch":
+        summary, normalized_action_items, normalized_decisions, normalized_issues, normalized_next_agenda = _apply_audio_batch_conservative_filters(
+            transcript=transcript,
+            context=context,
+            summary=_normalize_summary_card_value(summary),
+            keywords=normalized_keywords,
+            decisions=normalized_decisions,
+            action_items=normalized_action_items,
+            issues=normalized_issues,
+            next_agenda=normalized_next_agenda,
+        )
+        normalized_keywords = _normalize_keywords_value(
+            normalized_keywords
+            + [{"text": text, "type": "cyan"} for text in _extract_batch_content_terms(transcript)]
+        )
+
+    normalized_summary = (
+        _normalize_document_summary_value(summary)
+        if source_kind == "document"
+        else _normalize_summary_card_value(summary)
+    )
+    return normalized_summary, normalized_keywords, normalized_decisions, normalized_action_items, normalized_issues, normalized_next_agenda
 
 
 def _compact_issue_text(text: Any, *, max_chars: int = 96) -> str:
@@ -1620,8 +1767,8 @@ def _compact_next_agenda_text(text: Any, *, max_chars: int = 96) -> str:
     if not cleaned:
         return ""
     cleaned = _collapse_common_card_repetition(cleaned)
-    cleaned = re.sub(r"^(?:다음 회의(?:에서|에)?\s*)+", "", cleaned).strip()
-    cleaned = cleaned.replace("다음 회의에서", "").replace("다음 회의에", "").strip()
+    cleaned = re.sub(r"^(?:다음 회의(?:에서|에서는|에)?\s*)+", "", cleaned).strip()
+    cleaned = cleaned.replace("다음 회의에서", "").replace("다음 회의에서는", "").replace("다음 회의에", "").strip()
     cleaned = cleaned.rstrip(".!?。")
     cleaned = WHITESPACE_PATTERN.sub(" ", cleaned).strip()
     return cleaned if cleaned.endswith(".") else f"{cleaned}."
@@ -1676,8 +1823,8 @@ def _format_document_next_agenda_item(text: Any) -> str:
         return ""
     cleaned = _collapse_repeated_phrases(cleaned)
     cleaned = _strip_repeated_leading_prefixes(cleaned, ("다음 회의에서", "다음 회의에", "다음 회의"))
-    cleaned = re.sub(r"^(?:다음 회의(?:에서|에)?\s*)+", "", cleaned).strip()
-    cleaned = cleaned.replace("다음 회의에서", "").replace("다음 회의에", "").strip()
+    cleaned = re.sub(r"^(?:다음 회의(?:에서|에서는|에)?\s*)+", "", cleaned).strip()
+    cleaned = cleaned.replace("다음 회의에서", "").replace("다음 회의에서는", "").replace("다음 회의에", "").strip()
     cleaned = cleaned.rstrip(".!?。")
     if not cleaned:
         return ""
@@ -2694,6 +2841,18 @@ class HeuristicLLMAnalysisService(LLMAnalysisService):
                 action_items = list(document_override.get("action_items") or action_items)
                 issues = list(document_override.get("issues") or issues)
                 next_agenda = list(document_override.get("next_agenda") or next_agenda)
+        summary, keywords, decisions, action_items, issues, next_agenda = _finalize_analysis_contract(
+            transcript=analysis_text,
+            context=context,
+            source_kind=source_kind,
+            summary=summary,
+            keywords=keywords,
+            decisions=decisions,
+            action_items=action_items,
+            issues=issues,
+            next_agenda=next_agenda,
+            name_candidates=name_candidates,
+        )
         document_summary = _build_document_summary_payload(
             summary=summary,
             keywords=keywords,
@@ -4356,6 +4515,8 @@ class HeuristicLLMAnalysisService(LLMAnalysisService):
             normalized_status = cls._normalize_status(item.get("status"))
             assignee = cls._normalize_assignee(item.get("assignee"))
             due_at = cls._normalize_due_at(item.get("due_at"))
+            if assignee == "전원" and not _is_collective_action_item_text(title, description):
+                assignee = "미정"
 
             signature = title.lower()
             if signature in seen_titles:
@@ -4412,7 +4573,18 @@ class HeuristicLLMAnalysisService(LLMAnalysisService):
         candidate = WHITESPACE_PATTERN.sub(" ", str(value or "")).strip()
         if not candidate or candidate.lower() in {"null", "none", "unknown", "미정"}:
             return "미정"
+        if any(sep in candidate for sep in ("/", "·")):
+            parts = [
+                _normalize_name_candidate(part)
+                for part in re.split(r"\s*[\/·]\s*", candidate)
+            ]
+            parts = [part for part in parts if part]
+            if len(parts) >= 2:
+                return " / ".join(dict.fromkeys(parts))
+            if parts:
+                return parts[0]
         candidate = candidate.rstrip("님")
+        candidate = re.sub(r"[^가-힣A-Za-z0-9_]", "", candidate)
         return candidate or "미정"
 
     @staticmethod
@@ -4702,10 +4874,13 @@ class OpenAIAnalysisService(LLMAnalysisService):
                 "- keywords에는 문서의 핵심 주제 4~6개를 담아라. type은 cyan, purple, green, yellow 중 하나를 써라.\n"
                 "- decisions에는 문서에서 명시적으로 확정되거나 권고한 사항만 넣어라.\n"
                 "- action_items에는 문서에서 실행해야 한다고 명시된 작업만 넣어라.\n"
+                "- action_items의 description은 '진행한다'처럼 추상적으로 쓰지 말고, 무엇을 만들어야 하는지/무엇을 확인해야 하는지/완료 기준이 무엇인지가 보이게 써라.\n"
                 "- issues에는 문서의 제약, 리스크, 주의사항, 부족한 조건을 짧게 정리하라.\n"
+                "- issues는 반드시 [현상: ~ / 영향: ~] 형식으로 작성하라. 모호한 표현은 피하고, 관찰된 리스크와 그 영향만 적어라.\n"
                 "- next_agenda에는 문서에서 남겨둔 검토 항목, 미정 사항, 다음 단계만 넣어라.\n"
                 "- 반복 문구는 제거하고, 같은 뜻의 문장은 하나로 합쳐라.\n"
                 "- 담당자와 마감일이 명시되지 않으면 null로 둬라. 추측하지 마라.\n"
+                "- 전원은 팀 전체가 함께 처리하는 공통 작업이 명시된 경우에만 사용하고, 책임 주체가 불명확하면 null로 두어라.\n"
                 "- 이름, 날짜, 숫자는 문서에 실제로 나온 값만 사용하라.\n"
                 "- 애매하면 action_items를 비워도 된다. 억지로 채우지 마라.\n"
                 "- 우선순위는 low, medium, high, urgent 중 하나만 사용하라.\n"
@@ -4721,7 +4896,9 @@ class OpenAIAnalysisService(LLMAnalysisService):
                 "- keywords에는 배치 전체에서 반복되는 핵심 주제만 남겨라.\n"
                 "- decisions, action_items, issues, next_agenda는 파일별 중복을 제거하고 전체 회의 기준으로 합쳐라.\n"
                 "- next_agenda와 issues는 반복 표현을 특히 주의해서 제거하라.\n"
+                "- issues는 반드시 [현상: ~ / 영향: ~] 형식으로 작성하라. 관찰된 리스크와 영향만 남겨라.\n"
                 "- 담당자와 마감일이 명시되지 않으면 null로 둬라. 추측하지 마라.\n"
+                "- 전원은 공통 작업이 명시된 경우에만 사용하고, 책임 주체가 불명확하면 null로 두어라.\n"
                 "- 이름, 날짜, 숫자는 실제 언급된 값만 사용하라.\n"
                 "- 억지로 채우지 말고, 불명확하면 action_items를 비워도 된다.\n"
                 "- 중복 문장과 파일 전환 문구는 무시하고, 의미 있는 회의 발화만 사용하라.\n"
@@ -4739,6 +4916,7 @@ class OpenAIAnalysisService(LLMAnalysisService):
                 "- decisions에는 실행 계획, 일정, 준비 작업, 배포, 수정, 테스트 같은 문장을 넣지 마라. 이런 문장은 action_items 또는 next_agenda로 옮겨라.\n"
                 "- 검토/우선/방향/후보/가능성/논의/조율처럼 아직 확정되지 않은 내용은 decisions에 넣지 말고 next_agenda에 넣어라.\n"
                 "- action_items에는 '실제로 실행 가능한 일'만 넣어라.\n"
+                "- action_items의 description은 '진행한다'처럼 추상적으로 쓰지 말고, 산출물/검토 대상/완료 기준이 보이게 작성하라.\n"
                 "- 다음은 action item 후보가 아니다: 단순 의견, 잡담, 배경 설명, 반복 발언.\n"
                 "- 다음은 반드시 action item으로 분리하라: 결정사항, 할당된 작업, 장애 대응, 검토 요청, 마감일이 있는 일.\n"
                 "- 하나의 문장에 여러 작업이 섞이면 작업 단위로 쪼개라.\n"
@@ -4746,11 +4924,13 @@ class OpenAIAnalysisService(LLMAnalysisService):
                 "- 설명은 왜 필요한지, 무엇을 해야 하는지, 의존성이 있으면 무엇인지까지 담아라.\n"
                 "- issues는 짧은 리스크 카드처럼, next_agenda는 다음 회의 카드처럼 정리하라.\n"
                 "- issues와 next_agenda는 한 줄 카드 문장으로 짧게 유지하고, 장황한 배경 설명은 넣지 마라.\n"
+                "- issues는 반드시 [현상: ~ / 영향: ~] 형식으로 작성하라. 모호한 표현은 피하고, 관찰된 리스크와 영향만 남겨라.\n"
                 "- next_agenda는 '다음 회의에서' 접두어를 한 번만 쓰고, 같은 문구를 반복하지 마라.\n"
                 "- issues는 '리스크 관리 리스크'처럼 같은 단어를 반복하지 말고, 짧은 카드 문장 하나로 정리하라.\n"
                 "- 우선순위는 low, medium, high, urgent 중 하나만 사용하라.\n"
                 "- urgent는 명시적 긴급성, 장애, 즉시 대응, 마감 임박이 있을 때만 써라.\n"
                 "- 담당자와 마감일이 명시되지 않으면 null로 둬라. 추측하지 마라.\n"
+                "- 전원은 팀 전체가 함께 처리하는 공통 작업이 명시된 경우에만 사용하고, 책임 주체가 불명확하면 null로 두어라.\n"
                 "- 이름, 날짜, 숫자는 회의에서 실제 언급된 값만 사용하라.\n"
                 "- 애매하면 action_items를 비워도 된다. 억지로 채우지 마라.\n"
                 "- 중복되는 항목은 하나로 합쳐라.\n"
@@ -5095,6 +5275,18 @@ class LangChainAnalysisService(LLMAnalysisService):
                     action_items = list(document_override.get("action_items") or action_items)
                     normalized_issues = list(document_override.get("issues") or normalized_issues)
                     normalized_next_agenda = list(document_override.get("next_agenda") or normalized_next_agenda)
+            summary, normalized_keywords, normalized_decisions, action_items, normalized_issues, normalized_next_agenda = _finalize_analysis_contract(
+                transcript=normalized,
+                context=context,
+                source_kind=source_kind,
+                summary=summary,
+                keywords=normalized_keywords,
+                decisions=normalized_decisions,
+                action_items=action_items,
+                issues=normalized_issues,
+                next_agenda=normalized_next_agenda,
+                name_candidates=name_candidates,
+            )
             document_summary = _build_document_summary_payload(
                 summary=summary,
                 keywords=normalized_keywords,

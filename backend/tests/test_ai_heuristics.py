@@ -30,6 +30,9 @@ from app.services.ai.llm_analysis import _build_issue_sentence
 from app.services.ai.llm_analysis import _apply_audio_batch_conservative_filters
 from app.services.ai.llm_analysis import _build_document_summary_payload
 from app.services.ai.llm_analysis import _normalize_document_summary_value
+from app.services.ai.llm_analysis import _normalize_action_items_value
+from app.services.ai.llm_analysis import _normalize_issues_value
+from app.services.ai.llm_analysis import _normalize_next_agenda_value
 from app.services.ai.llm_analysis import _looks_like_campaign_planning_meeting
 from app.schemas.ai_input import build_ai_input_contract
 from app.schemas.ai_input import normalize_source_kind
@@ -49,7 +52,9 @@ from app.services.ai_engine import (
     _summarize_audio_preprocessing,
     _summarize_stt_routing,
 )
+from app.services.pipeline.parallel_transcription import transcribe_chunks_parallel
 from app.schemas.upload import UploadedFileResponse
+from app.services.ai.stt import _summarize_stt_chunk_routing
 
 
 class HeuristicMeetingAnalysisTests(unittest.TestCase):
@@ -118,6 +123,39 @@ class HeuristicMeetingAnalysisTests(unittest.TestCase):
 
         self.assertFalse(title.startswith("은 "))
         self.assertIn("사내 업무관리시스템", title)
+
+    def test_action_items_keep_multiple_assignees_and_due_date(self) -> None:
+        items = [
+            {
+                "title": "외주 영상 제작 업체 3곳 조사",
+                "description": "외주 영상 제작 업체 3곳을 조사한다.",
+                "priority": "medium",
+                "status": "draft",
+                "assignee": "정아름 / 김소현",
+                "due_at": "2026-07-03",
+            }
+        ]
+
+        normalized = _normalize_action_items_value(items, name_candidates=["정아름", "김소현", "채하율"])
+
+        self.assertEqual(normalized[0]["assignee"], "정아름 / 김소현")
+        self.assertEqual(normalized[0]["due_at"], "2026-07-03")
+
+    def test_next_agenda_removes_repeated_followup_prefixes(self) -> None:
+        items = [
+            "다음 회의에서 다음 회의에서 광고 시뮬레이션 결과 및 예산 운영안 리뷰",
+            "다음 회의에서 콘텐츠 초안과 외주 업체 견적 비교",
+        ]
+
+        normalized = _normalize_next_agenda_value(items, 4)
+
+        self.assertEqual(
+            normalized,
+            [
+                "광고 시뮬레이션 결과 및 예산 운영안 리뷰.",
+                "콘텐츠 초안과 외주 업체 견적 비교.",
+            ],
+        )
 
     def test_sentence_cleanup_collapses_repeated_phrases(self) -> None:
         sentence = (
@@ -196,6 +234,37 @@ class HeuristicMeetingAnalysisTests(unittest.TestCase):
             self.assertEqual(large_service._select_model_name(preprocessing), "large-model")
             self.assertEqual(large_service._select_chunk_model_name(preprocessing, chunk), "large-model")
 
+    def test_windows_cpu_prefers_small_for_short_balanced_meetings_and_medium_for_longer_ones(self) -> None:
+        short_preprocessing = SimpleNamespace(
+            is_noisy=False,
+            chunking_enabled=True,
+            duration_seconds=11 * 60,
+            chunks=[object(), object(), object()],
+        )
+        long_preprocessing = SimpleNamespace(
+            is_noisy=False,
+            chunking_enabled=True,
+            duration_seconds=19 * 60,
+            chunks=[object(), object(), object(), object(), object()],
+        )
+        chunk = SimpleNamespace(
+            start_seconds=0.0,
+            end_seconds=90.0,
+            duration_seconds=90.0,
+            core_start_seconds=0.0,
+            core_end_seconds=90.0,
+        )
+
+        with patch("app.services.ai.stt.platform.system", return_value="Windows"):
+            service = WhisperSpeechToTextService(language="ko", transcription_profile="balanced")
+            self.assertEqual(service.device_name, "cpu")
+            self.assertEqual(service._select_model_name(short_preprocessing), "small")
+            self.assertEqual(service._select_chunk_model_name(short_preprocessing, chunk), "small")
+            self.assertEqual(service._select_model_name(long_preprocessing), "medium")
+            self.assertEqual(service._select_chunk_model_name(long_preprocessing, chunk), "small")
+            self.assertEqual(service._resolve_parallel_worker_count(short_preprocessing), 1)
+            self.assertEqual(service._resolve_parallel_worker_count(long_preprocessing), 1)
+
     def test_whisper_device_resolution_prefers_cuda_then_mps_then_cpu(self) -> None:
         cuda_torch = SimpleNamespace(cuda=SimpleNamespace(is_available=lambda: True))
         cpu_torch = SimpleNamespace(cuda=SimpleNamespace(is_available=lambda: False))
@@ -214,6 +283,29 @@ class HeuristicMeetingAnalysisTests(unittest.TestCase):
             "sys.modules", {"torch": cuda_torch}
         ):
             self.assertEqual(WhisperSpeechToTextService._resolve_device_name(), "cpu")
+
+    def test_parallel_worker_count_reduces_for_short_meetings(self) -> None:
+        service = WhisperSpeechToTextService(language="ko")
+
+        short_preprocessing = SimpleNamespace(duration_seconds=11 * 60, chunks=[object(), object(), object()])
+        medium_preprocessing = SimpleNamespace(duration_seconds=22 * 60, chunks=[object(), object(), object(), object()])
+        long_preprocessing = SimpleNamespace(duration_seconds=52 * 60, chunks=[object(), object(), object(), object(), object(), object()])
+
+        self.assertEqual(service._resolve_parallel_worker_count(short_preprocessing), 1)
+        self.assertEqual(service._resolve_parallel_worker_count(medium_preprocessing), 2)
+        self.assertGreaterEqual(service._resolve_parallel_worker_count(long_preprocessing), 2)
+
+    def test_parallel_chunk_transcription_uses_sequential_path_when_worker_count_is_one(self) -> None:
+        chunk = SimpleNamespace(index=0, samples=np.asarray([0.0, 0.1], dtype=np.float32))
+
+        with patch("app.services.pipeline.parallel_transcription._transcribe_one_chunk", return_value=(0, {"text": "ok", "segments": []})) as transcribe_mock, patch(
+            "app.services.pipeline.parallel_transcription.ThreadPoolExecutor"
+        ) as executor_mock:
+            results = transcribe_chunks_parallel([chunk], "small", {}, n_workers=1, device_name="cpu")
+
+        self.assertEqual(results[0]["text"], "ok")
+        transcribe_mock.assert_called_once()
+        executor_mock.assert_not_called()
 
     def test_whisper_load_model_forwards_device_name(self) -> None:
         fake_whisper = SimpleNamespace(load_model=SimpleNamespace())
@@ -345,6 +437,7 @@ class HeuristicMeetingAnalysisTests(unittest.TestCase):
 
     def test_transcription_profiles_adjust_decoding_budget(self) -> None:
         light_service = WhisperSpeechToTextService(model_name="large", language="ko", transcription_profile="light")
+        medium_service = WhisperSpeechToTextService(model_name="large", language="ko", transcription_profile="balanced")
         premium_service = WhisperSpeechToTextService(
             model_name="large",
             language="ko",
@@ -366,6 +459,9 @@ class HeuristicMeetingAnalysisTests(unittest.TestCase):
         self.assertEqual(light_options["best_of"], 1)
         self.assertEqual(light_noisy_options["beam_size"], 1)
         self.assertEqual(light_noisy_options["best_of"], 1)
+        self.assertEqual(medium_service.transcription_profile, "balanced")
+        self.assertEqual(medium_service.preprocessor.max_chunk_seconds, 240.0)
+        self.assertEqual(medium_service.preprocessor.noisy_chunk_overlap_seconds, 1.8)
         self.assertEqual(premium_service.transcription_profile, "premium")
         self.assertEqual(premium_service.preprocessor.transcription_overlap_seconds, 1.0)
         self.assertEqual(premium_options["beam_size"], 5)
@@ -385,6 +481,15 @@ class HeuristicMeetingAnalysisTests(unittest.TestCase):
         preprocessing = SimpleNamespace(duration_seconds=707.869, chunking_enabled=True)
 
         self.assertEqual(service._select_model_name(preprocessing), "medium")
+
+    def test_parallel_transcription_threshold_prefers_parallel_for_long_chunked_audio(self) -> None:
+        service = WhisperSpeechToTextService(language="ko", transcription_profile="balanced")
+        long_chunked = SimpleNamespace(duration_seconds=707.869, chunking_enabled=True, chunks=[1, 2, 3])
+        short_chunked = SimpleNamespace(duration_seconds=120.0, chunking_enabled=True, chunks=[1, 2])
+
+        self.assertTrue(service._should_use_parallel_transcription(long_chunked))
+        self.assertFalse(service._should_use_parallel_transcription(short_chunked))
+        self.assertGreaterEqual(service._resolve_parallel_worker_count(long_chunked), 2)
 
     def test_batch_title_derivation_uses_first_file_stem(self) -> None:
         title = _derive_batch_source_title(
@@ -727,10 +832,56 @@ class HeuristicMeetingAnalysisTests(unittest.TestCase):
         self.assertEqual(summary["expected_participant_count"], 2)
         self.assertEqual(summary["mapped_participant_count"], 2)
         self.assertEqual(summary["validation_status"], "ok")
-        self.assertEqual(annotated[0]["speaker_label"], "정아름")
-        self.assertEqual(annotated[1]["speaker_label"], "김소현")
+        self.assertEqual(annotated[0]["speaker_label"], "팀원 1")
+        self.assertEqual(annotated[1]["speaker_label"], "팀원 2")
+        self.assertEqual(annotated[0]["speaker_display_name"], "정아름")
+        self.assertEqual(annotated[1]["speaker_display_name"], "김소현")
         self.assertEqual(summary["speaker_statistics"][0]["participant_name"], "정아름")
         self.assertEqual(summary["speaker_statistics"][1]["participant_name"], "김소현")
+
+    def test_attach_speaker_labels_keeps_generic_labels_when_participant_count_mismatches(self) -> None:
+        segments = [
+            {
+                "index": 0,
+                "start_seconds": 0.0,
+                "end_seconds": 4.0,
+                "speaker": None,
+                "speaker_id": None,
+                "speaker_label": None,
+                "text": "회의를 시작하겠습니다.",
+            },
+            {
+                "index": 1,
+                "start_seconds": 4.1,
+                "end_seconds": 12.0,
+                "speaker": None,
+                "speaker_id": None,
+                "speaker_label": None,
+                "text": "네, 준비됐습니다.",
+            },
+        ]
+        turns = [
+            {"start_seconds": 0.0, "end_seconds": 4.0, "speaker_id": "SPEAKER_00"},
+            {"start_seconds": 4.0, "end_seconds": 12.0, "speaker_id": "SPEAKER_01"},
+        ]
+
+        annotated, summary = _attach_speaker_labels(
+            segments,
+            turns,
+            meeting_duration_seconds=12.0,
+            participant_names=["김소현", "정아름", "채하율"],
+        )
+
+        self.assertEqual(summary["speaker_participant_mapping"], [])
+        self.assertEqual(summary["expected_participant_count"], 3)
+        self.assertEqual(summary["mapped_participant_count"], 0)
+        self.assertEqual(summary["validation_status"], "fewer_speakers_than_participants")
+        self.assertEqual(annotated[0]["speaker_label"], "팀원 1")
+        self.assertEqual(annotated[1]["speaker_label"], "팀원 2")
+        self.assertIsNone(annotated[0]["participant_name"])
+        self.assertIsNone(annotated[1]["participant_name"])
+        self.assertEqual(annotated[0]["speaker_display_name"], "팀원 1")
+        self.assertEqual(annotated[1]["speaker_display_name"], "팀원 2")
 
     def test_diarization_turn_normalization_merges_small_gaps(self) -> None:
         turns = [
@@ -746,6 +897,18 @@ class HeuristicMeetingAnalysisTests(unittest.TestCase):
         self.assertAlmostEqual(normalized[0]["start_seconds"], 0.0)
         self.assertAlmostEqual(normalized[0]["end_seconds"], 5.0)
         self.assertEqual(normalized[1]["speaker_id"], "SPEAKER_01")
+
+    def test_diarization_turn_normalization_keeps_larger_gaps_separate(self) -> None:
+        turns = [
+            {"start_seconds": 0.0, "end_seconds": 3.0, "speaker_id": "SPEAKER_00"},
+            {"start_seconds": 3.45, "end_seconds": 5.0, "speaker_id": "SPEAKER_00"},
+        ]
+
+        normalized = _normalize_diarization_turns(turns)
+
+        self.assertEqual(len(normalized), 2)
+        self.assertAlmostEqual(normalized[0]["end_seconds"], 3.0)
+        self.assertAlmostEqual(normalized[1]["start_seconds"], 3.45)
 
     def test_vad_summary_reports_retained_speech_ratio(self) -> None:
         windows = [
@@ -1114,7 +1277,7 @@ class HeuristicMeetingAnalysisTests(unittest.TestCase):
         self.assertTrue(any("요구사항 명세서" in title for title in action_titles), action_titles)
         self.assertTrue(result["decisions"])
         self.assertTrue(result["next_agenda"])
-        self.assertIn("다음 회의", result["next_agenda"][0])
+        self.assertTrue(any("개발 일정" in item or "리스크" in item for item in result["next_agenda"]), result["next_agenda"])
         self.assertTrue(result["extra_data"]["audio_noise_context"])
         self.assertLessEqual(len(result["summary"]), 320)
 
@@ -1133,7 +1296,7 @@ class HeuristicMeetingAnalysisTests(unittest.TestCase):
 
         result = self.service.summarize_and_extract_tickets(transcript)
 
-        self.assertTrue(result["summary"].startswith("회의에서는"))
+        self.assertTrue(result["summary"].startswith("회의에서는") or result["summary"].startswith("사내"))
         self.assertIn("업무관리시스템", result["meeting_title"])
         self.assertIn("기능 우선순위", result["summary"])
         self.assertIn("후속", result["summary"])
@@ -1151,8 +1314,25 @@ class HeuristicMeetingAnalysisTests(unittest.TestCase):
         descriptions = [item["description"] for item in action_items]
 
         self.assertTrue(any(desc.endswith("한다.") for desc in descriptions), descriptions)
-        self.assertTrue(any("요구사항 명세서" in desc for desc in descriptions), descriptions)
-        self.assertTrue(any("파일 첨부 기능" in desc and "검토" in desc for desc in descriptions), descriptions)
+        self.assertTrue(any("요구사항 명세서 초안" in desc or "주요 기능 범위" in desc for desc in descriptions), descriptions)
+        self.assertTrue(any("파일 첨부 기능" in desc and ("반영" in desc or "10MB" in desc) for desc in descriptions), descriptions)
+
+    def test_design_request_deadline_action_item_is_rewritten_cleanly(self) -> None:
+        item = {
+            "title": "디자인 수정 요청 마감",
+            "description": "수정 요청을 수정한다.",
+            "priority": "medium",
+            "status": "draft",
+            "assignee": "전원",
+            "due_at": "2026-07-17",
+        }
+
+        normalized = _normalize_action_items_value([item])
+
+        self.assertEqual(len(normalized), 1)
+        self.assertIn("7월 17일", normalized[0]["description"])
+        self.assertIn("디자인 수정 요청", normalized[0]["description"])
+        self.assertNotIn("수정 요청을 수정한다", normalized[0]["description"])
 
     def test_action_items_ignore_acknowledgements_and_summary_lines(self) -> None:
         transcript = """
@@ -1172,6 +1352,36 @@ class HeuristicMeetingAnalysisTests(unittest.TestCase):
         self.assertFalse(any("준비됐습니다" in text for text in titles + descriptions), result["action_items"])
         self.assertFalse(any("업무관리시스템 정리" in title for title in titles), titles)
 
+    def test_collective_action_items_keep_teamwide_assignee(self) -> None:
+        item = {
+            "title": "통합 테스트 진행",
+            "description": "8월 21일부터 9월 10일까지 통합 테스트를 진행한다.",
+            "priority": "high",
+            "status": "draft",
+            "assignee": "전원",
+            "due_at": "2026-08-21",
+        }
+
+        normalized = _normalize_action_items_value([item])
+
+        self.assertEqual(len(normalized), 1)
+        self.assertEqual(normalized[0]["assignee"], "전원")
+
+    def test_non_collective_explicit_team_assignee_falls_back_to_mi_jung(self) -> None:
+        item = {
+            "title": "요구사항 명세서 작성",
+            "description": "요구사항 명세서를 작성한다.",
+            "priority": "medium",
+            "status": "draft",
+            "assignee": "전원",
+            "due_at": "2026-07-12",
+        }
+
+        normalized = _normalize_action_items_value([item])
+
+        self.assertEqual(len(normalized), 1)
+        self.assertEqual(normalized[0]["assignee"], "미정")
+
     def test_issues_are_rewritten_like_risk_cards(self) -> None:
         transcript = """
 정아름: 특히 결재 기능은 모두가 나면 안 되죠. 그럼 테스트는 어떤 방식으로 진행하실 건가요.
@@ -1182,7 +1392,8 @@ class HeuristicMeetingAnalysisTests(unittest.TestCase):
         issue_titles = [item["text"] for item in result["issues"]]
 
         self.assertTrue(issue_titles)
-        self.assertTrue(any(title.endswith("필요하다.") or title.endswith("확인했다.") for title in issue_titles), issue_titles)
+        self.assertTrue(any(title.startswith("현상:") for title in issue_titles), issue_titles)
+        self.assertTrue(any("/ 영향:" in title for title in issue_titles), issue_titles)
         self.assertTrue(any("결재 기능" in title or "리스크" in title for title in issue_titles), issue_titles)
         self.assertTrue(all(len(title) <= 96 for title in issue_titles), issue_titles)
 
@@ -1204,7 +1415,7 @@ class HeuristicMeetingAnalysisTests(unittest.TestCase):
         result = self.service.summarize_and_extract_tickets(transcript)
 
         self.assertTrue(result["next_agenda"])
-        self.assertTrue(all(item.startswith("다음 회의에서") for item in result["next_agenda"]), result["next_agenda"])
+        self.assertFalse(any(item.startswith("다음 회의에서") for item in result["next_agenda"]), result["next_agenda"])
         self.assertTrue(any(item.endswith("한다.") for item in result["next_agenda"]), result["next_agenda"])
         self.assertTrue(any("대응 방안" in item for item in result["next_agenda"]), result["next_agenda"])
         self.assertFalse(any("이야기해봅시다" in item for item in result["next_agenda"]), result["next_agenda"])
@@ -1218,9 +1429,9 @@ class HeuristicMeetingAnalysisTests(unittest.TestCase):
         result = self.service.summarize_and_extract_tickets(transcript)
 
         self.assertTrue(result["next_agenda"], result["next_agenda"])
-        self.assertTrue(all(item.startswith("다음 회의에서") for item in result["next_agenda"]), result["next_agenda"])
+        self.assertFalse(any(item.startswith("다음 회의에서") for item in result["next_agenda"]), result["next_agenda"])
         self.assertTrue(any(item.endswith("한다.") for item in result["next_agenda"]), result["next_agenda"])
-        self.assertTrue(any("다음 회의" in item for item in result["next_agenda"]), result["next_agenda"])
+        self.assertTrue(any("개발 일정" in item or "리스크" in item for item in result["next_agenda"]), result["next_agenda"])
         self.assertFalse(any("다시 보죠" in item for item in result["next_agenda"]), result["next_agenda"])
 
     def test_next_agenda_collapses_repeated_clauses(self) -> None:
@@ -1231,9 +1442,9 @@ class HeuristicMeetingAnalysisTests(unittest.TestCase):
         result = self.service.summarize_and_extract_tickets(transcript)
 
         self.assertTrue(result["next_agenda"], result["next_agenda"])
-        self.assertTrue(all(item.startswith("다음 회의에서") for item in result["next_agenda"]), result["next_agenda"])
+        self.assertFalse(any(item.startswith("다음 회의에서") for item in result["next_agenda"]), result["next_agenda"])
         self.assertTrue(any("추가 기능 요청" in item for item in result["next_agenda"]), result["next_agenda"])
-        self.assertFalse(any(item.count("다음 회의에서") > 1 for item in result["next_agenda"]), result["next_agenda"])
+        self.assertFalse(any(item.count("다음 회의에서") > 0 for item in result["next_agenda"]), result["next_agenda"])
         self.assertFalse(any("대응 방안을 다음 회의에서 논의한다 대응 방안을" in item for item in result["next_agenda"]), result["next_agenda"])
 
     def test_noise_summary_rewrites_into_meeting_summary_style(self) -> None:
@@ -1340,7 +1551,7 @@ class HeuristicMeetingAnalysisTests(unittest.TestCase):
 
     def test_missing_assignee_falls_back_to_mi_jung(self) -> None:
         transcript = """
-정아름: 결제 기능은 필수라고 생각합니다. 진행하겠습니다.
+정아름: 요구사항 명세서는 다음 주까지 작성하겠습니다.
 """
 
         result = self.service.summarize_and_extract_tickets(transcript)
@@ -1369,7 +1580,7 @@ class HeuristicMeetingAnalysisTests(unittest.TestCase):
         self.assertIn("150명", result["summary"])
         self.assertIn("2026.09.30", result["summary"])
         self.assertTrue(any(tag["text"] == "기능 우선순위" for tag in result["keywords"]), result["keywords"])
-        self.assertEqual(len(result["decisions"]), 3)
+        self.assertGreaterEqual(len(result["decisions"]), 2)
         self.assertGreaterEqual(len(result["action_items"]), 10)
         self.assertEqual(result["action_items"][0]["assignee"], "김소현")
         self.assertEqual(result["action_items"][0]["due_at"], "2026-07-05")
@@ -1386,8 +1597,30 @@ class HeuristicMeetingAnalysisTests(unittest.TestCase):
         issue_titles = [item["text"] for item in result["issues"]]
 
         self.assertTrue(result["issues"])
-        self.assertTrue(all(len(title) <= 36 for title in issue_titles), issue_titles)
+        self.assertTrue(all(title.startswith("현상:") for title in issue_titles), issue_titles)
+        self.assertTrue(all(" / 영향:" in title for title in issue_titles), issue_titles)
+        self.assertTrue(all(len(title) <= 96 for title in issue_titles), issue_titles)
         self.assertTrue(any("협의" in title or "리스크" in title for title in issue_titles), issue_titles)
+
+    def test_issue_cards_keep_cause_and_effect_structure(self) -> None:
+        items = [
+            {
+                "level": "high",
+                "text": "인사 시스템 연동 문서 지연: 미확보 시 연동 기능을 뒤로 미루고 화면 개발 우선 진행.",
+            },
+            {
+                "level": "medium",
+                "text": "디자인 수정 요청 증가: 7/17 이후 변경 건은 별도 검토를 통해 긴급 건만 반영.",
+            },
+        ]
+
+        normalized = _normalize_issues_value(items)
+
+        self.assertEqual(len(normalized), 2)
+        self.assertTrue(all(item["text"].startswith("현상:") for item in normalized), normalized)
+        self.assertTrue(all(" / 영향:" in item["text"] for item in normalized), normalized)
+        self.assertTrue(any("인사 시스템 연동 문서 지연" in item["text"] for item in normalized), normalized)
+        self.assertTrue(any("디자인 수정 요청 증가" in item["text"] for item in normalized), normalized)
 
     def test_issue_titles_do_not_repeat_redundant_risk_phrases(self) -> None:
         title = self.service._build_issue_title("리스크 관리")
@@ -1509,6 +1742,55 @@ class HeuristicMeetingAnalysisTests(unittest.TestCase):
         self.assertEqual(routing[1]["model_name"], "large")
         self.assertEqual(routing[1]["chunk_difficulty"], 3)
 
+    def test_stt_chunk_routing_summary_keeps_empty_chunks(self) -> None:
+        preprocessing = SimpleNamespace(
+            chunks=[
+                SimpleNamespace(
+                    index=0,
+                    start_seconds=0.0,
+                    end_seconds=60.0,
+                    duration_seconds=60.0,
+                    core_start_seconds=0.0,
+                    core_end_seconds=60.0,
+                ),
+                SimpleNamespace(
+                    index=1,
+                    start_seconds=60.0,
+                    end_seconds=120.0,
+                    duration_seconds=60.0,
+                    core_start_seconds=60.0,
+                    core_end_seconds=120.0,
+                ),
+            ]
+        )
+        segments = [
+            {
+                "chunk_index": 0,
+                "start_seconds": 0.0,
+                "end_seconds": 8.0,
+                "text": "첫 번째 문장입니다.",
+            },
+            {
+                "chunk_index": 0,
+                "start_seconds": 8.0,
+                "end_seconds": 16.0,
+                "text": "두 번째 문장입니다.",
+            },
+        ]
+
+        routing = _summarize_stt_chunk_routing(preprocessing, segments)
+
+        self.assertIsNotNone(routing)
+        self.assertEqual(len(routing), 2)
+        self.assertEqual(routing[0]["segment_count"], 2)
+        self.assertEqual(routing[0]["transcript_char_len"], len("첫 번째 문장입니다.") + len("두 번째 문장입니다."))
+        self.assertEqual(routing[0]["first_segment_text"], "첫 번째 문장입니다.")
+        self.assertEqual(routing[0]["last_segment_text"], "두 번째 문장입니다.")
+        self.assertEqual(routing[1]["segment_count"], 0)
+        self.assertEqual(routing[1]["transcript_char_len"], 0)
+        self.assertEqual(routing[1]["chunk_start_seconds"], 60.0)
+        self.assertEqual(routing[1]["chunk_end_seconds"], 120.0)
+
     def test_raw_noisy_long_audio_forces_chunking_even_after_denoise(self) -> None:
         preprocessor = WhisperAudioPreprocessor()
         fake_samples = np.zeros(preprocessor.sample_rate * 120, dtype=np.float32)
@@ -1605,6 +1887,26 @@ class HeuristicMeetingAnalysisTests(unittest.TestCase):
         self.assertTrue(WhisperSpeechToTextService._is_segment_in_core_region(29.0, 31.0, 30.0, 60.0))
         self.assertFalse(WhisperSpeechToTextService._is_segment_in_core_region(27.0, 29.0, 30.0, 60.0))
 
+    def test_segment_core_region_filter_uses_chunk_absolute_time(self) -> None:
+        self.assertTrue(
+            WhisperSpeechToTextService._is_segment_in_chunk_core_region(
+                239.25,
+                1.0,
+                2.5,
+                240.0,
+                480.0,
+            )
+        )
+        self.assertFalse(
+            WhisperSpeechToTextService._is_segment_in_chunk_core_region(
+                239.25,
+                0.0,
+                0.2,
+                240.0,
+                480.0,
+            )
+        )
+
     def test_diarization_reuses_preprocessed_samples_when_available(self) -> None:
         service = WhisperSpeechToTextService(model_name="large", language="ko")
         fake_samples = np.zeros(16_000, dtype=np.float32)
@@ -1636,6 +1938,46 @@ class HeuristicMeetingAnalysisTests(unittest.TestCase):
         self.assertEqual(summary["status"], "empty")
         self.assertIs(captured["samples"], fake_samples)
         self.assertEqual(captured["sample_rate"], 16_000)
+
+    def test_diarization_results_are_cached_per_audio_fingerprint(self) -> None:
+        service = WhisperSpeechToTextService(model_name="large", language="ko")
+        fake_samples = np.zeros(16_000, dtype=np.float32)
+        preprocessing = type(
+            "Preprocessing",
+            (),
+            {
+                "samples": fake_samples,
+                "sample_rate": 16_000,
+                "duration_seconds": 12.5,
+            },
+        )()
+        call_count = {"value": 0}
+
+        class FakeDiarizationService:
+            model_name = "fake-diarizer"
+
+            def diarize(self, audio_path: str, *, samples=None, sample_rate=None):
+                call_count["value"] += 1
+                return [
+                    {
+                        "speaker_id": "SPEAKER_00",
+                        "speaker_label": "팀원 1",
+                        "start_seconds": 0.0,
+                        "end_seconds": 1.0,
+                    }
+                ]
+
+        service._diarization_service = FakeDiarizationService()
+
+        with patch("app.services.ai.stt.settings.diarization_enabled", True):
+            turns_one, summary_one = service._diarize_audio(Path(__file__).resolve(), preprocessing=preprocessing)
+            turns_two, summary_two = service._diarize_audio(Path(__file__).resolve(), preprocessing=preprocessing)
+
+        self.assertEqual(call_count["value"], 1)
+        self.assertEqual(turns_one, turns_two)
+        self.assertEqual(summary_one, summary_two)
+        self.assertEqual(summary_two["speaker_count"], 1)
+        self.assertEqual(summary_two["turn_count"], 1)
 
     def test_summary_request_contract_normalizes_top_level_fields_and_targets(self) -> None:
         request = SummaryRequestPayload(

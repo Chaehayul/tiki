@@ -1847,7 +1847,10 @@ class AIEngine:
             diarization_summary = get_last_diarization()
             if diarization_summary:
                 analysis.extra_data["speaker_diarization"] = diarization_summary
-        stt_routing = _summarize_stt_routing(segments)
+        get_last_stt_routing = getattr(self.stt_service, "get_last_stt_routing", None)
+        stt_routing = get_last_stt_routing() if callable(get_last_stt_routing) else None
+        if not stt_routing:
+            stt_routing = _summarize_stt_routing(segments)
         if stt_routing:
             analysis.extra_data["stt_routing"] = stt_routing
         script_segments, tx_rows, search_document = _build_script_contract(
@@ -1970,7 +1973,10 @@ class AIEngine:
             diarization_summary = get_last_diarization()
             if diarization_summary:
                 analysis.extra_data["speaker_diarization"] = diarization_summary
-        stt_routing = _summarize_stt_routing(segments)
+        get_last_stt_routing = getattr(self.stt_service, "get_last_stt_routing", None)
+        stt_routing = get_last_stt_routing() if callable(get_last_stt_routing) else None
+        if not stt_routing:
+            stt_routing = _summarize_stt_routing(segments)
         if stt_routing:
             analysis.extra_data["stt_routing"] = stt_routing
         script_segments, tx_rows, search_document = _build_script_contract(
@@ -2318,7 +2324,10 @@ class AIEngine:
                 analysis.extra_data["audio_preprocessing"] = audio_preprocessing_summaries
             if diarization_summaries:
                 analysis.extra_data["speaker_diarization"] = diarization_summaries
-            stt_routing = _summarize_stt_routing(timeline_segments)
+            get_last_stt_routing = getattr(self.stt_service, "get_last_stt_routing", None)
+            stt_routing = get_last_stt_routing() if callable(get_last_stt_routing) else None
+            if not stt_routing:
+                stt_routing = _summarize_stt_routing(timeline_segments)
             if stt_routing:
                 analysis.extra_data["stt_routing"] = stt_routing
             script_segments, tx_rows, search_document = _build_script_contract(

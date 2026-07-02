@@ -20,7 +20,8 @@ from app.services.ai.audio_preprocessing import WhisperAudioPreprocessor
 os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
 
 logger = logging.getLogger(__name__)
-DIARIZATION_MERGE_GAP_SECONDS = 0.6
+# 같은 화자 내부의 아주 짧은 끊김만 합치고, 경계가 흔들릴 수 있는 구간은 보수적으로 유지한다.
+DIARIZATION_MERGE_GAP_SECONDS = 0.35
 TORCH_THREAD_LIMIT = 8
 # VAD는 무음 구간을 줄이되, 화자 전환 경계를 너무 많이 잘라내지 않도록 보수적으로 유지한다.
 VAD_MIN_SPEECH_SECONDS = 0.25

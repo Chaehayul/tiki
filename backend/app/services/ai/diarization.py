@@ -252,6 +252,10 @@ class SpeakerDiarizationService(ABC):
     ) -> list[dict[str, Any]]:
         raise NotImplementedError
 
+    def warm_up(self) -> None:
+        """Optional hook for long-lived servers to preload diarization state."""
+        return None
+
 
 class NoopSpeakerDiarizationService(SpeakerDiarizationService):
     def diarize(
@@ -512,6 +516,17 @@ class PyannoteSpeakerDiarizationService(SpeakerDiarizationService):
             return normalized_turns
         finally:
             self._clear_device_cache(device_name)
+
+    def warm_up(self) -> None:
+        """Preload the pyannote pipeline in long-lived server processes."""
+        if not self.enabled:
+            return
+        try:
+            device_name = self._resolve_device_name()
+            self._configure_torch_threads()
+            self._load_pipeline(self.model_name, self.token, device_name)
+        except Exception as exc:  # pragma: no cover - best effort warmup
+            logger.warning("Diarization warm-up failed: %s", exc)
 
 
 def build_speaker_diarization_service() -> SpeakerDiarizationService:

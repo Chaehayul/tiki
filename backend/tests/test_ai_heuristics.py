@@ -295,6 +295,13 @@ class HeuristicMeetingAnalysisTests(unittest.TestCase):
         self.assertEqual(service._resolve_parallel_worker_count(medium_preprocessing), 2)
         self.assertGreaterEqual(service._resolve_parallel_worker_count(long_preprocessing), 2)
 
+    def test_parallel_worker_count_override_takes_priority(self) -> None:
+        service = WhisperSpeechToTextService(language="ko")
+        preprocessing = SimpleNamespace(duration_seconds=52 * 60, chunks=[object(), object(), object(), object(), object(), object()])
+
+        self.assertEqual(service._resolve_parallel_worker_count(preprocessing, n_workers=1), 1)
+        self.assertEqual(service._resolve_parallel_worker_count(preprocessing, n_workers=3), 3)
+
     def test_parallel_chunk_transcription_uses_sequential_path_when_worker_count_is_one(self) -> None:
         chunk = SimpleNamespace(index=0, samples=np.asarray([0.0, 0.1], dtype=np.float32))
 
@@ -306,6 +313,62 @@ class HeuristicMeetingAnalysisTests(unittest.TestCase):
         self.assertEqual(results[0]["text"], "ok")
         transcribe_mock.assert_called_once()
         executor_mock.assert_not_called()
+
+    def test_audio_processing_can_defer_diarization_without_breaking_output_contract(self) -> None:
+        fake_stt = SimpleNamespace(
+            transcribe_with_segments=unittest.mock.MagicMock(
+                return_value=(
+                    "브랜드 캠페인 일정",
+                    [
+                        {
+                            "index": 0,
+                            "text": "브랜드 캠페인 일정",
+                            "start_seconds": 0.0,
+                            "end_seconds": 1.5,
+                            "duration_seconds": 1.5,
+                            "confidence": 0.9,
+                        }
+                    ],
+                )
+            ),
+            get_last_preprocessing=unittest.mock.MagicMock(return_value=None),
+            get_last_diarization=unittest.mock.MagicMock(
+                return_value={"enabled": False, "status": "deferred", "speaker_count": 0, "turn_count": 0}
+            ),
+            get_last_stt_routing=unittest.mock.MagicMock(return_value=None),
+        )
+        fake_llm = SimpleNamespace(
+            summarize_and_extract_tickets=unittest.mock.MagicMock(
+                return_value={
+                    "meeting_title": "캠페인 회의",
+                    "summary": "브랜드 캠페인 일정을 정리했다.",
+                    "keywords": [{"text": "브랜드 캠페인"}],
+                    "decisions": ["일정을 확정했다"],
+                    "action_items": [
+                        {
+                            "title": "외주 일정 확인",
+                            "description": "외주 일정을 다시 확인한다.",
+                            "priority": "medium",
+                            "status": "draft",
+                            "assignee": "미정",
+                        }
+                    ],
+                    "issues": [],
+                    "next_agenda": [],
+                    "model_name": "heuristic-llm-v2",
+                    "prompt_version": "heuristic-v2",
+                }
+            )
+        )
+
+        engine = AIEngine(stt_service=fake_stt, llm_service=fake_llm)
+        result = engine.process_audio("/tmp/캠페인.mp3", include_diarization=False)
+
+        fake_stt.transcribe_with_segments.assert_called_once()
+        _, kwargs = fake_stt.transcribe_with_segments.call_args
+        self.assertFalse(kwargs["include_diarization"])
+        self.assertEqual(result.analysis.extra_data["speaker_diarization"]["status"], "deferred")
+        self.assertEqual(result.analysis.summary, "브랜드 캠페인 일정을 정리했다.")
 
     def test_whisper_load_model_forwards_device_name(self) -> None:
         fake_whisper = SimpleNamespace(load_model=SimpleNamespace())

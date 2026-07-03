@@ -47,6 +47,7 @@ class Settings(BaseSettings):
     whisper_model: str = Field(default="large", alias="WHISPER_MODEL")
     whisper_medium_model: str | None = Field(default="medium", alias="WHISPER_MEDIUM_MODEL")
     whisper_light_model: str = Field(default="small", alias="WHISPER_LIGHT_MODEL")
+    whisper_parallel_workers: int | None = Field(default=None, alias="WHISPER_PARALLEL_WORKERS")
     diarization_enabled: bool = Field(default=False, alias="DIARIZATION_ENABLED")
     diarization_model: str = Field(
         default="pyannote/speaker-diarization-3.1",

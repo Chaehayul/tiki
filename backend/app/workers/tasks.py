@@ -6,6 +6,7 @@ from uuid import UUID
 
 from sqlalchemy import select
 
+from app.core.config import settings
 from app.db.database import SessionLocal
 from app.models.analysis import AnalysisResult
 from app.models.enums import FileKind, ProcessingStatus
@@ -66,13 +67,14 @@ def _run_pipeline(db, file_id: UUID) -> None:
 
     engine = get_default_ai_engine()
     if uploaded_file.file_kind == FileKind.AUDIO:
-        _log_progress(file_id, 25, "오디오 전사와 화자분리 파이프라인을 시작합니다")
+        _log_progress(file_id, 25, "오디오 전사와 초기 분석 파이프라인을 시작합니다")
         result = engine.process_audio_parallel(
             uploaded_file.storage_path,
-            n_workers=2,
+            n_workers=settings.whisper_parallel_workers,
             rag_context=project_context,
+            include_diarization=False,
         )
-        _log_progress(file_id, 75, "전사 결과를 분석하고 있습니다")
+        _log_progress(file_id, 75, "전사 결과를 먼저 분석하고 있습니다")
         extraction_method = "whisper"
     elif uploaded_file.file_kind in {FileKind.DOCUMENT, FileKind.TEXT}:
         _log_progress(file_id, 25, "문서 추출 파이프라인을 시작합니다")

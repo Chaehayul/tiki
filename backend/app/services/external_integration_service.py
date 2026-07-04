@@ -513,15 +513,7 @@ def _meeting_markdown(db: Session, meeting: Meeting) -> str:
     else:
         lines.append("- 없음")
 
-    lines.extend(["", "## 회의 전체 내용", raw_text])
-    lines.extend(["", "## AI 분석 결과", "### AI 요약", payload.get("summary") or "없음"])
-    lines.extend(["", "### AI 키워드"])
-    lines.extend([f"- #{tag}" for tag in keywords] or ["- 없음"])
-    lines.extend(["", "### AI 주요 결정"])
-    lines.extend([f"- {item}" for item in decisions] or ["- 없음"])
-    lines.extend(["", "### AI 해야 할 일"])
-    lines.extend([f"- {_service_text(item.get('title') or item.get('text') or '해야 할 일')}" for item in action_items] or ["- 없음"])
-    lines.extend(["", "### AI 이슈"])
+    lines.extend(["", "## 이슈"])
     if issues:
         for item in issues:
             priority = item.get("priority") if isinstance(item, dict) else None
@@ -529,8 +521,11 @@ def _meeting_markdown(db: Session, meeting: Meeting) -> str:
             lines.append(f"- {text}{f' ({priority})' if priority else ''}")
     else:
         lines.append("- 없음")
-    lines.extend(["", "### AI 다음 안건"])
+
+    lines.extend(["", "## 다음 안건"])
     lines.extend([f"- {item}" for item in next_agenda] or ["- 없음"])
+
+    lines.extend(["", "## 회의 전체 내용", raw_text])
 
     if isinstance(meta, dict) and meta.get("source") == "manual":
         lines.extend(["", "<!-- TIKI manual meeting metadata synced -->"])

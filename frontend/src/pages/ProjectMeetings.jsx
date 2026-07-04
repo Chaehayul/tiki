@@ -250,6 +250,7 @@ const PARTICIPANT_COLOR_MAP = {
 
 const PROJECT_OVERRIDE_STORAGE_KEY = 'tiki_project_overrides';
 const PROJECT_CATALOG_STORAGE_KEY = 'tiki_project_catalog';
+const DELETED_PROJECT_IDS_KEY = 'tiki_deleted_project_ids';
 const MANUAL_MEETING_RECORDS_KEY = 'tiki_manual_minutes_records';
 const isTemporaryCodexProject = (project) => String(project?.name || '').toLowerCase().includes('codex invitation check');
 
@@ -356,6 +357,39 @@ const writeProjectCatalog = (next) => {
         // ignore storage write failures in local mock mode
     }
 };
+
+function parseCurrentUser() {
+    if (typeof window === 'undefined') return null;
+    const candidateKeys = ['tiki_user', 'currentUser', 'user', 'authUser', 'sessionUser'];
+    for (const key of candidateKeys) {
+        try {
+            const raw = localStorage.getItem(key);
+            if (!raw) continue;
+            const parsed = JSON.parse(raw);
+            if (parsed && typeof parsed === 'object') return parsed;
+            if (typeof parsed === 'string' && parsed.trim()) return { name: parsed.trim() };
+        } catch {
+            const raw = localStorage.getItem(key);
+            if (raw && raw.trim()) return { name: raw.trim() };
+        }
+    }
+    return null;
+}
+
+function getDeletedProjectStorageKey(user) {
+    const identity = user?.email || user?.name || 'anonymous';
+    return `${DELETED_PROJECT_IDS_KEY}_${identity}`;
+}
+
+function loadDeletedProjectIds(user) {
+    try {
+        const raw = localStorage.getItem(getDeletedProjectStorageKey(user));
+        const parsed = raw ? JSON.parse(raw) : [];
+        return Array.isArray(parsed) ? parsed.map((id) => String(id)).filter(Boolean) : [];
+    } catch {
+        return [];
+    }
+}
 
 function normalizeProject(project) {
     if (!project) return null;
@@ -909,6 +943,12 @@ export default function ProjectMeetings() {
     const [activeActionItemId, setActiveActionItemId] = useState(null);
     const [actionDraft, setActionDraft] = useState(null);
     const [isActionEditMode, setIsActionEditMode] = useState(false);
+    const currentUser = useMemo(() => parseCurrentUser(), [location.key]);
+    const deletedProjectIds = useMemo(() => loadDeletedProjectIds(currentUser), [currentUser, location.key]);
+    const isDeletedProject = useMemo(
+        () => (id) => deletedProjectIds.includes(String(id || '').trim()),
+        [deletedProjectIds]
+    );
     const [projectCatalog, setProjectCatalog] = useState(() => readProjectCatalog());
     const [pendingIntegrationTarget, setPendingIntegrationTarget] = useState('');
     const [selectedIntegrationTools, setSelectedIntegrationTools] = useState([]);
@@ -973,7 +1013,9 @@ export default function ProjectMeetings() {
     useEffect(() => {
         listProjects()
             .then((data) => {
-                const mapped = (Array.isArray(data) ? data : []).map((p) =>
+                const mapped = (Array.isArray(data) ? data : [])
+                    .filter((p) => !isDeletedProject(p?.id))
+                    .map((p) =>
                     normalizeProject({
                         id: p.id,
                         name: p.name,
@@ -984,13 +1026,14 @@ export default function ProjectMeetings() {
                     })
                 );
 
-                // Replace catalog with API data, discarding any old mock entries (integer IDs)
+                // Replace catalog with API data, discarding any old mock entries (integer IDs).
+                // Real (UUID) entries are fully trusted from the fresh API response — an entry
+                // that no longer comes back from listProjects() no longer exists, so it must not
+                // be retained here even if it was cached from an earlier visit.
                 const isUUID = (id) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(id));
                 setProjectCatalog((prev) => {
-                    const base = Array.isArray(prev) ? prev : [];
-                    // Keep only real-API (UUID) entries that aren't in the new list, then merge
-                    const retained = base.filter((p) => isUUID(p?.id) && !mapped.some((m) => isSameProjectId(m.id, p?.id)));
-                    const next = [...retained, ...mapped];
+                    const base = (Array.isArray(prev) ? prev : []).filter((p) => !isUUID(p?.id));
+                    const next = [...base, ...mapped];
                     writeProjectCatalog(next);
                     return next;
                 });
@@ -998,7 +1041,7 @@ export default function ProjectMeetings() {
             .catch(() => {
                 // API failures leave the current local navigation state intact.
             });
-    }, []);
+    }, [isDeletedProject]);
 
     useEffect(() => {
         const id = normalizeProjectId(projectId);
@@ -1012,9 +1055,9 @@ export default function ProjectMeetings() {
                     members: Array.isArray(data?.members) ? data.members : [],
                     meetings: Array.isArray(data?.meetings) ? data.meetings : [],
                 });
-                if (!normalized?.id) return;
+                if (!normalized?.id || isDeletedProject(normalized.id)) return;
                 setProjectCatalog((prev) => {
-                    const base = Array.isArray(prev) ? prev : [];
+                    const base = (Array.isArray(prev) ? prev : []).filter((item) => !isDeletedProject(item?.id));
                     const idx = base.findIndex((item) => isSameProjectId(item?.id, normalized.id));
                     const next = idx >= 0 ? [...base] : [...base, normalized];
                     if (idx >= 0) next[idx] = { ...base[idx], ...normalized };
@@ -1025,11 +1068,12 @@ export default function ProjectMeetings() {
             .catch(() => {
                 // Keep route state/local records if the project cannot be fetched.
             });
-    }, [projectId]);
+    }, [projectId, isDeletedProject]);
 
     const project = useMemo(() => {
         const id = normalizeProjectId(projectId);
         if (!id) return null;
+        if (isDeletedProject(id)) return null;
         const override = projectOverrides[id] || null;
         const mergeWithOverride = (baseProject) => {
             const safeOverride = { ...(override || {}) };
@@ -1058,17 +1102,25 @@ export default function ProjectMeetings() {
         }
         if (override && isSameProjectId(override.id, id)) return normalizeProject(override);
         return null;
-    }, [projectId, location.state, projectCatalog, projectOverrides]);
+    }, [projectId, location.state, projectCatalog, projectOverrides, isDeletedProject]);
+
+    useEffect(() => {
+        const id = normalizeProjectId(projectId);
+        if (id && isDeletedProject(id)) {
+            navigate('/project-list', { replace: true });
+        }
+    }, [projectId, isDeletedProject, navigate]);
 
     useEffect(() => {
         const fromState = location.state?.project;
         if (!fromState?.id) return;
+        if (isDeletedProject(fromState.id)) return;
 
         const normalized = normalizeProject(fromState);
         if (!normalized?.id) return;
 
         setProjectCatalog((prev) => {
-            const base = Array.isArray(prev) ? prev : [];
+            const base = (Array.isArray(prev) ? prev : []).filter((item) => !isDeletedProject(item?.id));
             const idx = base.findIndex((item) => isSameProjectId(item?.id, normalized.id));
 
             if (idx >= 0) {
@@ -1084,10 +1136,10 @@ export default function ProjectMeetings() {
             writeProjectCatalog(next);
             return next;
         });
-    }, [location.key]);
+    }, [location.key, location.state, isDeletedProject]);
 
     const projectCandidates = useMemo(() => {
-        const source = [...projectCatalog];
+        const source = [...projectCatalog].filter((item) => !isDeletedProject(item?.id));
         const deduped = [];
         source.forEach((item) => {
             if (!item?.id) return;
@@ -1105,10 +1157,10 @@ export default function ProjectMeetings() {
                 admins: Array.isArray(override.admins) ? override.admins : item.admins,
             });
         });
-        if (!project) return merged;
+        if (!project || isDeletedProject(project.id)) return merged;
         const exists = merged.some((p) => isSameProjectId(p.id, project.id));
         return exists ? merged : [project, ...merged];
-    }, [project, projectCatalog, projectOverrides]);
+    }, [project, projectCatalog, projectOverrides, isDeletedProject]);
 
     const filteredProjects = useMemo(() => {
         const q = projectSearch.trim().toLowerCase();

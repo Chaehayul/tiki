@@ -1585,6 +1585,7 @@ export default function ProjectMeetings() {
         setSelectedIntegrationTools([]);
         setActionDraft({
             id: item.id,
+            meetingId: item.meeting?.id || null,
             text: item.text,
             description: item.description || '',
             due: item.due || '-',
@@ -1642,8 +1643,10 @@ export default function ProjectMeetings() {
         const primaryKey = String(primaryTool || '').toLowerCase();
         const nextPrimaryTool = primaryTool || null;
         const nextPrimaryLink = nextIntegrationLinks[primaryKey] || actionDraft.externalLink || '';
+        let sourceMeeting = null;
         const nextItems = allActionItems.map((item) => {
             if (item.id !== actionDraft.id) return item;
+            sourceMeeting = item.meeting || null;
             return {
                 ...item,
                 text: nextText,
@@ -1672,6 +1675,29 @@ export default function ProjectMeetings() {
             };
         });
         if (closeAfterSave) closeActionDrawer();
+
+        // Persist the change to the backend meeting record (previously this only ever
+        // wrote to localStorage, so status like "수행완료" never actually reached the
+        // server and nothing downstream — e.g. Jira completion sync — could see it).
+        if (sourceMeeting?.id && project?.id) {
+            const rawActionItems = (Array.isArray(sourceMeeting.action_items) ? sourceMeeting.action_items : []).map(
+                (raw) =>
+                    String(raw?.id || '') === String(actionDraft.id)
+                        ? {
+                              ...raw,
+                              title: nextText,
+                              text: nextText,
+                              description: actionDraft.description || '',
+                              assignee: actionDraft.assignee || project.teamLead || '담당자 미지정',
+                              due: actionDraft.due || '-',
+                              status: normalizedStatus,
+                          }
+                        : raw
+            );
+            updateProjectMeeting(project.id, sourceMeeting.id, { action_items: rawActionItems }).catch((err) => {
+                showToast(err?.message || '변경 사항을 서버에 저장하지 못했습니다.', 'error');
+            });
+        }
         return true;
     };
 

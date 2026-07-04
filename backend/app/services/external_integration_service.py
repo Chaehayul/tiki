@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import secrets
 import logging
 from datetime import UTC, datetime, timedelta
@@ -185,6 +186,34 @@ def set_jira_project(db: Session, project_id: UUID, user_id: UUID, key: str, nam
     db.commit()
     db.refresh(integration)
     return integration
+
+
+# TIKI action-item status -> Jira status category to push it into when that status is reached.
+TASK_STATUS_TO_JIRA_CATEGORY = {
+    "검토완료": "indeterminate",  # review done, work starts -> Jira "In Progress"
+    "수행완료": "done",  # actually completed -> Jira "Done"
+}
+
+
+def sync_task_status_to_jira(db: Session, project_id: UUID, task_id: str, category_key: str) -> None:
+    """Push a TIKI task's status to its linked Jira issue, if one exists."""
+    integration = _project_integration(db, project_id, IntegrationProvider.JIRA)
+    if integration is None:
+        return
+    link = db.scalar(
+        select(TaskExternalLink).where(
+            TaskExternalLink.task_id == task_id,
+            TaskExternalLink.project_id == project_id,
+            TaskExternalLink.provider == IntegrationProvider.JIRA,
+        )
+    )
+    issue_key = link.external_key or link.external_id if link else None
+    if not issue_key:
+        return
+    token = _get_valid_jira_access_token(db, integration)
+    db.commit()
+    client = JiraOAuthClient(access_token=token, cloud_id=integration.cloud_id, site_url=integration.external_site_url)
+    client.transition_to_category(issue_key, category_key)
 
 
 def disconnect_project_integration(db: Session, project_id: UUID, provider: IntegrationProvider, user_id: UUID) -> None:
@@ -419,6 +448,20 @@ def _format_due(value: object) -> str:
     return str(value or "").strip().replace("-", ".") or "-"
 
 
+_JIRA_DUE_DATE_RE = re.compile(r"^(\d{4})[.\-/](\d{1,2})[.\-/](\d{1,2})")
+
+
+def _normalize_jira_due_date(value: object) -> str | None:
+    """Coerce TIKI's various due-date formats (e.g. "2026.07.11") into the
+    "yyyy-MM-dd" shape Jira's API requires. Returns None (omit the field)
+    rather than send a value Jira would reject with a 400."""
+    match = _JIRA_DUE_DATE_RE.match(str(value or "").strip())
+    if not match:
+        return None
+    year, month, day = match.groups()
+    return f"{year}-{int(month):02d}-{int(day):02d}"
+
+
 def _meeting_markdown(db: Session, meeting: Meeting) -> str:
     project = db.get(Project, meeting.project_id)
     payload = _analysis_payload_for_meeting(db, meeting)
@@ -515,6 +558,16 @@ def ensure_meeting_external_resource(db: Session, meeting: Meeting, provider: In
             link.external_url = None
             link.sync_status = SyncStatus.PENDING
             db.flush()
+        elif provider == IntegrationProvider.JIRA:
+            token = _get_valid_jira_access_token(db, integration)
+            db.commit()
+            client = JiraOAuthClient(access_token=token, cloud_id=integration.cloud_id, site_url=integration.external_site_url)
+            if client.issue_exists(link.external_id):
+                return link
+            link.external_id = None
+            link.external_url = None
+            link.sync_status = SyncStatus.PENDING
+            db.flush()
         else:
             return link
     if link is None:
@@ -584,6 +637,9 @@ def ensure_meeting_external_resource(db: Session, meeting: Meeting, provider: In
                 raise RuntimeError("Jira project is not selected for this project")
             title = f"Meeting - {meeting.date} {_service_text(meeting.title)}"
             description = _meeting_description(db, meeting)
+            if link.external_id and not client.issue_exists(link.external_id):
+                link.external_id = None
+                link.external_url = None
             if link.external_id:
                 client.update_issue(link.external_id, title=title, description=description)
             else:
@@ -624,6 +680,11 @@ def sync_connected_meeting_resources(db: Session, meeting: Meeting, *, force: bo
     ).all()
     for provider in providers:
         ensure_meeting_external_resource(db, meeting, provider, force=force)
+        if provider == IntegrationProvider.JIRA:
+            try:
+                sync_all_meeting_tasks_to_jira(db, meeting)
+            except Exception:
+                logger.exception("Failed to auto-sync meeting %s tasks to Jira", meeting.id)
 
 
 def archive_meeting_external_resources(db: Session, meeting: Meeting) -> None:
@@ -657,6 +718,11 @@ def sync_project_meeting_resources(db: Session, project_id: UUID, provider: Inte
         link = ensure_meeting_external_resource(db, meeting, provider, force=provider == IntegrationProvider.NOTION)
         if link.sync_status == SyncStatus.SYNCED:
             result["synced"] += 1
+            if provider == IntegrationProvider.JIRA:
+                try:
+                    sync_all_meeting_tasks_to_jira(db, meeting)
+                except Exception:
+                    logger.exception("Failed to auto-sync meeting %s tasks to Jira during bulk resync", meeting.id)
         elif link.sync_status == SyncStatus.FAILED:
             result["failed"] += 1
             result["errors"].append({
@@ -686,6 +752,32 @@ def send_meeting_tasks(
 ) -> TaskSendResponse:
     meeting = _get_meeting_or_404(db, meeting_id)
     project_service.get_project(db, meeting.project_id, user_id)
+    results = _sync_tasks_to_provider(db, meeting, provider, task_ids)
+    return TaskSendResponse(meetingId=meeting.id, provider=provider, results=results)
+
+
+def sync_all_meeting_tasks_to_jira(db: Session, meeting: Meeting) -> None:
+    """Auto-sync every action item on a meeting to its own Jira issue.
+
+    Mirrors what the manual "연동하기" button does per task, but runs whenever the
+    meeting itself syncs so users don't have to click through each task by hand.
+    """
+    integration = _project_integration(db, meeting.project_id, IntegrationProvider.JIRA)
+    if integration is None:
+        return
+    task_ids = [
+        _task_id(meeting, item, index)
+        for index, item in enumerate(meeting.action_items or [])
+        if isinstance(item, dict)
+    ]
+    if not task_ids:
+        return
+    _sync_tasks_to_provider(db, meeting, IntegrationProvider.JIRA, task_ids)
+
+
+def _sync_tasks_to_provider(
+    db: Session, meeting: Meeting, provider: IntegrationProvider, task_ids: list[str]
+) -> list[ExternalTaskLinkResponse]:
     meeting_link = ensure_meeting_external_resource(db, meeting, provider)
     if meeting_link.sync_status == SyncStatus.FAILED:
         raise AppException(detail=meeting_link.error_message or "Meeting sync failed", status_code=502, code="meeting_sync_failed")
@@ -697,6 +789,7 @@ def send_meeting_tasks(
     results: list[ExternalTaskLinkResponse] = []
     selected_ids = [str(item) for item in task_ids]
     should_resync_notion_page = False
+    jira_account_id_cache: dict[str, str | None] = {}
 
     for task_id in selected_ids:
         found = _find_action_item(meeting, task_id)
@@ -727,23 +820,50 @@ def send_meeting_tasks(
         try:
             title = _service_text(task.get("title") or task.get("text") or "업무")
             description = _service_text(task.get("description") or meeting.summary or title)
-            due_date = str(task.get("due") or task.get("due_at") or task.get("dueDate") or "").strip() or None
+            due_date = _normalize_jira_due_date(task.get("due") or task.get("due_at") or task.get("dueDate"))
             if provider == IntegrationProvider.JIRA:
                 token = _get_valid_jira_access_token(db, integration)
                 client = JiraOAuthClient(access_token=token, cloud_id=integration.cloud_id, site_url=integration.external_site_url)
                 project_key = integration.jira_project_key or settings.jira_project_key
                 if not project_key:
                     raise RuntimeError("Jira project is not selected for this project")
-                if link.external_id or link.external_key:
-                    client.update_issue(link.external_key or link.external_id or "", title=title, description=description, due_date=due_date)
+                existing_key = link.external_key or link.external_id or ""
+                if existing_key and not client.issue_exists(existing_key):
+                    link.external_id = None
+                    link.external_key = None
+                    existing_key = ""
+
+                assignee_name = str(task.get("assignee") or "").strip()
+                if assignee_name not in jira_account_id_cache:
+                    try:
+                        jira_account_id_cache[assignee_name] = client.find_account_id(assignee_name) if assignee_name else None
+                    except Exception:
+                        logger.exception("Failed to look up Jira account for assignee %r", assignee_name)
+                        jira_account_id_cache[assignee_name] = None
+                assignee_account_id = jira_account_id_cache[assignee_name]
+
+                if existing_key:
+                    client.update_issue(
+                        existing_key, title=title, description=description, due_date=due_date,
+                        assignee_account_id=assignee_account_id,
+                    )
                 else:
-                    issue = client.create_issue(project_key=project_key, title=title, description=description, issue_type="Task", due_date=due_date)
+                    issue = client.create_issue(
+                        project_key=project_key, title=title, description=description, issue_type="Task",
+                        due_date=due_date, assignee_account_id=assignee_account_id,
+                    )
                     link.external_id = issue.issue_id
                     link.external_key = issue.issue_key
                     link.external_url = issue.issue_url
                     if meeting_link.external_url and issue.issue_key:
                         parent_key = meeting_link.external_url.rstrip("/").split("/")[-1]
                         client.link_issues(parent_key, issue.issue_key)
+                # Align the issue's Jira status with whatever TIKI status it already has —
+                # covers tasks synced for the first time (e.g. via bulk resync) that were
+                # already marked 검토완료/수행완료 before a Jira issue existed for them.
+                category_key = TASK_STATUS_TO_JIRA_CATEGORY.get(str(task.get("status") or ""))
+                if category_key:
+                    client.transition_to_category(link.external_key or link.external_id, category_key)
             else:
                 should_resync_notion_page = True
                 link.external_id = meeting_link.external_id
@@ -782,4 +902,4 @@ def send_meeting_tasks(
                 result.externalId = refreshed_link.external_id
                 result.externalUrl = refreshed_link.external_url
     db.commit()
-    return TaskSendResponse(meetingId=meeting.id, provider=provider, results=results)
+    return results

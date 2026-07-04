@@ -250,6 +250,12 @@ def update_meeting(
     _assert_member(project, user_id)
     meeting = _get_meeting_or_404(db, project_id, meeting_id)
 
+    previous_status_by_id = {
+        str(item.get("id")): str(item.get("status") or "")
+        for item in (meeting.action_items or [])
+        if isinstance(item, dict) and item.get("id")
+    }
+
     for field, value in payload.model_dump(exclude_unset=True).items():
         if field == "action_items" and isinstance(value, list):
             value = _normalize_action_items(value)
@@ -258,13 +264,30 @@ def update_meeting(
 
     db.commit()
     db.refresh(meeting)
-    try:
-        from app.services import external_integration_service
 
+    from app.services import external_integration_service
+
+    task_status_changes = [
+        (str(item.get("id")), external_integration_service.TASK_STATUS_TO_JIRA_CATEGORY[str(item.get("status"))])
+        for item in (meeting.action_items or [])
+        if isinstance(item, dict)
+        and item.get("id")
+        and str(item.get("status")) in external_integration_service.TASK_STATUS_TO_JIRA_CATEGORY
+        and previous_status_by_id.get(str(item.get("id"))) != str(item.get("status"))
+    ]
+
+    try:
         external_integration_service.sync_connected_meeting_resources(db, meeting, force=True)
         db.refresh(meeting)
     except Exception:
         logger.exception("Failed to sync updated meeting %s to external integrations", meeting.id)
+
+    for task_id, category_key in task_status_changes:
+        try:
+            external_integration_service.sync_task_status_to_jira(db, project_id, task_id, category_key)
+        except Exception:
+            logger.exception("Failed to sync task %s status to Jira", task_id)
+
     return meeting
 
 

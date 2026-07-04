@@ -269,6 +269,20 @@ class JiraOAuthClient:
             "content": [{"type": "paragraph", "content": [{"type": "text", "text": text[:30000]}]}],
         }
 
+    def find_account_id(self, query: str) -> str | None:
+        """Look up a Jira Cloud account id by display name or email.
+
+        Returns None if nobody on the connected site matches — callers should
+        leave the issue unassigned in that case rather than guessing.
+        """
+        query = (query or "").strip()
+        if not query:
+            return None
+        result = self._api_request("GET", f"user/search?query={urllib.parse.quote(query)}&maxResults=1")
+        if isinstance(result, list) and result:
+            return result[0].get("accountId")
+        return None
+
     def create_issue(
         self,
         *,
@@ -277,6 +291,7 @@ class JiraOAuthClient:
         description: str,
         issue_type: str = "Task",
         due_date: str | None = None,
+        assignee_account_id: str | None = None,
     ) -> JiraIssueResult:
         fields: dict[str, Any] = {
             "project": {"key": project_key},
@@ -286,6 +301,8 @@ class JiraOAuthClient:
         }
         if due_date:
             fields["duedate"] = due_date[:10]
+        if assignee_account_id:
+            fields["assignee"] = {"accountId": assignee_account_id}
         result = self._api_request("POST", "issue", {"fields": fields})
         issue_key = result["key"]
         return JiraIssueResult(
@@ -294,14 +311,68 @@ class JiraOAuthClient:
             issue_url=f"{self.site_url}/browse/{issue_key}" if self.site_url else "",
         )
 
-    def update_issue(self, issue_id_or_key: str, *, title: str, description: str, due_date: str | None = None) -> None:
+    def update_issue(
+        self,
+        issue_id_or_key: str,
+        *,
+        title: str,
+        description: str,
+        due_date: str | None = None,
+        assignee_account_id: str | None = None,
+    ) -> None:
         fields: dict[str, Any] = {
             "summary": title[:255],
             "description": self._doc(description or title),
         }
         if due_date:
             fields["duedate"] = due_date[:10]
+        if assignee_account_id:
+            fields["assignee"] = {"accountId": assignee_account_id}
         self._api_request("PUT", f"issue/{issue_id_or_key}", {"fields": fields})
+
+    def issue_exists(self, issue_id_or_key: str) -> bool:
+        try:
+            self._api_request("GET", f"issue/{issue_id_or_key}?fields=key")
+            return True
+        except RuntimeError as exc:
+            if "Jira API 404" in str(exc):
+                return False
+            raise
+
+    def get_transitions(self, issue_id_or_key: str) -> list[dict[str, Any]]:
+        result = self._api_request("GET", f"issue/{issue_id_or_key}/transitions")
+        return result.get("transitions", [])
+
+    def transition_issue(self, issue_id_or_key: str, transition_id: str) -> None:
+        self._api_request("POST", f"issue/{issue_id_or_key}/transitions", {"transition": {"id": transition_id}})
+
+    def transition_to_category(self, issue_id_or_key: str, category_key: str) -> bool:
+        """Move an issue to a status in the given Jira status category.
+
+        category_key is one of Jira's three fixed categories: "new" (to do),
+        "indeterminate" (in progress), or "done". Workflows are per-project and
+        can have several statuses per category (e.g. "In Progress", "In Review"
+        both under "indeterminate") — we simply take the first matching
+        transition available from the issue's current status. Returns False if
+        no transition into that category exists from where the issue is now.
+        """
+        transitions = self.get_transitions(issue_id_or_key)
+        match = next(
+            (t for t in transitions if (t.get("to") or {}).get("statusCategory", {}).get("key") == category_key),
+            None,
+        )
+        if match is None:
+            return False
+        self.transition_issue(issue_id_or_key, match["id"])
+        return True
+
+    def complete_issue(self, issue_id_or_key: str) -> bool:
+        """Move an issue to a "Done"-category status. Returns False if no such transition exists."""
+        return self.transition_to_category(issue_id_or_key, "done")
+
+    def start_progress_issue(self, issue_id_or_key: str) -> bool:
+        """Move an issue to an "In Progress"-category status. Returns False if no such transition exists."""
+        return self.transition_to_category(issue_id_or_key, "indeterminate")
 
     def link_issues(self, inward_issue_key: str, outward_issue_key: str) -> None:
         try:

@@ -1272,7 +1272,7 @@ def _build_search_sections(
             sections.append(
                 MeetingSearchSection(
                     section_type="action_item",
-                    title=title or "액션아이템",
+                    title=title or "해야 할 일",
                     text=_join_search_parts(title, description),
                     weight=1.0,
                 )

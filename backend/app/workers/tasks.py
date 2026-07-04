@@ -1,4 +1,4 @@
-"""Async/background task entry points."""
+"""Background task entry points for uploaded meeting files."""
 
 import logging
 from datetime import UTC, datetime
@@ -32,57 +32,89 @@ def process_uploaded_file(file_id: UUID) -> None:
         db.close()
 
 
+def _project_context_for_upload(db, uploaded_file: UploadedFile) -> dict | None:
+    if uploaded_file.project_id is None:
+        return None
+
+    project = db.get(Project, uploaded_file.project_id)
+    if project is None:
+        return None
+
+    members = db.scalars(select(ProjectMember).where(ProjectMember.project_id == project.id)).all()
+    participant_names = [
+        (member.name or member.email or "").strip()
+        for member in members
+        if (member.name or member.email or "").strip()
+    ]
+    return {
+        "project_name": project.name,
+        "project_category": project.category,
+        "participants": participant_names,
+        "extra": {
+            "project_id": str(project.id),
+            "project_visibility": project.visibility,
+        },
+    }
+
+
+def _normalize_action_items(raw_items) -> list[dict]:
+    normalized: list[dict] = []
+    for item in raw_items or []:
+        if not isinstance(item, dict):
+            continue
+        title = str(item.get("title") or item.get("text") or "").strip()
+        if not title:
+            continue
+        normalized.append(
+            {
+                **item,
+                "id": str(item.get("id") or item.get("task_id") or uuid4()),
+                "title": title,
+                "status": item.get("status") or "검토대기",
+            }
+        )
+    return normalized
+
+
+def _parse_due_at(value) -> datetime | None:
+    if not value:
+        return None
+    try:
+        raw = datetime.fromisoformat(str(value))
+    except ValueError:
+        return None
+    return raw.astimezone(UTC) if raw.tzinfo else raw.replace(tzinfo=UTC)
+
+
 def _run_pipeline(db, file_id: UUID) -> None:
     uploaded_file = db.get(UploadedFile, file_id)
     if uploaded_file is None:
         raise ValueError(f"UploadedFile {file_id} not found")
 
-    project_context = None
-    if uploaded_file.project_id is not None:
-        project = db.get(Project, uploaded_file.project_id)
-        if project is not None:
-            members = db.scalars(
-                select(ProjectMember).where(ProjectMember.project_id == project.id)
-            ).all()
-            participant_names = [
-                (member.name or member.email or "").strip()
-                for member in members
-                if (member.name or member.email or "").strip()
-            ]
-            project_context = {
-                "project_name": project.name,
-                "project_category": project.category,
-                "participants": participant_names,
-                "extra": {
-                    "project_id": str(project.id),
-                    "project_visibility": project.visibility,
-                },
-            }
+    project_context = _project_context_for_upload(db, uploaded_file)
 
     uploaded_file.status = ProcessingStatus.PROCESSING
     uploaded_file.started_at = datetime.now(UTC)
     db.commit()
-    _log_progress(file_id, 10, "파일이 분석 큐에서 처리 단계로 이동했습니다")
+    _log_progress(file_id, 10, "파일 분석을 시작했습니다.")
 
     engine = get_default_ai_engine()
     if uploaded_file.file_kind == FileKind.AUDIO:
-        _log_progress(file_id, 25, "오디오 전사와 화자분리 파이프라인을 시작합니다")
+        _log_progress(file_id, 25, "오디오 전사와 화자 분리 파이프라인을 시작합니다.")
         result = engine.process_audio_parallel(
             uploaded_file.storage_path,
             n_workers=2,
             rag_context=project_context,
         )
-        _log_progress(file_id, 75, "전사 결과를 분석하고 있습니다")
+        _log_progress(file_id, 75, "전사 결과를 분석하고 있습니다.")
         extraction_method = "whisper"
     elif uploaded_file.file_kind in {FileKind.DOCUMENT, FileKind.TEXT}:
-        _log_progress(file_id, 25, "문서 추출 파이프라인을 시작합니다")
+        _log_progress(file_id, 25, "문서 추출 파이프라인을 시작합니다.")
         result = engine.process_document(uploaded_file.storage_path, rag_context=project_context)
-        _log_progress(file_id, 75, "문서 요약과 액션아이템을 정리하고 있습니다")
-        extraction_method = result.analysis.extra_data.get("document_extraction", {}).get(
-            "extraction_method",
-            "document",
-        )
-        uploaded_file.page_count = result.analysis.extra_data.get("document_extraction", {}).get("page_count")
+        _log_progress(file_id, 75, "문서 요약과 해야 할 일을 정리하고 있습니다.")
+        extraction_meta = result.analysis.extra_data.get("document_extraction", {})
+        extraction_method = extraction_meta.get("extraction_method", "document")
+        uploaded_file.page_count = extraction_meta.get("page_count")
     else:
         raise ValueError(f"Unsupported file kind: {uploaded_file.file_kind}")
 
@@ -94,14 +126,10 @@ def _run_pipeline(db, file_id: UUID) -> None:
     )
     db.add(extracted_content)
     db.flush()
-    _log_progress(file_id, 85, "추출된 본문을 저장했습니다")
+    _log_progress(file_id, 85, "추출된 본문을 저장했습니다.")
 
-    action_items = [
-        {**item, "id": str(item.get("id") or item.get("task_id") or uuid4())}
-        if isinstance(item, dict)
-        else item
-        for item in result.analysis.action_items
-    ]
+    action_items = _normalize_action_items(result.analysis.action_items)
+    extra_data = dict(result.analysis.extra_data or {})
 
     analysis_result = AnalysisResult(
         extracted_content_id=extracted_content.id,
@@ -109,25 +137,26 @@ def _run_pipeline(db, file_id: UUID) -> None:
         action_items=action_items,
         model_name=result.analysis.model_name,
         prompt_version=result.analysis.prompt_version,
-        extra_data=result.analysis.extra_data,
+        extra_data=extra_data,
     )
     db.add(analysis_result)
     db.flush()
-    _log_progress(file_id, 92, "분석 결과를 저장했습니다")
+    _log_progress(file_id, 92, "분석 결과를 저장했습니다.")
 
     meeting = None
     if uploaded_file.project_id is not None:
         title = (
             getattr(result.analysis, "meeting_title", None)
-            or result.analysis.extra_data.get("meeting_title")
+            or extra_data.get("meeting_title")
             or uploaded_file.original_filename
         )
-        raw_keywords = result.analysis.extra_data.get("keywords") or result.analysis.keywords or []
+        raw_keywords = extra_data.get("keywords") or getattr(result.analysis, "keywords", []) or []
         tags = []
         for keyword in raw_keywords:
             text = str(keyword.get("text") if isinstance(keyword, dict) else keyword).strip()
             if text:
                 tags.append(text if text.startswith("#") else f"#{text}")
+
         meeting = Meeting(
             project_id=uploaded_file.project_id,
             title=str(title).strip()[:255] or uploaded_file.original_filename,
@@ -136,7 +165,7 @@ def _run_pipeline(db, file_id: UUID) -> None:
             status="검토대기",
             meeting_type="업로드",
             tags=tags[:12] or ["#회의록"],
-            participants=[],
+            participants=list((project_context or {}).get("participants") or []),
             summary=result.analysis.summary,
             action_items=action_items,
             action_items_count=len(action_items),
@@ -144,21 +173,25 @@ def _run_pipeline(db, file_id: UUID) -> None:
         db.add(meeting)
         db.flush()
 
-    for item in action_items:
-        due_at = None
-        if item.get("due_at"):
-            raw = datetime.fromisoformat(item["due_at"])
-            due_at = raw.astimezone(UTC) if raw.tzinfo else raw.replace(tzinfo=UTC)
+        analysis_result.extra_data = {
+            **extra_data,
+            "created_meeting_id": str(meeting.id),
+            "created_project_id": str(uploaded_file.project_id),
+            "source_uploaded_file_id": str(uploaded_file.id),
+        }
 
-        db.add(Ticket(
-            analysis_result_id=analysis_result.id,
-            title=item.get("title", "제목 없음"),
-            description=item.get("description", ""),
-            priority=item.get("priority", "medium"),
-            status=item.get("status", "draft"),
-            assignee=item.get("assignee"),
-            due_at=due_at,
-        ))
+    for item in action_items:
+        db.add(
+            Ticket(
+                analysis_result_id=analysis_result.id,
+                title=item.get("title", "제목 없음"),
+                description=item.get("description", ""),
+                priority=item.get("priority", "medium"),
+                status=item.get("status", "draft"),
+                assignee=item.get("assignee"),
+                due_at=_parse_due_at(item.get("due_at")),
+            )
+        )
 
     uploaded_file.status = ProcessingStatus.COMPLETED
     uploaded_file.completed_at = datetime.now(UTC)
@@ -172,7 +205,7 @@ def _run_pipeline(db, file_id: UUID) -> None:
         except Exception:
             logger.exception("Failed to sync meeting %s to external providers", meeting.id)
 
-    _log_progress(file_id, 100, "파이프라인이 완료되었습니다")
+    _log_progress(file_id, 100, "파일 분석 파이프라인이 완료되었습니다.")
 
 
 def _mark_failed(db, file_id: UUID, error_message: str) -> None:

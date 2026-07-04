@@ -520,21 +520,18 @@ export default function TikiApp() {
 
   const canAnalyze = files.length > 0 && !!selectedProject;
   const moveToMeetingResult = () => {
-    const firstFile = files[0];
-    const firstFileName = String(firstFile?.name || "");
-    const ext = firstFileName.includes(".") ? firstFileName.split(".").pop().toLowerCase() : "";
-    const audioExt = SUPPORTED_AUDIO_EXTENSIONS;
-    const textExt = SUPPORTED_DOCUMENT_EXTENSIONS;
+    const projectId = selectedProject?.id || uploadedFile?.project_id || uploadedFile?.projectId || "";
+    if (!projectId) {
+      navigate("/project-list");
+      return;
+    }
 
-    const uploadKind = audioExt.includes(ext) ? "audio" : textExt.includes(ext) ? "text" : "audio";
-
-    navigate("/meeting-detail", {
+    navigate(`/project/${projectId}/meetings`, {
       state: {
-        uploadKind,
-        fileName: firstFileName,
-        fileId: uploadedFile?.id || '',
-        projectId: selectedProject?.id || '',
-        projectName: selectedProject?.name || '',
+        project: selectedProject || undefined,
+        focusMeetingId: uploadedFile?.meeting_id || uploadedFile?.meetingId || "",
+        uploadedFileId: uploadedFile?.id || "",
+        uploadCompleted: true,
       },
     });
   };

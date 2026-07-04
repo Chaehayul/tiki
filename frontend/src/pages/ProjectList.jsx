@@ -129,6 +129,7 @@ function saveUserProjectActivity(user, map) {
 }
 
 const PROJECT_LIST_VIEW_MODE_KEY = 'tiki_project_list_view_mode';
+const DELETED_PROJECT_IDS_KEY = 'tiki_deleted_project_ids';
 const isTemporaryCodexProject = (project) => String(project?.name || '').toLowerCase().includes('codex invitation check');
 
 function loadProjectListViewMode() {
@@ -143,6 +144,30 @@ function loadProjectListViewMode() {
 function saveProjectListViewMode(mode) {
   try {
     localStorage.setItem(PROJECT_LIST_VIEW_MODE_KEY, mode === 'list' ? 'list' : 'card');
+  } catch {
+    // Ignore localStorage write failures and continue with in-memory state.
+  }
+}
+
+function getDeletedProjectStorageKey(user) {
+  const identity = user?.email || user?.name || 'anonymous';
+  return `${DELETED_PROJECT_IDS_KEY}_${identity}`;
+}
+
+function loadDeletedProjectIds(user) {
+  try {
+    const raw = localStorage.getItem(getDeletedProjectStorageKey(user));
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed.map((id) => String(id)).filter(Boolean) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveDeletedProjectIds(user, ids) {
+  try {
+    const uniqueIds = [...new Set((Array.isArray(ids) ? ids : []).map((id) => String(id)).filter(Boolean))];
+    localStorage.setItem(getDeletedProjectStorageKey(user), JSON.stringify(uniqueIds));
   } catch {
     // Ignore localStorage write failures and continue with in-memory state.
   }
@@ -407,7 +432,7 @@ export default function ProjectList() {
   const currentUser = useMemo(() => parseCurrentUser(), []);
   const [activityByProjectId, setActivityByProjectId] = useState(() => loadUserProjectActivity(currentUser));
   const [projects, setProjects] = useState([]);
-  const [deletedProjectIds, setDeletedProjectIds] = useState([]);
+  const [deletedProjectIds, setDeletedProjectIds] = useState(() => loadDeletedProjectIds(currentUser));
 
   useEffect(() => {
     window.scrollTo(0, 0);
@@ -443,7 +468,12 @@ export default function ProjectList() {
 
   useEffect(() => {
     setActivityByProjectId(loadUserProjectActivity(currentUser));
+    setDeletedProjectIds(loadDeletedProjectIds(currentUser));
   }, [currentUser]);
+
+  useEffect(() => {
+    saveDeletedProjectIds(currentUser, deletedProjectIds);
+  }, [currentUser, deletedProjectIds]);
 
   useEffect(() => {
     fetchProjects();

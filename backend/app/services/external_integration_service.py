@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import secrets
+import logging
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
@@ -17,6 +18,8 @@ from app.models.integration import MeetingExternalLink, OAuthState, ProjectInteg
 from app.models.project import Meeting, Project
 from app.schemas.integration import ExternalTaskLinkResponse, ProviderIntegrationStatus, TaskSendResponse
 from app.services import project_service
+
+logger = logging.getLogger(__name__)
 
 
 def _now() -> datetime:
@@ -154,6 +157,17 @@ def _project_integration(db: Session, project_id: UUID, provider: IntegrationPro
     )
 
 
+def _notion_meeting_database_id(db: Session, integration: ProjectIntegration, client, project: Project) -> str:
+    database_id = client.ensure_project_meeting_database_id(
+        project.name,
+        configured_database_id=integration.external_site_url,
+    )
+    if integration.external_site_url != database_id:
+        integration.external_site_url = database_id
+        db.flush()
+    return database_id
+
+
 def _meeting_description(meeting: Meeting) -> str:
     decisions = meeting.action_items if False else []
     return "\n".join(
@@ -164,7 +178,7 @@ def _meeting_description(meeting: Meeting) -> str:
             "회의 요약:",
             meeting.summary or "",
             "",
-            "업무:",
+            "해야 할 일:",
             *[
                 f"- {item.get('title') or item.get('text') or '업무'} / 담당자: {item.get('assignee') or '-'} / 마감일: {item.get('due') or item.get('due_at') or item.get('dueDate') or '-'}"
                 for item in (meeting.action_items or [])
@@ -183,6 +197,235 @@ def _task_id(meeting: Meeting, item: dict, index: int) -> str:
     return generated
 
 
+def _text_from_item(item: object) -> str:
+    if isinstance(item, dict):
+        return str(item.get("text") or item.get("title") or item.get("content") or "").strip()
+    return str(item or "").strip()
+
+
+def _service_text(value: object) -> str:
+    text = str(value or "")
+    replacements = {
+        "Action Items": "해야 할 일",
+        "Action Item": "해야 할 일",
+        "action items": "해야 할 일",
+        "action item": "해야 할 일",
+        "액션아이템": "해야 할 일",
+        "액션 아이템": "해야 할 일",
+    }
+    for source, target in replacements.items():
+        text = text.replace(source, target)
+    return text
+
+
+def _analysis_payload_for_meeting(db: Session, meeting: Meeting) -> dict:
+    del db
+    return {
+        "summary": _service_text(meeting.summary),
+        "decisions": [],
+        "action_items": meeting.action_items or [],
+        "issues": [],
+        "next_agenda": [],
+        "raw_text": _service_text(meeting.summary),
+        "keywords": meeting.tags or [],
+        "ai_extra": {},
+    }
+
+
+def _meeting_markdown(db: Session, meeting: Meeting) -> str:
+    project = db.get(Project, meeting.project_id)
+    payload = _analysis_payload_for_meeting(db, meeting)
+    participants = [str(name) for name in (meeting.participants or []) if str(name).strip()]
+    keywords = [str(tag).strip() for tag in (payload.get("keywords") or meeting.tags or []) if str(tag).strip()]
+    decisions = [_text_from_item(item) for item in payload.get("decisions", []) if _text_from_item(item)]
+    issues = [_text_from_item(item) for item in payload.get("issues", []) if _text_from_item(item)]
+    next_agenda = [_text_from_item(item) for item in payload.get("next_agenda", []) if _text_from_item(item)]
+    action_items = [item for item in payload.get("action_items", []) if isinstance(item, dict)]
+
+    lines: list[str] = [
+        f"# {meeting.date} {_service_text(meeting.title)}",
+        "",
+        "## 기본 정보",
+        f"- 프로젝트: {project.name if project else '-'}",
+        f"- 회의 날짜: {meeting.date}",
+        f"- 회의 유형: {meeting.meeting_type or '-'}",
+        f"- 참석자: {', '.join(participants) if participants else '-'}",
+        "",
+        "## 회의 요약",
+        payload.get("summary") or "요약이 없습니다.",
+        "",
+        "## 핵심 키워드",
+    ]
+    lines.extend([f"- #{tag.lstrip('#')}" for tag in keywords] or ["- 없음"])
+    lines.extend(["", "## 주요 결정사항"])
+    lines.extend([f"- {item}" for item in decisions] or ["- 없음"])
+    lines.extend(["", "## 해야 할 일"])
+    if action_items:
+        for item in action_items:
+            title = _service_text(item.get("title") or item.get("text") or "업무")
+            assignee = item.get("assignee") or "-"
+            due = item.get("due") or item.get("due_at") or item.get("dueDate") or "-"
+            checked = "x" if str(item.get("status") or "").strip() == "수행완료" or item.get("checked") else " "
+            lines.extend([f"- [{checked}] {title}", f"담당자 : {assignee}", f"마감일 : {due}", "--------------------"])
+    else:
+        lines.append("- 없음")
+    lines.extend(["", "## 회의 전체 내용", payload.get("raw_text") or meeting.summary or "원문이 없습니다."])
+    lines.extend(["", "## AI 분석 결과", "### AI 요약", payload.get("summary") or "없음", "", "### AI 키워드"])
+    lines.extend([f"- #{tag.lstrip('#')}" for tag in keywords] or ["- 없음"])
+    lines.extend(["", "### AI 해야 할 일"])
+    lines.extend([f"- {_service_text(item.get('title') or item.get('text') or '업무')}" for item in action_items] or ["- 없음"])
+    lines.extend(["", "### AI 이슈"])
+    lines.extend([f"- {item}" for item in issues] or ["- 없음"])
+    lines.extend(["", "### AI 다음 안건"])
+    lines.extend([f"- {item}" for item in next_agenda] or ["- 없음"])
+    return "\n".join(lines)
+
+
+def _service_text(value: object) -> str:
+    text = str(value or "")
+    replacements = {
+        "Action Items": "해야 할 일",
+        "Action Item": "해야 할 일",
+        "action items": "해야 할 일",
+        "action item": "해야 할 일",
+        "액션아이템": "해야 할 일",
+        "액션 아이템": "해야 할 일",
+    }
+    for source, target in replacements.items():
+        text = text.replace(source, target)
+    return text
+
+
+def _meeting_meta(meeting: Meeting) -> dict:
+    for item in meeting.action_items or []:
+        if not isinstance(item, dict):
+            continue
+        if item.get("__tiki_meta") or item.get("type") == "__tiki_meeting_meta":
+            data = item.get("data") if isinstance(item.get("data"), dict) else item
+            return dict(data)
+    return {}
+
+
+def _visible_meeting_actions(meeting: Meeting) -> list[dict]:
+    return [
+        item
+        for item in meeting.action_items or []
+        if isinstance(item, dict)
+        and not item.get("__tiki_meta")
+        and item.get("type") != "__tiki_meeting_meta"
+    ]
+
+
+def _list_from_meta(value: object) -> list:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    if isinstance(value, str):
+        return [line.strip() for line in value.splitlines() if line.strip()]
+    return [value]
+
+
+def _analysis_payload_for_meeting(db: Session, meeting: Meeting) -> dict:
+    del db
+    meta = _meeting_meta(meeting)
+    keywords = _list_from_meta(meta.get("keywords")) or meeting.tags or []
+    raw_text = meta.get("raw_text") or meta.get("content") or meta.get("fullText") or meeting.summary
+    return {
+        "summary": _service_text(meta.get("summary") or meeting.summary),
+        "decisions": _list_from_meta(meta.get("decisions")),
+        "action_items": _visible_meeting_actions(meeting),
+        "issues": _list_from_meta(meta.get("issues")),
+        "next_agenda": _list_from_meta(meta.get("nextAgenda") or meta.get("next_agenda")),
+        "raw_text": _service_text(raw_text),
+        "keywords": keywords,
+        "ai_extra": meta,
+    }
+
+
+def _clean_tag(value: object) -> str:
+    return str(value or "").strip().lstrip("#")
+
+
+def _format_due(value: object) -> str:
+    return str(value or "").strip().replace("-", ".") or "-"
+
+
+def _meeting_markdown(db: Session, meeting: Meeting) -> str:
+    project = db.get(Project, meeting.project_id)
+    payload = _analysis_payload_for_meeting(db, meeting)
+    meta = payload.get("ai_extra") or {}
+    participants = [str(name).strip() for name in (meeting.participants or []) if str(name).strip()]
+    keywords = [_clean_tag(tag) for tag in (payload.get("keywords") or []) if _clean_tag(tag)]
+    decisions = [_text_from_item(item) for item in payload.get("decisions", []) if _text_from_item(item)]
+    issues = [_text_from_item(item) for item in payload.get("issues", []) if _text_from_item(item)]
+    next_agenda = [_text_from_item(item) for item in payload.get("next_agenda", []) if _text_from_item(item)]
+    action_items = [item for item in payload.get("action_items", []) if isinstance(item, dict)]
+    raw_text = payload.get("raw_text") or payload.get("summary") or "원문이 없습니다."
+
+    lines: list[str] = [
+        f"# {meeting.date} {_service_text(meeting.title)}",
+        "",
+        "## 기본 정보",
+        f"- 프로젝트: {project.name if project else '-'}",
+        f"- 회의 날짜: {meeting.date}",
+        f"- 회의 유형: {meeting.meeting_type or '-'}",
+        f"- 참석자: {', '.join(participants) if participants else '-'}",
+        "",
+        "## 회의 요약",
+        payload.get("summary") or "요약이 없습니다.",
+        "",
+        "## 핵심 키워드",
+    ]
+    lines.extend([f"- #{tag}" for tag in keywords] or ["- 없음"])
+
+    lines.extend(["", "## 주요 결정사항"])
+    lines.extend([f"- {item}" for item in decisions] or ["- 없음"])
+
+    lines.extend(["", "## 해야 할 일"])
+    if action_items:
+        for item in action_items:
+            title = _service_text(item.get("title") or item.get("text") or "해야 할 일")
+            assignee = item.get("assignee") or "-"
+            due = _format_due(item.get("due") or item.get("due_at") or item.get("dueDate"))
+            status = str(item.get("status") or "").strip()
+            checked = "x" if status == "수행완료" or item.get("checked") else " "
+            lines.extend(
+                [
+                    f"- [{checked}] {title}",
+                    "",
+                    f"담당자 : {assignee}",
+                    f"마감일 : {due}",
+                    "--------------------",
+                ]
+            )
+    else:
+        lines.append("- 없음")
+
+    lines.extend(["", "## 회의 전체 내용", raw_text])
+    lines.extend(["", "## AI 분석 결과", "### AI 요약", payload.get("summary") or "없음"])
+    lines.extend(["", "### AI 키워드"])
+    lines.extend([f"- #{tag}" for tag in keywords] or ["- 없음"])
+    lines.extend(["", "### AI 주요 결정"])
+    lines.extend([f"- {item}" for item in decisions] or ["- 없음"])
+    lines.extend(["", "### AI 해야 할 일"])
+    lines.extend([f"- {_service_text(item.get('title') or item.get('text') or '해야 할 일')}" for item in action_items] or ["- 없음"])
+    lines.extend(["", "### AI 이슈"])
+    if issues:
+        for item in issues:
+            priority = item.get("priority") if isinstance(item, dict) else None
+            text = _text_from_item(item)
+            lines.append(f"- {text}{f' ({priority})' if priority else ''}")
+    else:
+        lines.append("- 없음")
+    lines.extend(["", "### AI 다음 안건"])
+    lines.extend([f"- {item}" for item in next_agenda] or ["- 없음"])
+
+    if isinstance(meta, dict) and meta.get("source") == "manual":
+        lines.extend(["", "<!-- TIKI manual meeting metadata synced -->"])
+    return "\n".join(lines)
+
+
 def ensure_meeting_external_resource(db: Session, meeting: Meeting, provider: IntegrationProvider, *, force: bool = False) -> MeetingExternalLink:
     integration = _project_integration(db, meeting.project_id, provider)
     if integration is None:
@@ -195,7 +438,17 @@ def ensure_meeting_external_resource(db: Session, meeting: Meeting, provider: In
         )
     )
     if link and link.sync_status == SyncStatus.SYNCED and link.external_id and not force:
-        return link
+        if provider == IntegrationProvider.NOTION:
+            token = decrypt_secret(integration.access_token) or ""
+            client = get_notion_client(access_token=token)
+            if client.page_exists(link.external_id):
+                return link
+            link.external_id = None
+            link.external_url = None
+            link.sync_status = SyncStatus.PENDING
+            db.flush()
+        else:
+            return link
     if link is None:
         link = MeetingExternalLink(
             meeting_id=meeting.id,
@@ -208,7 +461,50 @@ def ensure_meeting_external_resource(db: Session, meeting: Meeting, provider: In
         db.flush()
 
     try:
-        if provider == IntegrationProvider.JIRA:
+        if provider == IntegrationProvider.NOTION:
+            token = decrypt_secret(integration.access_token) or ""
+            client = get_notion_client(access_token=token)
+            project = db.get(Project, meeting.project_id)
+            if project is None:
+                raise RuntimeError("Project not found")
+            database_id = _notion_meeting_database_id(db, integration, client, project)
+            existing_page_id = link.external_id
+            existing_page_alive = client.page_exists(existing_page_id) if existing_page_id else False
+            if existing_page_id and not existing_page_alive:
+                sync_mode = "recreate"
+            elif existing_page_id and existing_page_alive:
+                sync_mode = "update"
+            else:
+                sync_mode = "create"
+            logger.info(
+                "[Notion Sync] meeting_id=%s project_id=%s meeting_title=%s source_type=meeting analysis_result_id=None uploaded_file_id=None notion_page_id=%s sync_mode=%s",
+                meeting.id,
+                meeting.project_id,
+                meeting.title,
+                existing_page_id,
+                sync_mode,
+            )
+            page = client.upsert_meeting_page(
+                database_id=database_id,
+                meeting_id=str(meeting.id),
+                title=f"{meeting.date} {_service_text(meeting.title)}",
+                project_name=project.name,
+                meeting_date=meeting.date,
+                meeting_type=meeting.meeting_type or "",
+                participants=meeting.participants or [],
+                markdown=_meeting_markdown(db, meeting),
+                existing_page_id=link.external_id,
+            )
+            link.external_id = page.page_id
+            link.external_url = page.page_url
+            logger.info(
+                "[Notion Sync] meeting_id=%s project_id=%s notion_page_id=%s sync_mode=%s status=synced",
+                meeting.id,
+                meeting.project_id,
+                page.page_id,
+                sync_mode,
+            )
+        elif provider == IntegrationProvider.JIRA:
             token = decrypt_secret(integration.access_token) or ""
             client = JiraOAuthClient(
                 access_token=token,
@@ -218,39 +514,19 @@ def ensure_meeting_external_resource(db: Session, meeting: Meeting, provider: In
             project_key = settings.jira_project_key
             if not project_key:
                 raise RuntimeError("JIRA_PROJECT_KEY is required")
-            issue = client.create_issue(
-                project_key=project_key,
-                title=f"Meeting - {meeting.date} {meeting.title}",
-                description=_meeting_description(meeting),
-                issue_type="Task",
-            )
-            link.external_id = issue.issue_id
-            link.external_url = issue.issue_url
-        else:
-            token = decrypt_secret(integration.access_token) or ""
-            database_id = settings.notion_meeting_database_id
-            parent_page_id = settings.notion_parent_page_id
-            client = get_notion_client(access_token=token)
-            if force and link.external_id:
-                try:
-                    client.archive_page(link.external_id)
-                except Exception:
-                    pass
-            if not database_id and not parent_page_id:
-                parent_page_id = client.ensure_workspace_page_id()
-            if not database_id and not parent_page_id:
-                raise RuntimeError("Notion에 회의록을 만들 수 있는 페이지가 없습니다. Notion 연동 시 TIKI가 사용할 페이지를 선택하거나 NOTION_PARENT_PAGE_ID를 설정해 주세요.")
-            page = client.create_meeting_page(
-                title=f"{meeting.date} {meeting.title}",
-                meeting_date=meeting.date,
-                summary=meeting.summary or "",
-                decisions=[],
-                action_items=meeting.action_items or [],
-                database_id=database_id,
-                parent_page_id=parent_page_id,
-            )
-            link.external_id = page.page_id
-            link.external_url = page.page_url
+            title = f"Meeting - {meeting.date} {_service_text(meeting.title)}"
+            description = _meeting_description(meeting)
+            if link.external_id:
+                client.update_issue(link.external_id, title=title, description=description)
+            else:
+                issue = client.create_issue(
+                    project_key=project_key,
+                    title=title,
+                    description=description,
+                    issue_type="Task",
+                )
+                link.external_id = issue.issue_id
+                link.external_url = issue.issue_url
         link.sync_status = SyncStatus.SYNCED
         link.error_message = None
         link.last_synced_at = _now()
@@ -258,12 +534,20 @@ def ensure_meeting_external_resource(db: Session, meeting: Meeting, provider: In
         link.sync_status = SyncStatus.FAILED
         link.error_message = str(exc)
         link.last_synced_at = _now()
+        if provider == IntegrationProvider.NOTION:
+            logger.exception(
+                "[Notion Sync] meeting_id=%s project_id=%s meeting_title=%s source_type=meeting analysis_result_id=None uploaded_file_id=None notion_page_id=%s sync_mode=failed",
+                meeting.id,
+                meeting.project_id,
+                meeting.title,
+                link.external_id,
+            )
     db.commit()
     db.refresh(link)
     return link
 
 
-def sync_connected_meeting_resources(db: Session, meeting: Meeting) -> None:
+def sync_connected_meeting_resources(db: Session, meeting: Meeting, *, force: bool = False) -> None:
     providers = db.scalars(
         select(ProjectIntegration.provider).where(
             ProjectIntegration.project_id == meeting.project_id,
@@ -271,7 +555,27 @@ def sync_connected_meeting_resources(db: Session, meeting: Meeting) -> None:
         )
     ).all()
     for provider in providers:
-        ensure_meeting_external_resource(db, meeting, provider)
+        ensure_meeting_external_resource(db, meeting, provider, force=force)
+
+
+def archive_meeting_external_resources(db: Session, meeting: Meeting) -> None:
+    links = db.scalars(select(MeetingExternalLink).where(MeetingExternalLink.meeting_id == meeting.id)).all()
+    for link in links:
+        if link.provider != IntegrationProvider.NOTION or not link.external_id:
+            continue
+        integration = _project_integration(db, meeting.project_id, IntegrationProvider.NOTION)
+        if integration is None:
+            continue
+        try:
+            client = get_notion_client(access_token=decrypt_secret(integration.access_token) or "")
+            client.mark_meeting_deleted(page_id=link.external_id)
+            link.sync_status = SyncStatus.SYNCED
+            link.error_message = None
+            link.last_synced_at = _now()
+        except Exception as exc:
+            link.sync_status = SyncStatus.FAILED
+            link.error_message = str(exc)
+            link.last_synced_at = _now()
 
 
 def sync_project_meeting_resources(db: Session, project_id: UUID, provider: IntegrationProvider) -> dict:
@@ -324,6 +628,7 @@ def send_meeting_tasks(
 
     results: list[ExternalTaskLinkResponse] = []
     selected_ids = [str(item) for item in task_ids]
+    should_resync_notion_page = False
 
     for task_id in selected_ids:
         found = _find_action_item(meeting, task_id)
@@ -352,8 +657,8 @@ def send_meeting_tasks(
             db.flush()
 
         try:
-            title = str(task.get("title") or task.get("text") or "업무")
-            description = str(task.get("description") or meeting.summary or title)
+            title = _service_text(task.get("title") or task.get("text") or "업무")
+            description = _service_text(task.get("description") or meeting.summary or title)
             due_date = str(task.get("due") or task.get("due_at") or task.get("dueDate") or "").strip() or None
             if provider == IntegrationProvider.JIRA:
                 token = decrypt_secret(integration.access_token) or ""
@@ -372,38 +677,10 @@ def send_meeting_tasks(
                         parent_key = meeting_link.external_url.rstrip("/").split("/")[-1]
                         client.link_issues(parent_key, issue.issue_key)
             else:
-                token = decrypt_secret(integration.access_token) or ""
-                client = get_notion_client(access_token=token)
-                task_database_id = settings.notion_task_database_id
-                if task_database_id:
-                    if link.external_id:
-                        client.update_task_item(
-                            page_id=link.external_id,
-                            title=title,
-                            assignee=task.get("assignee"),
-                            due_date=due_date,
-                            status=str(task.get("status") or "검토대기"),
-                            priority=task.get("priority"),
-                        )
-                    else:
-                        page = client.create_task_item(
-                            database_id=task_database_id,
-                            title=title,
-                            assignee=task.get("assignee"),
-                            due_date=due_date,
-                            status=str(task.get("status") or "검토대기"),
-                            priority=task.get("priority"),
-                            meeting_title=meeting.title,
-                            tiki_task_id=stable_task_id,
-                            description=description,
-                        )
-                        link.external_id = page.page_id
-                        link.external_url = page.page_url
-                else:
-                    client.append_task_blocks(meeting_link.external_id or "", [task])
-                    link.external_id = meeting_link.external_id
-                    link.external_url = meeting_link.external_url
-                    link.external_type = "notion_page_task_block"
+                should_resync_notion_page = True
+                link.external_id = meeting_link.external_id
+                link.external_url = meeting_link.external_url
+                link.external_type = "notion_page_task_block"
 
             link.sync_status = SyncStatus.SYNCED
             link.error_message = None
@@ -430,5 +707,11 @@ def send_meeting_tasks(
         )
 
     meeting.action_items = list(meeting.action_items or [])
+    if should_resync_notion_page:
+        refreshed_link = ensure_meeting_external_resource(db, meeting, IntegrationProvider.NOTION, force=True)
+        for result in results:
+            if str(result.provider.value if hasattr(result.provider, "value") else result.provider) == IntegrationProvider.NOTION.value and str(result.syncStatus.value if hasattr(result.syncStatus, "value") else result.syncStatus) == SyncStatus.SYNCED.value:
+                result.externalId = refreshed_link.external_id
+                result.externalUrl = refreshed_link.external_url
     db.commit()
     return TaskSendResponse(meetingId=meeting.id, provider=provider, results=results)

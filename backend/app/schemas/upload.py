@@ -1,5 +1,5 @@
-from uuid import UUID
 from datetime import UTC, datetime
+from uuid import UUID
 
 from pydantic import BaseModel
 
@@ -17,6 +17,7 @@ class UploadProcessingState(BaseModel):
 class UploadedFileResponse(BaseModel):
     id: UUID
     project_id: UUID | None
+    meeting_id: UUID | None = None
     project_key: str
     project_name: str
     original_filename: str
@@ -37,7 +38,7 @@ class UploadedFileResponse(BaseModel):
                 status=status.value,
                 phase="queued",
                 progress_pct=10,
-                status_message="업로드는 끝났고 분석 대기 중입니다.",
+                status_message="업로드가 저장되어 분석을 기다리고 있습니다.",
                 can_retry=False,
             )
         elif status == ProcessingStatus.PROCESSING:
@@ -46,19 +47,18 @@ class UploadedFileResponse(BaseModel):
                 status_message = "AI 분석을 진행 중입니다."
             else:
                 elapsed_seconds = max(0.0, (now - started_at).total_seconds())
-
                 if elapsed_seconds < 20:
                     progress_pct = 22
-                    status_message = "전사 준비 중입니다."
+                    status_message = "파일 전처리를 준비 중입니다."
                 elif elapsed_seconds < 120:
                     progress_pct = 48
-                    status_message = "전사와 화자분리를 진행 중입니다."
+                    status_message = "전사와 문서 추출을 진행 중입니다."
                 elif elapsed_seconds < 240:
                     progress_pct = 72
-                    status_message = "요약과 액션아이템을 정리 중입니다."
+                    status_message = "요약과 해야 할 일을 정리 중입니다."
                 else:
                     progress_pct = 88
-                    status_message = "결과를 최종 정리 중입니다."
+                    status_message = "결과를 최종 저장 중입니다."
 
             state = UploadProcessingState(
                 status=status.value,
@@ -80,7 +80,7 @@ class UploadedFileResponse(BaseModel):
                 status=status.value,
                 phase="failed",
                 progress_pct=100,
-                status_message="분석에 실패했습니다. 재시도할 수 있습니다.",
+                status_message="분석에 실패했습니다. 다시 시도할 수 있습니다.",
                 can_retry=True,
             )
         else:
@@ -91,9 +91,23 @@ class UploadedFileResponse(BaseModel):
                 status_message="상태를 확인할 수 없습니다.",
                 can_retry=False,
             )
+
+        meeting_id = None
+        content = getattr(uploaded_file, "extracted_content", None)
+        analysis = getattr(content, "analysis_result", None) if content is not None else None
+        extra_data = getattr(analysis, "extra_data", None) if analysis is not None else None
+        if isinstance(extra_data, dict):
+            raw_meeting_id = extra_data.get("created_meeting_id") or extra_data.get("meeting_id")
+            if raw_meeting_id:
+                try:
+                    meeting_id = UUID(str(raw_meeting_id))
+                except (TypeError, ValueError):
+                    meeting_id = None
+
         return cls(
             id=uploaded_file.id,
             project_id=uploaded_file.project_id,
+            meeting_id=meeting_id,
             project_key=uploaded_file.project_key,
             project_name=uploaded_file.project_name,
             original_filename=uploaded_file.original_filename,

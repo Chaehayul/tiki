@@ -1,11 +1,23 @@
 import { useState, useEffect, useRef, useMemo, forwardRef } from "react";
 import { createPortal } from "react-dom";
 import { Navigate } from "react-router-dom";
-import { clearAuthSession, listProjectMeetings, listProjects, listProjectTickets } from "../api/apiClient";
+import { clearAuthSession, listProjectMeetings, listProjects, sendMeetingTasks, updateProjectMeeting } from "../api/apiClient";
 import Header from "../components/Header";
 import Footer from "../components/Footer";
 import MobileTab from "../components/MobileTab";
 import ToastPopup from "../components/toastpopup";
+
+const isTikiMeetingMetaItem = (item) =>
+  Boolean(item && typeof item === "object" && (item.__tiki_meta || item.type === "__tiki_meeting_meta"));
+
+const normalizeEditableDescription = (value) => {
+  const text = String(value || "");
+  if (!text.trim()) return "";
+  if (/^업무:\s*/m.test(text) || /^담당자:\s*/m.test(text) || /^마감일:\s*/m.test(text) || /^회의 내용 기반:\s*/m.test(text)) {
+    return "";
+  }
+  return text;
+};
 
 const PRIORITY_EN = {
   "높음": { label: "높음", bg: "#FCE8E6", text: "#EF4444" },
@@ -33,8 +45,7 @@ const STATUS_LABEL = {
   "검증 전": "검토대기",
   "진행중": "검토완료",
   "연동 완료": "연동완료",
-  "완료": "수행완료",
-  "완료히스토리": "수행완료"
+  "완료": "수행완료"
 };
 
 function getStatusLabel(status) {
@@ -824,6 +835,7 @@ export default function App() {
   const [actionItems, setActionItems] = useState([]);
   const [statusFilter, setStatusFilter] = useState("전체");
   const [projectFilter, setProjectFilter] = useState("전체");
+  const [collapsedProjectKeys, setCollapsedProjectKeys] = useState(() => new Set());
   const [searchQuery, setSearchQuery] = useState("");
   const [isProjectFilterOpen, setIsProjectFilterOpen] = useState(false);
   const [isSummaryExpanded, setIsSummaryExpanded] = useState(false);
@@ -869,7 +881,7 @@ export default function App() {
       id: next.id,
       text: next.text || next.title || "해야 할 일",
       title: next.title || next.text || "해야 할 일",
-      description: next.description || "",
+      description: normalizeEditableDescription(next.description),
       due: next.due || next.dueDate || "",
       dueDate: next.dueDate || next.due || "",
       assignee: next.assignee || "",
@@ -930,6 +942,79 @@ export default function App() {
         writeJsonObject(MANUAL_MEETING_RECORDS_KEY, manualRecords);
       }
     }
+  };
+
+  const persistMeetingActionItemUpdate = async (item, patch = {}) => {
+    if (!item?.projectKey || !item?.meetingId || !item?.id) {
+      persistActionItemUpdate(item, patch);
+      return null;
+    }
+
+    const meetings = await listProjectMeetings(item.projectKey);
+    const meeting = Array.isArray(meetings)
+      ? meetings.find((entry) => String(entry.id) === String(item.meetingId))
+      : null;
+    if (!meeting) throw new Error("회의록을 찾을 수 없습니다.");
+
+    const rawActionItems = Array.isArray(meeting.action_items) ? meeting.action_items : [];
+    const itemVisibleIndex = Number.isFinite(Number(item.actionIndex)) ? Number(item.actionIndex) : -1;
+    let visibleIndex = -1;
+    const nextActionItems = rawActionItems.map((action, index) => {
+      if (isTikiMeetingMetaItem(action)) return action;
+      visibleIndex += 1;
+      const actionId = String(action?.id || `${meeting.id}-action-${index + 1}`);
+      const title = String(action?.title || action?.text || "").trim();
+      const itemTitle = String(item?.title || item?.text || "").trim();
+      const isSameAction =
+        actionId === String(item.id) ||
+        (itemVisibleIndex >= 0 && visibleIndex === itemVisibleIndex) ||
+        (title && itemTitle && title === itemTitle);
+      if (!isSameAction) return action;
+      const nextStatus = patch.status ?? action.status ?? item.status;
+      return {
+        ...action,
+        ...patch,
+        id: action.id || item.id,
+        title: patch.title ?? patch.text ?? action.title ?? action.text ?? item.title,
+        text: patch.text ?? patch.title ?? action.text ?? action.title ?? item.text,
+        due: patch.due ?? patch.dueDate ?? action.due ?? action.dueDate ?? item.dueDate,
+        dueDate: patch.dueDate ?? patch.due ?? action.dueDate ?? action.due ?? item.dueDate,
+        assignee: patch.assignee ?? action.assignee ?? item.assignee,
+        status: nextStatus,
+        checked: nextStatus === "수행완료" ? true : patch.checked ?? action.checked ?? false,
+      };
+    });
+
+    const visibleCount = nextActionItems.filter((action) => !isTikiMeetingMetaItem(action)).length;
+    const updatedMeeting = await updateProjectMeeting(item.projectKey, item.meetingId, {
+      action_items: nextActionItems,
+      action_items_count: visibleCount,
+    });
+    persistActionItemUpdate(item, patch);
+    return updatedMeeting;
+  };
+
+  const deleteMeetingActionItem = async (item) => {
+    if (!item?.projectKey || !item?.meetingId || !item?.id) return null;
+
+    const meetings = await listProjectMeetings(item.projectKey);
+    const meeting = Array.isArray(meetings)
+      ? meetings.find((entry) => String(entry.id) === String(item.meetingId))
+      : null;
+    if (!meeting) throw new Error("회의록을 찾을 수 없습니다.");
+
+    const rawActionItems = Array.isArray(meeting.action_items) ? meeting.action_items : [];
+    const nextActionItems = rawActionItems.filter((action, index) => {
+      if (isTikiMeetingMetaItem(action)) return true;
+      const actionId = String(action?.id || `${meeting.id}-action-${index + 1}`);
+      return actionId !== String(item.id);
+    });
+    const visibleCount = nextActionItems.filter((action) => !isTikiMeetingMetaItem(action)).length;
+
+    return updateProjectMeeting(item.projectKey, item.meetingId, {
+      action_items: nextActionItems,
+      action_items_count: visibleCount,
+    });
   };
 
   const [toast, setToast] = useState({ show: false, message: "", type: "info" });
@@ -1014,9 +1099,11 @@ export default function App() {
 
   const mapMeetingActionItem = (item, project, meeting, index) => ({
     id: item.id || `${meeting.id || meeting.title}-action-${index + 1}`,
+    meetingId: meeting.id || item.meetingId || null,
+    actionIndex: index,
     title: item.title || item.text || "해야 할 일",
     text: item.text || item.title || "해야 할 일",
-    description: item.description || meeting.summary || "",
+    description: normalizeEditableDescription(item.description),
     priority: item.priority || "보통",
     projectKey: project.id,
     projectName: project.name,
@@ -1091,57 +1178,27 @@ export default function App() {
         return Promise.all(
           rawProjects.map((p) =>
             Promise.all([
-              listProjectTickets(p.id).catch(() => []),
               listProjectMeetings(p.id).catch(() => []),
-            ]).then(([tickets, meetings]) => ({
+            ]).then(([meetings]) => ({
               project: p,
-              tickets: Array.isArray(tickets) ? tickets : [],
               meetings: Array.isArray(meetings) ? meetings : [],
             }))
-              .catch(() => ({ project: p, tickets: [], meetings: [] }))
+              .catch(() => ({ project: p, meetings: [] }))
           )
         ).then((results) => ({ rawProjects, results }));
       })
       .then(({ rawProjects, results }) => {
-        const myItems = results.flatMap(({ project, tickets }) =>
-          tickets
-            .map((t) => ({
-              id: t.id,
-              title: t.title,
-              description: t.description || '',
-              priority: mapTicketPriority(t.priority),
-              projectKey: project.id,
-              projectName: project.name,
-              projectColor: project.color || '#0099CC',
-              assignee: t.assignee || '',
-              assignees: t.assignee ? [t.assignee] : [],
-              avatar: 'user',
-              status: mapTicketStatus(t.status),
-              dueDate: t.due_at ? t.due_at.slice(0, 10) : '',
-              meetingDate: t.created_at ? t.created_at.slice(0, 10) : '',
-              contextTime: '',
-              jiraLink: t.external_syncs?.find((s) => s.provider === 'jira')?.external_url || '',
-              externalLink: t.external_syncs?.find((s) => s.provider === 'jira')?.external_url || t.external_syncs?.find((s) => s.provider === 'notion')?.external_url || '',
-              integrationLinks: {
-                jira: t.external_syncs?.find((s) => s.provider === 'jira')?.external_url || '',
-                notion: t.external_syncs?.find((s) => s.provider === 'notion')?.external_url || '',
-              },
-            }))
-        );
         const meetingItems = results.flatMap(({ project, meetings }) =>
           meetings.flatMap((meeting) =>
-            (Array.isArray(meeting.action_items) ? meeting.action_items : [])
+            (Array.isArray(meeting.action_items) ? meeting.action_items : []).filter((item) => !isTikiMeetingMetaItem(item))
               .map((item, index) => mapMeetingActionItem(item, project, meeting, index))
           )
         );
-        const localItems = readLocalManualActionItems(rawProjects);
-        // 로컬 저장분은 대시보드/프로젝트 상세에서 사용자가 바꾼 최신 상태다.
-        // 같은 id의 서버 원본 회의 업무보다 먼저 병합해야 새로고침 후에도 상태가 되돌아가지 않는다.
-        const merged = compactLegacyActionHistoryItems([...localItems, ...myItems, ...meetingItems])
+        const merged = meetingItems
           .filter((item) => isAssignedToMe(item, userAliases));
         const dedupedMap = new Map();
         merged.forEach((item) => {
-          const key = String(item.id || `${item.projectKey}-${item.title}-${item.assignee}`);
+          const key = String(item.meetingId ? `${item.meetingId}:${item.id}` : item.id || `${item.projectKey}-${item.title}-${item.assignee}`);
           const prev = dedupedMap.get(key);
           if (!prev) {
             dedupedMap.set(key, item);
@@ -1172,17 +1229,21 @@ export default function App() {
 
   // ─── 패널 열기 / 닫기 ──────────────────────────────────────────────────────
   const openPanel = (item) => {
-    setSelectedItem(item);
+    const normalizedItem = {
+      ...item,
+      description: normalizeEditableDescription(item?.description),
+    };
+    setSelectedItem(normalizedItem);
     setPanelView("detail");
     setSelectedIntegrationTools([]);
     setIsPanelEditable(false);
     setIsAssigneeOpen(false);
     setIsDueDateOpen(false);
     setEditForm({
-      title: item.title,
-      description: item.description,
-      dueDate: item.dueDate,
-      assignee: item.assignee
+      title: normalizedItem.title,
+      description: normalizedItem.description,
+      dueDate: normalizedItem.dueDate,
+      assignee: normalizedItem.assignee
     });
   };
 
@@ -1202,13 +1263,21 @@ export default function App() {
       if (!next) {
         setIsAssigneeOpen(false);
         setIsDueDateOpen(false);
+        if (selectedItem) {
+          setEditForm({
+            title: selectedItem.title,
+            description: selectedItem.description,
+            dueDate: selectedItem.dueDate,
+            assignee: selectedItem.assignee,
+          });
+        }
       }
       return next;
     });
   };
   // ───────────────────────────────────────────────────────────────────────────
 
-  const handleSaveEdit = () => {
+  const handleSaveEdit = async () => {
     const shouldComplete = selectedItem?.status === "검토완료";
     const updatedItem = {
       ...selectedItem,
@@ -1221,17 +1290,21 @@ export default function App() {
       }
       return item;
     }));
-    persistActionItemUpdate(selectedItem, updatedItem);
-    closePanel();
-    triggerToast(
-      shouldComplete
-        ? "수행 완료 처리되었습니다."
-        : "해야 할 일이 성공적으로 수정(사용자 변경)되었습니다.",
-      "success"
-    );
+    try {
+      await persistMeetingActionItemUpdate(selectedItem, updatedItem);
+      closePanel();
+      triggerToast(
+        shouldComplete
+          ? "수행 완료 처리되었습니다."
+          : "해야 할 일이 성공적으로 수정되었습니다.",
+        "success"
+      );
+    } catch (error) {
+      triggerToast(error?.message || "해야 할 일 저장에 실패했습니다.", "warning");
+    }
   };
 
-  const handleMarkDone = (itemId) => {
+  const handleMarkDone = async (itemId) => {
     const targetItem = actionItems.find((item) => item.id === itemId) || selectedItem;
     if (!targetItem) return;
     const updatedItem = { ...targetItem, status: "수행완료" };
@@ -1239,20 +1312,28 @@ export default function App() {
       item.id === itemId ? { ...item, status: "수행완료" } : item
     )));
     setSelectedItem(prev => prev?.id === itemId ? { ...prev, status: "수행완료" } : prev);
-    persistActionItemUpdate(targetItem, updatedItem);
-    closePanel();
-    triggerToast("수행 완료 처리되었습니다.", "success");
+    try {
+      await persistMeetingActionItemUpdate(targetItem, updatedItem);
+      closePanel();
+      triggerToast("수행 완료 처리되었습니다.", "success");
+    } catch (error) {
+      triggerToast(error?.message || "수행 완료 저장에 실패했습니다.", "warning");
+    }
   };
 
-  const handleVerify = (itemId) => {
+  const handleVerify = async (itemId) => {
     const targetItem = actionItems.find((item) => item.id === itemId) || selectedItem;
-    if (targetItem) persistActionItemUpdate(targetItem, { status: "검토완료" });
     setActionItems(prev => prev.map(item => (
       item.id === itemId ? { ...item, status: "검토완료" } : item
     )));
     // 패널 내 selectedItem도 동기화
     setSelectedItem(prev => prev?.id === itemId ? { ...prev, status: "검토완료" } : prev);
-    triggerToast("해야 할 일이 검증되어 검토 완료 상태로 전환되었습니다.", "success");
+    try {
+      if (targetItem) await persistMeetingActionItemUpdate(targetItem, { status: "검토완료" });
+      triggerToast("해야 할 일이 검증되어 검토 완료 상태로 전환되었습니다.", "success");
+    } catch (error) {
+      triggerToast(error?.message || "검토 완료 저장에 실패했습니다.", "warning");
+    }
   };
 
   const handleQuickVerify = (e, itemId) => {
@@ -1260,23 +1341,37 @@ export default function App() {
     handleVerify(itemId);
   };
 
-  const handleApprove = (itemId, providers = "jira") => {
+  const handleApprove = async (itemId, providers = "jira") => {
     const requestedProviders = (Array.isArray(providers) ? providers : [providers])
       .map((provider) => String(provider || "").toLowerCase())
       .filter((provider) => provider === "jira" || provider === "notion");
     if (requestedProviders.length === 0) return;
     setIntegratingId(itemId);
-    setTimeout(() => {
-      const targetItem = actionItems.find((item) => item.id === itemId) || selectedItem;
+    const targetItem = actionItems.find((item) => item.id === itemId) || selectedItem;
+    if (!targetItem?.meetingId) {
+      setIntegratingId(null);
+      triggerToast("회의록에 연결된 업무만 연동할 수 있습니다.", "warning");
+      return;
+    }
+    try {
       const previousLinks = getIntegrationLinks(targetItem);
       const nextLinks = { ...previousLinks };
-      requestedProviders.forEach((provider) => {
-        if (nextLinks[provider]) return;
-        const randomTicketNum = Math.floor(Math.random() * 800) + 100;
-        nextLinks[provider] = provider === "notion"
-          ? `https://www.notion.so/NEO-${randomTicketNum}`
-          : `https://jira.atlassian.com/browse/NEO-${randomTicketNum}`;
-      });
+
+      for (const provider of requestedProviders) {
+        if (nextLinks[provider]) continue;
+        const response = await sendMeetingTasks(targetItem.meetingId, {
+          provider,
+          taskIds: [String(targetItem.id)],
+        });
+        const result = Array.isArray(response?.results)
+          ? response.results.find((entry) => String(entry.taskId) === String(targetItem.id)) || response.results[0]
+          : null;
+        if (result?.syncStatus === "failed") {
+          throw new Error(result.errorMessage || `${provider} 연동에 실패했습니다.`);
+        }
+        if (result?.externalUrl) nextLinks[provider] = result.externalUrl;
+      }
+
       const primaryProvider = requestedProviders[requestedProviders.length - 1] || "jira";
       const primaryLink = nextLinks[primaryProvider] || nextLinks.jira || nextLinks.notion || "";
       const updatedItem = {
@@ -1287,7 +1382,7 @@ export default function App() {
         integrationProvider: primaryProvider,
         integrationTool: primaryProvider === "notion" ? "Notion" : "Jira",
       };
-      if (targetItem) persistActionItemUpdate(targetItem, updatedItem);
+      await persistMeetingActionItemUpdate(targetItem, updatedItem);
 
       setActionItems(prev => prev.map(item => {
         if (item.id === itemId) return { ...item, ...updatedItem };
@@ -1301,7 +1396,11 @@ export default function App() {
       setTimeout(() => setJustCompletedId(null), 1200);
       const linkedNames = requestedProviders.map((provider) => provider === "notion" ? "Notion" : "Jira").join(", ");
       triggerToast(`${linkedNames} 연동이 완료되었습니다!`, "ai");
-    }, 700);
+    } catch (error) {
+      triggerToast(error?.message || "연동에 실패했습니다.", "warning");
+    } finally {
+      setIntegratingId(null);
+    }
   };
 
   const handleQuickApprove = (e, itemId) => {
@@ -1309,12 +1408,19 @@ export default function App() {
     handleApprove(itemId);
   };
 
-  const handleDelete = () => {
+  const handleDelete = async () => {
     if (!selectedItem) return;
     const id = selectedItem.id;
+    const previousItems = actionItems;
     setActionItems(prev => prev.filter(item => item.id !== id));
-    closePanel();
-    triggerToast("해야 할 일이 삭제되었습니다.", "warning");
+    try {
+      await deleteMeetingActionItem(selectedItem);
+      closePanel();
+      triggerToast("해야 할 일이 삭제되었습니다.", "warning");
+    } catch (error) {
+      setActionItems(previousItems);
+      triggerToast(error?.message || "해야 할 일 삭제에 실패했습니다.", "warning");
+    }
   };
 
   const handleFileUploadSimulate = (e) => {
@@ -1405,6 +1511,16 @@ export default function App() {
       .map((key) => ({ projectKey: key, items: groups[key] }))
       .sort((left, right) => compareDashboardActionItems(left.items[0], right.items[0]));
   }, [filteredItems]);
+
+  const toggleProjectCollapse = (projectKey) => {
+    setCollapsedProjectKeys((prev) => {
+      const next = new Set(prev);
+      const key = String(projectKey);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
 
   const firstName = user?.name || "사용자";
   const myTotalActionCount = actionItems.filter((item) => isAssignedToMe(item, userAliases) && !isActionDone(item)).length;
@@ -1725,17 +1841,28 @@ export default function App() {
 
               {groupedByProject.map(({ projectKey, items }) => {
                 const projectMeta = getProjectMeta(projectKey);
+                const isCollapsed = collapsedProjectKeys.has(String(projectKey));
                 return (
                   <section key={projectKey}>
-                    <div className="mb-3 flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => toggleProjectCollapse(projectKey)}
+                      className="mb-3 flex w-full items-center gap-2 rounded-xl px-1 py-1 text-left transition-colors hover:bg-[#EEF8FF]"
+                      aria-expanded={!isCollapsed}
+                    >
                       {projectMeta.name && <span className="w-2.5 h-2.5 rounded-full bg-[#38BDF8] shadow-[0_0_0_4px_rgba(56,189,248,0.14)]"></span>}
                       {projectMeta.name && <span className="text-sm font-bold text-[#0D1B2A]">{projectMeta.name}</span>}
                       {projectMeta.name && (
                         <span className="rounded-full border border-[#7DD3FC]/70 bg-[#E0F2FE] px-2.5 py-0.5 text-xs font-bold text-[#0284C7]">{items.length}개</span>
                       )}
-                    </div>
+                      <LucideIcon
+                        name="chevronDown"
+                        size={16}
+                        className={`ml-auto text-[#6B7280] transition-transform ${isCollapsed ? "-rotate-90" : ""}`}
+                      />
+                    </button>
 
-                    <div className="rounded-2xl border border-[rgba(0,100,180,0.12)] bg-white overflow-hidden">
+                    {!isCollapsed && <div className="rounded-2xl border border-[rgba(0,100,180,0.12)] bg-white overflow-hidden">
                       {items.map((item, idx) => {
                         const dday = getDDayInfo(item.dueDate);
                         const isIntegrating = integratingId === item.id;
@@ -1838,7 +1965,7 @@ export default function App() {
                           </div>
                         );
                       })}
-                    </div>
+                    </div>}
                   </section>
                 );
               })}
@@ -2206,6 +2333,25 @@ export default function App() {
                   </div>
                 ) : (
                   <>
+                    {isPanelEditable && (
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={handleTogglePanelEdit}
+                          className="px-3.5 py-2 text-xs font-semibold text-[#5A6F8A] hover:bg-white rounded-lg transition-colors cursor-pointer"
+                        >
+                          취소
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleSaveEdit}
+                          className="px-5 py-2.5 text-sm font-bold text-white bg-[#0099CC] hover:bg-[#0086b3] rounded-xl shadow-md shadow-cyan-500/20 transition-all flex items-center gap-1.5 cursor-pointer"
+                        >
+                          <LucideIcon name="save" size={14} />
+                          저장
+                        </button>
+                      </div>
+                    )}
                     <button
                       type="button"
                       onClick={() => setDeleteConfirmOpen(true)}
@@ -2215,7 +2361,7 @@ export default function App() {
                       삭제
                     </button>
 
-                    <div className="flex items-center gap-2">
+                    {!isPanelEditable && <div className="flex items-center gap-2">
                       {selectedItem.status === "검토대기" && (
                         <button
                           type="button"
@@ -2279,7 +2425,7 @@ export default function App() {
                           {hasExternalLink(selectedItem) ? "추가 연동" : "연동하기"}
                         </button>
                       )}
-                    </div>
+                    </div>}
                   </>
                 )}
               </div>

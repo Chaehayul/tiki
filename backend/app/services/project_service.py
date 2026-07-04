@@ -166,6 +166,32 @@ def _get_meeting_or_404(db: Session, project_id: UUID, meeting_id: UUID) -> Meet
     return meeting
 
 
+def _normalize_action_items(action_items: list[dict] | None) -> list[dict]:
+    normalized: list[dict] = []
+    for item in action_items or []:
+        if not isinstance(item, dict):
+            continue
+        if item.get("__tiki_meta") or item.get("type") == "__tiki_meeting_meta":
+            normalized.append({**item, "id": str(item.get("id") or "__tiki_meeting_meta")})
+            continue
+        item_id = str(item.get("id") or item.get("task_id") or "")
+        status = str(item.get("status") or "").strip()
+        if item.get("snapshotOf") or item.get("historySavedAt") or "-history-" in item_id or status == "완료히스토리":
+            continue
+        normalized.append({**item, "id": str(item_id or uuid4())})
+    return normalized
+
+
+def _visible_action_items(action_items: list[dict] | None) -> list[dict]:
+    return [
+        item
+        for item in action_items or []
+        if isinstance(item, dict)
+        and not item.get("__tiki_meta")
+        and item.get("type") != "__tiki_meeting_meta"
+    ]
+
+
 def list_meetings(db: Session, project_id: UUID, user_id: UUID) -> list[Meeting]:
     project = _get_project_or_404(db, project_id)
     _assert_member(project, user_id)
@@ -178,12 +204,7 @@ def create_meeting(db: Session, project_id: UUID, payload: MeetingCreate, user_i
     project = _get_project_or_404(db, project_id)
     _assert_member(project, user_id)
 
-    action_items = [
-        {**item, "id": str(item.get("id") or item.get("task_id") or uuid4())}
-        if isinstance(item, dict)
-        else item
-        for item in payload.action_items
-    ]
+    action_items = _normalize_action_items(payload.action_items)
     meeting = Meeting(
         project_id=project_id,
         title=payload.title,
@@ -197,7 +218,7 @@ def create_meeting(db: Session, project_id: UUID, payload: MeetingCreate, user_i
         action_items=action_items,
         action_items_count=payload.action_items_count
         if payload.action_items_count is not None
-        else len(action_items),
+        else len(_visible_action_items(action_items)),
     )
     db.add(meeting)
     db.commit()
@@ -227,16 +248,19 @@ def update_meeting(
 
     for field, value in payload.model_dump(exclude_unset=True).items():
         if field == "action_items" and isinstance(value, list):
-            value = [
-                {**item, "id": str(item.get("id") or item.get("task_id") or uuid4())}
-                if isinstance(item, dict)
-                else item
-                for item in value
-            ]
+            value = _normalize_action_items(value)
+            meeting.action_items_count = len(_visible_action_items(value))
         setattr(meeting, field, value)
 
     db.commit()
     db.refresh(meeting)
+    try:
+        from app.services import external_integration_service
+
+        external_integration_service.sync_connected_meeting_resources(db, meeting, force=True)
+        db.refresh(meeting)
+    except Exception:
+        pass
     return meeting
 
 
@@ -259,6 +283,12 @@ def delete_meeting(db: Session, project_id: UUID, meeting_id: UUID, user_id: UUI
         ).all()
         for ticket in related_tickets:
             db.delete(ticket)
+    try:
+        from app.services import external_integration_service
+
+        external_integration_service.archive_meeting_external_resources(db, meeting)
+    except Exception:
+        pass
     db.delete(meeting)
     db.commit()
 

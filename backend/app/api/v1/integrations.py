@@ -8,12 +8,14 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.api.dependencies import get_current_user
 from app.core.config import settings
+from app.core.crypto import decrypt_secret
 from app.core.exceptions import AppException
 from app.db.database import get_db
 from app.integrations.jira import JiraOAuthClient, get_jira_client
 from app.integrations.notion import get_notion_client
 from app.models.enums import IntegrationProvider, SyncStatus
 from app.models.integration import ExternalSync
+from app.models.project import Project
 from app.models.ticket import Ticket
 from app.models.user import User
 from app.models.user_integration import UserIntegration
@@ -144,6 +146,9 @@ def notion_callback(
         )
         if oauth_state is not None:
             oauth_state = external_integration_service.pop_oauth_state(db, state, IntegrationProvider.NOTION)
+            project = db.get(Project, oauth_state.project_id)
+            notion_client = get_notion_client(access_token=token_result.access_token)
+            notion_database_id = notion_client.ensure_project_meeting_database_id(project.name if project else "TIKI 프로젝트")
             external_integration_service.upsert_project_integration(
                 db,
                 project_id=oauth_state.project_id,
@@ -153,6 +158,7 @@ def notion_callback(
                 expires_at=None,
                 scope=None,
                 external_workspace_id=token_result.workspace_id,
+                external_site_url=notion_database_id,
                 external_site_name=token_result.workspace_name,
                 notion_workspace_id=token_result.workspace_id,
                 notion_bot_id=token_result.bot_id,
@@ -289,7 +295,7 @@ def sync_ticket_to_notion(
     if not integration:
         raise AppException(detail="Notion is not connected", status_code=403, code="notion_not_connected")
 
-    client = get_notion_client(access_token=integration.access_token)
+    client = get_notion_client(access_token=decrypt_secret(integration.access_token) or "")
 
     try:
         result = client.create_page(

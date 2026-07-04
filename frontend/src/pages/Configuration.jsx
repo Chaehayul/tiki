@@ -11,6 +11,7 @@ import {
   getProjectIntegrations,
   inviteProjectMember,
   syncProjectIntegrationMeetings,
+  updateProjectMeeting,
 } from '../api/apiClient';
 
 const icons = {
@@ -167,6 +168,34 @@ const localMeetingToPayload = (meeting = {}) => {
     summary: `${meeting.summary || meeting.fullSummary || meeting.content || ''}${extraSections}`,
     action_items: actionItems,
     action_items_count: actionItems.length,
+  };
+};
+
+const mergeActionItemsIntoMeetingPayload = (payload, actionItems = []) => {
+  const existing = Array.isArray(payload.action_items) ? [...payload.action_items] : [];
+  const seen = new Set(existing.map((item) => String(item?.id || item?.title || item?.text || '').trim()).filter(Boolean));
+  actionItems.forEach((item, index) => {
+    if (!item || typeof item !== 'object') return;
+    const title = String(item.title || item.text || '').trim();
+    if (!title) return;
+    const key = String(item.id || title).trim();
+    if (seen.has(key)) return;
+    seen.add(key);
+    existing.push({
+      id: item.id || `${payload.title}-action-${index + 1}`,
+      title,
+      text: item.text || title,
+      description: item.description || '',
+      assignee: item.assignee || '',
+      due: item.due || item.dueDate || item.due_at || '',
+      status: item.status || '검토대기',
+      priority: item.priority || '',
+    });
+  });
+  return {
+    ...payload,
+    action_items: existing,
+    action_items_count: existing.length,
   };
 };
 
@@ -492,6 +521,11 @@ const Configuration = () => {
     if (!projectId) return 0;
     const override = readProjectOverrides()[String(projectId)] || {};
     const manualRecords = Object.values(readManualMeetingRecords()).filter((record) => String(record?.projectId || '') === String(projectId));
+    const projectActionItems = [
+      ...(Array.isArray(stateProject?.myActionItems) ? stateProject.myActionItems : []),
+      ...(Array.isArray(selectedProject?.myActionItems) ? selectedProject.myActionItems : []),
+      ...(Array.isArray(override?.myActionItems) ? override.myActionItems : []),
+    ];
     const sources = [
       ...(Array.isArray(stateProject?.meetings) ? stateProject.meetings : []),
       ...(Array.isArray(selectedProject?.meetings) ? selectedProject.meetings : []),
@@ -501,7 +535,12 @@ const Configuration = () => {
     const localMeetings = [];
     const seenLocal = new Set();
     sources.forEach((meeting) => {
-      const payload = localMeetingToPayload(meeting);
+      let payload = localMeetingToPayload(meeting);
+      const relatedActions = projectActionItems.filter((item) => {
+        const source = String(item?.source || item?.meetingTitle || item?.meeting || '').trim();
+        return source && source === payload.title;
+      });
+      payload = mergeActionItemsIntoMeetingPayload(payload, relatedActions);
       const key = `${payload.title.trim()}::${payload.date}`;
       if (!payload.title.trim() || seenLocal.has(key)) return;
       seenLocal.add(key);
@@ -516,20 +555,31 @@ const Configuration = () => {
       backendProject = null;
     }
     const backendMeetings = Array.isArray(backendProject?.meetings) ? backendProject.meetings : [];
-    const existing = new Set(backendMeetings.map((meeting) => `${String(meeting.title || '').trim()}::${String(meeting.date || '').slice(0, 20)}`));
-    let created = 0;
+    const existing = new Map(backendMeetings.map((meeting) => [`${String(meeting.title || '').trim()}::${String(meeting.date || '').slice(0, 20)}`, meeting]));
+    let changed = 0;
     for (const payload of localMeetings) {
       const key = `${payload.title.trim()}::${payload.date}`;
-      if (existing.has(key)) continue;
-      await createProjectMeeting(projectId, payload);
-      existing.add(key);
-      created += 1;
+      const existingMeeting = existing.get(key);
+      if (existingMeeting?.id) {
+        const existingSummaryLength = String(existingMeeting.summary || '').length;
+        const nextSummaryLength = String(payload.summary || '').length;
+        const existingActions = Array.isArray(existingMeeting.action_items) ? existingMeeting.action_items.length : 0;
+        const nextActions = Array.isArray(payload.action_items) ? payload.action_items.length : 0;
+        if (nextSummaryLength > existingSummaryLength || nextActions > existingActions) {
+          await updateProjectMeeting(projectId, existingMeeting.id, payload);
+          changed += 1;
+        }
+        continue;
+      }
+      const createdMeeting = await createProjectMeeting(projectId, payload);
+      existing.set(key, createdMeeting || payload);
+      changed += 1;
     }
-    if (created > 0) {
+    if (changed > 0) {
       const refreshed = await getProject(projectId);
       if (refreshed?.id) setResolvedProject(refreshed);
     }
-    return created;
+    return changed;
   };
 
   const handleSyncExistingMeetings = async (provider) => {

@@ -4,11 +4,90 @@ import Header from '../components/Header';
 import Footer from '../components/Footer';
 import MobileTab from '../components/MobileTab';
 import ToastPopup from '../components/toastpopup';
+import { listProjectMeetings, updateProjectMeeting } from '../api/apiClient';
 
 const MANUAL_MEETING_RECORDS_KEY = 'tiki_manual_minutes_records';
 const PROJECT_OVERRIDE_STORAGE_KEY = 'tiki_project_overrides';
 const PROJECT_CATALOG_STORAGE_KEY = 'tiki_project_catalog';
 const PROJECTLIST_CHEVRON_COLOR = '#A0AFBF';
+
+const buildServerManualActionItems = (minutes) => {
+  const actions = Array.isArray(minutes?.actions) ? minutes.actions : [];
+  const recordId = String(minutes?.id || minutes?.recordId || 'manual');
+  const metaItem = {
+    id: `${recordId}-meta`,
+    type: '__tiki_meeting_meta',
+    __tiki_meta: true,
+    data: {
+      source: 'manual',
+      summary: minutes?.summary || '직접 작성된 회의록입니다.',
+      keywords: Array.isArray(minutes?.keywords) ? minutes.keywords : [],
+      decisions: Array.isArray(minutes?.decisions) ? minutes.decisions : [],
+      issues: Array.isArray(minutes?.issues) ? minutes.issues : [],
+      nextAgenda: minutes?.nextAgenda || '',
+      raw_text: minutes?.summary || '직접 작성된 회의록입니다.',
+    },
+  };
+
+  const taskItems = actions
+    .map((item, index) => {
+      const title = String(item?.text || item?.title || '').trim();
+      if (!title) return null;
+      return {
+        id: item?.id || `${recordId}-action-${index + 1}`,
+        text: title,
+        title,
+        assignee: item?.assignee || '담당자 미지정',
+        assignees: item?.assignee ? [item.assignee] : [],
+        due: item?.due || item?.dueDate || '',
+        dueDate: item?.dueDate || item?.due || '',
+        checked: Boolean(item?.checked),
+        status: item?.checked ? '수행완료' : item?.status || '검토대기',
+        source: minutes?.title || '직접 작성 회의록',
+        projectId: minutes?.projectId || '',
+        projectName: minutes?.projectName || '',
+      };
+    })
+    .filter(Boolean);
+
+  return [metaItem, ...taskItems];
+};
+
+const mergeMinutesWithServerMeeting = (minutes, meeting) => {
+  if (!minutes || !meeting || typeof meeting !== 'object') return minutes;
+  const serverItems = Array.isArray(meeting.action_items)
+    ? meeting.action_items
+    : Array.isArray(meeting.actionItemsList)
+      ? meeting.actionItemsList
+      : [];
+  const visibleServerItems = serverItems.filter((item) => !(item?.__tiki_meta || item?.type === '__tiki_meeting_meta'));
+  if (visibleServerItems.length === 0) return minutes;
+
+  const nextActions = (Array.isArray(minutes.actions) ? minutes.actions : []).map((action, index) => {
+    const expectedId = action?.id || `${minutes.id}-action-${index + 1}`;
+    const server = visibleServerItems.find((item) => String(item?.id || '') === String(expectedId))
+      || visibleServerItems.find((item) => String(item?.title || item?.text || '').trim() === String(action?.text || '').trim());
+    if (!server) return action;
+    const serverDone = server.status === '수행완료' || Boolean(server.checked);
+    const localDone = action.status === '수행완료' || Boolean(action.checked);
+    const status = serverDone || localDone ? '수행완료' : server.status || action.status || '';
+    return {
+      ...action,
+      text: server.text || server.title || action.text,
+      assignee: server.assignee || action.assignee,
+      dueDate: server.dueDate || server.due || action.dueDate,
+      status,
+      checked: status === '수행완료',
+    };
+  });
+
+  return {
+    ...minutes,
+    meetingId: minutes.meetingId || meeting.id || '',
+    serverMeetingId: minutes.serverMeetingId || meeting.id || '',
+    actions: nextActions,
+  };
+};
 
 const stateLabels = {
   IDLE: '대기 중',
@@ -1089,9 +1168,9 @@ function buildInitialServices(minutes) {
   const baseActions = Array.isArray(minutes.actions) ? minutes.actions : [];
   const baseDecisions = Array.isArray(minutes.decisions) ? minutes.decisions : [];
 
-  const jiraTickets = (baseActions.length > 0 ? baseActions : [{ text: '액션 아이템 없음', assignee: '미지정', checked: false }]).map((item, idx) => ({
+  const jiraTickets = (baseActions.length > 0 ? baseActions : [{ text: '해야 할 일 없음', assignee: '미지정', checked: false }]).map((item, idx) => ({
     id: `MAN-${idx + 1}`,
-    title: item.text || '액션 아이템',
+    title: item.text || '해야 할 일',
     assignee: item.assignee || '미지정',
     due: formatDueDate(item.dueDate),
     status: 'todo',
@@ -1177,10 +1256,13 @@ export default function MeetingManualDetail() {
     const currentUserName = getStoredUserName();
     if (recordId && all[recordId]) {
       const stored = all[recordId];
+      const mergedStored = mergeMinutesWithServerMeeting(stored, location.state?.meeting);
       return {
-        ...stored,
+        ...mergedStored,
+        meetingId: mergedStored.meetingId || mergedStored.serverMeetingId || location.state?.meetingId || '',
+        serverMeetingId: mergedStored.serverMeetingId || location.state?.meetingId || '',
         participants: buildAcceptedProjectParticipants({
-          projectId: stored.projectId || location.state?.projectId,
+          projectId: mergedStored.projectId || location.state?.projectId,
           state: location.state,
         }),
       };
@@ -1373,7 +1455,67 @@ export default function MeetingManualDetail() {
     const all = readManualMeetingRecords();
     all[key] = nextMinutes;
     writeManualMeetingRecords(all);
-  }, []);
+
+    const projectId = String(nextMinutes?.projectId || location.state?.projectId || '').trim();
+    const meetingId = String(nextMinutes?.serverMeetingId || nextMinutes?.meetingId || location.state?.meetingId || '').trim();
+    if (!projectId || !meetingId) return;
+
+    updateProjectMeeting(projectId, meetingId, {
+      title: nextMinutes.title || '직접 작성 회의록',
+      date: nextMinutes.date || '-',
+      status: '검토대기',
+      meeting_type: nextMinutes.type || '정기',
+      tags: (Array.isArray(nextMinutes.keywords) ? nextMinutes.keywords : [])
+        .slice(0, 12)
+        .map((tag) => `#${String(tag || '').replace(/^#/, '')}`),
+      participants: Array.isArray(nextMinutes.participants) ? nextMinutes.participants : [],
+      summary: nextMinutes.summary || '직접 작성된 회의록입니다.',
+      action_items: buildServerManualActionItems(nextMinutes),
+      action_items_count: Array.isArray(nextMinutes.actions) ? nextMinutes.actions.length : 0,
+    }).catch(() => {
+      showToast('로컬에는 저장됐지만 서버 회의록 동기화에 실패했습니다.', 'error');
+    });
+  }, [location.state, showToast]);
+
+  useEffect(() => {
+    const projectId = String(minutes?.projectId || location.state?.projectId || '').trim();
+    const meetingId = String(minutes?.serverMeetingId || minutes?.meetingId || location.state?.meetingId || '').trim();
+    if (!projectId || !meetingId) return undefined;
+
+    let active = true;
+    listProjectMeetings(projectId)
+      .then((meetings) => {
+        if (!active || !Array.isArray(meetings)) return;
+        const serverMeeting = meetings.find((meeting) => String(meeting?.id || '') === meetingId);
+        if (!serverMeeting) return;
+
+        setMinutes((prev) => {
+          if (!prev) return prev;
+          const merged = mergeMinutesWithServerMeeting(prev, serverMeeting);
+          const key = String(merged?.id || '').trim();
+          if (key) {
+            const all = readManualMeetingRecords();
+            all[key] = merged;
+            writeManualMeetingRecords(all);
+          }
+          return merged;
+        });
+      })
+      .catch(() => {
+        if (active) showToast('서버 회의록 상태를 불러오지 못했습니다.', 'error');
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [
+    minutes?.projectId,
+    minutes?.serverMeetingId,
+    minutes?.meetingId,
+    location.state?.projectId,
+    location.state?.meetingId,
+    showToast,
+  ]);
 
   const handleToggleAction = useCallback((index) => {
     setMinutes((prev) => {
@@ -1540,9 +1682,9 @@ export default function MeetingManualDetail() {
 
     setServices((prev) => prev.map((svc) => {
       if (svc.id === 'jira') {
-        const tickets = (nextActions.length > 0 ? nextActions : [{ text: '액션 아이템 없음', assignee: '미지정', checked: false }]).map((item, idx) => ({
+        const tickets = (nextActions.length > 0 ? nextActions : [{ text: '해야 할 일 없음', assignee: '미지정', checked: false }]).map((item, idx) => ({
           id: `MAN-${idx + 1}`,
-          title: item.text || '액션 아이템',
+          title: item.text || '해야 할 일',
           assignee: item.assignee || '미지정',
           due: formatDueDate(item.dueDate),
           status: 'todo',
@@ -1719,9 +1861,9 @@ export default function MeetingManualDetail() {
 
     setServices((prev) => prev.map((svc) => {
       if (svc.id !== 'jira') return svc;
-      const tickets = (nextActions.length > 0 ? nextActions : [{ text: '액션 아이템 없음', assignee: '미지정', checked: false }]).map((item, idx) => ({
+      const tickets = (nextActions.length > 0 ? nextActions : [{ text: '해야 할 일 없음', assignee: '미지정', checked: false }]).map((item, idx) => ({
         id: `MAN-${idx + 1}`,
-        title: item.text || '액션 아이템',
+        title: item.text || '해야 할 일',
         assignee: item.assignee || '미지정',
         due: formatDueDate(item.dueDate),
         status: 'todo',
@@ -2041,7 +2183,7 @@ export default function MeetingManualDetail() {
               <div className="rounded-xl p-3 border border-[#FDE68A] bg-[#FFFBEB]">
                 <p className="text-sm font-semibold text-[#92400E]">상세 입력 항목이 비어 있습니다.</p>
                 <p className="text-xs text-[#B45309] mt-1">
-                  현재는 기본 정보만 저장된 상태입니다. 직접 작성 화면에서 요약/결정/액션/이슈를 입력하면 여기 그대로 표시됩니다.
+                  현재는 기본 정보만 저장된 상태입니다. 직접 작성 화면에서 요약/결정/해야 할 일/이슈를 입력하면 여기 그대로 표시됩니다.
                 </p>
               </div>
             )}
@@ -2317,7 +2459,7 @@ export default function MeetingManualDetail() {
                           />
                         ))
                       ) : (
-                        <p className="text-sm text-slate-500">등록된 액션 아이템이 없습니다.</p>
+                        <p className="text-sm text-slate-500">등록된 해야 할 일이 없습니다.</p>
                       )}
                     </>
                   )}

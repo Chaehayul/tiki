@@ -5,6 +5,8 @@ import Footer from '../components/Footer';
 import MobileTab from '../components/MobileTab';
 import { deleteProjectMeeting, getProject, listProjectMeetings, listProjects, sendMeetingTasks, updateProjectMeeting } from '../api/apiClient';
 
+const isTikiMeetingMetaItem = (item) =>
+    Boolean(item && typeof item === 'object' && (item.__tiki_meta || item.type === '__tiki_meeting_meta'));
 
 function statusBadgeClass(status) {
     if (status === '완료') return 'bg-[#E6F4EA] text-[#10B981]';
@@ -412,6 +414,8 @@ function normalizeProject(project) {
               participants: Array.isArray(meeting.participants) ? meeting.participants.filter(Boolean) : [],
               summary: meeting.summary || '회의 요약이 아직 등록되지 않았습니다.',
               actionItems: typeof meeting.actionItems === 'number' ? meeting.actionItems : 0,
+              action_items: (Array.isArray(meeting.action_items) ? meeting.action_items : Array.isArray(meeting.actionItemsList) ? meeting.actionItemsList : []).filter((item) => !isTikiMeetingMetaItem(item)),
+              actionItemsList: (Array.isArray(meeting.actionItemsList) ? meeting.actionItemsList : Array.isArray(meeting.action_items) ? meeting.action_items : []).filter((item) => !isTikiMeetingMetaItem(item)),
               jiraLinked: typeof meeting.jiraLinked === 'number' ? meeting.jiraLinked : 0,
           }))
         : [];
@@ -1141,8 +1145,80 @@ export default function ProjectMeetings() {
         }
 
         const manualRecords = readManualMeetingRecords();
+        const serverMeetings = Array.isArray(project.meetings) ? project.meetings : [];
+        const serverMeetingIds = new Set(serverMeetings.map((meeting) => String(meeting?.id || '')).filter(Boolean));
+        const serverMeetingTitles = new Set(serverMeetings.map((meeting) => String(meeting?.title || '').trim()).filter(Boolean));
+        const serverMeetingHasActions = (record) => {
+            const linkedMeetingId = String(record?.serverMeetingId || record?.meetingId || '').trim();
+            const title = String(record?.title || '').trim();
+            const matchedMeeting = serverMeetings.find((meeting) => {
+                const meetingId = String(meeting?.id || '').trim();
+                const meetingTitle = String(meeting?.title || '').trim();
+                return (linkedMeetingId && meetingId === linkedMeetingId) || (title && meetingTitle === title);
+            });
+            if (!matchedMeeting) return false;
+            const actions = Array.isArray(matchedMeeting?.action_items)
+                ? matchedMeeting.action_items
+                : Array.isArray(matchedMeeting?.actionItemsList)
+                  ? matchedMeeting.actionItemsList
+                  : [];
+            return actions.filter((action) => !isTikiMeetingMetaItem(action)).length > 0;
+        };
+        const projectManualRecords = Object.values(manualRecords)
+            .filter((record) => String(record?.projectId || '') === String(project.id || ''));
+        const findLocalManualAction = (meeting, action, index) => {
+            const meetingId = String(meeting?.id || '').trim();
+            const meetingTitle = String(meeting?.title || '').trim();
+            const actionId = String(action?.id || '').trim();
+            const actionText = String(action?.text || action?.title || '').trim();
+            const matchedRecord = projectManualRecords.find((record) => {
+                const linkedMeetingId = String(record?.serverMeetingId || record?.meetingId || '').trim();
+                const title = String(record?.title || '').trim();
+                return (linkedMeetingId && linkedMeetingId === meetingId) || (title && title === meetingTitle);
+            });
+            if (!matchedRecord || !Array.isArray(matchedRecord.actions)) return null;
+            return matchedRecord.actions.find((localAction, localIndex) => {
+                const localId = String(localAction?.id || `${matchedRecord.id}-action-${localIndex + 1}`);
+                const localText = String(localAction?.text || localAction?.title || '').trim();
+                return (actionId && localId === actionId) || (actionText && localText === actionText) || localIndex === index;
+            }) || null;
+        };
+        const serverActionItems = serverMeetings.flatMap((meeting) => {
+            const actions = Array.isArray(meeting?.action_items) ? meeting.action_items : Array.isArray(meeting?.actionItemsList) ? meeting.actionItemsList : [];
+            return actions
+                .filter((action) => !isTikiMeetingMetaItem(action))
+                .map((action, index) => {
+                    const localAction = findLocalManualAction(meeting, action, index);
+                    const localDone = localAction?.checked || normalizeActionStatus(localAction?.status) === '수행완료';
+                    const status = localDone
+                        ? '수행완료'
+                        : action?.status ? normalizeActionStatus(action.status) : action?.checked ? '수행완료' : '검토대기';
+                    return {
+                        id: action?.id || `${meeting.id}-action-${index + 1}`,
+                        text: action?.text || action?.title || '',
+                        description: action?.description || meeting?.summary || '',
+                        due: normalizeStorageDate(action?.due || action?.dueDate || action?.due_at),
+                        assignee: action?.assignee || project.teamLead || '담당자 미지정',
+                        status,
+                        source: String(action?.source || meeting?.title || '').trim() || project.name || '회의 제목 없음',
+                        integrationTool: action?.integrationTool || action?.integrationProvider || null,
+                        integrationLinks: getActionIntegrationLinks(action),
+                        externalLink: action?.externalLink || '',
+                        snapshotOf: action?.snapshotOf || null,
+                        historySavedAt: action?.historySavedAt || null,
+                        updatedAt: action?.updatedAt || getKSTTimestampLabel(),
+                        meeting,
+                    };
+                });
+        });
         const manualActionItems = Object.values(manualRecords)
             .filter((record) => String(record?.projectId || '') === String(project.id || ''))
+            .filter((record) => {
+                const linkedMeetingId = String(record?.serverMeetingId || record?.meetingId || '').trim();
+                const title = String(record?.title || '').trim();
+                const hasServerMeeting = (linkedMeetingId && serverMeetingIds.has(linkedMeetingId)) || (title && serverMeetingTitles.has(title));
+                return !hasServerMeeting || !serverMeetingHasActions(record);
+            })
             .flatMap((record) => {
                 const actions = Array.isArray(record?.actions) ? record.actions : [];
                 return actions.map((action, index) => ({
@@ -1162,7 +1238,7 @@ export default function ProjectMeetings() {
                 }));
             });
 
-        const mergedActionItems = compactLegacyActionHistoryItems([...(project.myActionItems || []), ...manualActionItems]).filter((item) => {
+        const mergedActionItems = compactLegacyActionHistoryItems([...serverActionItems, ...manualActionItems]).filter((item) => {
             return String(item?.text || '').trim().length > 0;
         });
         const dedupedActionItems = [];

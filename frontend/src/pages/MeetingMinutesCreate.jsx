@@ -53,15 +53,7 @@ const writeProjectOverrides = (next) => {
   }
 };
 
-const buildActionDescription = (item, meeting) => {
-  const lines = [
-    item?.text ? `업무: ${item.text}` : '',
-    item?.assignee ? `담당자: ${item.assignee}` : '담당자: 미지정',
-    item?.dueDate ? `마감일: ${item.dueDate}` : '',
-    meeting?.summary ? `회의 내용 기반: ${meeting.summary}` : '',
-  ].filter(Boolean);
-  return lines.join('\n');
-};
+const buildActionDescription = () => '';
 
 const readManualMeetingRecords = () => {
   try {
@@ -670,6 +662,21 @@ export default function MeetingMinutesCreate() {
       updatedAt: new Date().toISOString(),
     }));
 
+    const meetingMetaItem = {
+      id: `${manualRecordId}-meta`,
+      type: '__tiki_meeting_meta',
+      __tiki_meta: true,
+      data: {
+        source: 'manual',
+        summary: manualRecord.summary || '직접 작성된 회의록입니다.',
+        keywords: normalizedKeywords,
+        decisions: manualRecord.decisions,
+        issues: manualRecord.issues,
+        nextAgenda: manualRecord.nextAgenda,
+        raw_text: manualRecord.summary || '직접 작성된 회의록입니다.',
+      },
+    };
+
     let serverMeetingId = '';
 
     if (projectId) {
@@ -680,13 +687,22 @@ export default function MeetingMinutesCreate() {
           round_number: 1,
           status: '검토대기',
           meeting_type: form.type,
-          tags: normalizedKeywords.slice(0, 4).map((tag) => `#${tag}`),
+          tags: normalizedKeywords.slice(0, 12).map((tag) => `#${tag}`),
           participants,
           summary: manualRecord.summary || '직접 작성된 회의록입니다.',
-          action_items: generatedActionItems,
+          action_items: [meetingMetaItem, ...generatedActionItems],
           action_items_count: generatedActionItems.length,
         });
         serverMeetingId = createdMeeting?.id ? String(createdMeeting.id) : '';
+        if (serverMeetingId) {
+          const syncedManualRecords = readManualMeetingRecords();
+          syncedManualRecords[manualRecordId] = {
+            ...manualRecord,
+            serverMeetingId,
+            meetingId: serverMeetingId,
+          };
+          writeManualMeetingRecords(syncedManualRecords);
+        }
       } catch {
         serverMeetingId = '';
       }
@@ -702,7 +718,7 @@ export default function MeetingMinutesCreate() {
         title: manualRecord.title,
         status: '검토대기',
         type: form.type,
-        tags: normalizedKeywords.slice(0, 4).map((tag) => `#${tag}`),
+        tags: normalizedKeywords.slice(0, 12).map((tag) => `#${tag}`),
         participants,
         summary: manualRecord.summary || '직접 작성된 회의록입니다.',
         actionItems: mergedActionItems.length,
@@ -725,6 +741,7 @@ export default function MeetingMinutesCreate() {
       navigate('/meeting-manual-detail', {
         state: {
           recordId: manualRecordId,
+          meetingId: serverMeetingId || '',
           projectId: projectId ? String(projectId) : '',
           projectName,
         },

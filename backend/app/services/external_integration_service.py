@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.crypto import decrypt_secret, encrypt_secret
 from app.core.exceptions import AppException
-from app.integrations.jira import JiraOAuthClient
+from app.integrations.jira import JiraOAuthClient, JiraProjectOption
 from app.integrations.notion import get_notion_client
 from app.models.enums import IntegrationProvider, SyncStatus
 from app.models.integration import MeetingExternalLink, OAuthState, ProjectIntegration, TaskExternalLink
@@ -36,6 +36,34 @@ def _get_meeting_or_404(db: Session, meeting_id: UUID) -> Meeting:
     if meeting is None:
         raise AppException(detail="Meeting not found", status_code=404, code="meeting_not_found")
     return meeting
+
+
+def _get_valid_jira_access_token(db: Session, integration: ProjectIntegration) -> str:
+    """Return a usable Jira access token, refreshing it first if it's expired.
+
+    Atlassian access tokens issued via the 3LO OAuth flow expire after about an
+    hour; without this, every sync started more than an hour after connecting
+    would fail with a 401 from Jira.
+    """
+    token = decrypt_secret(integration.access_token) or ""
+    expires_at = integration.expires_at
+    if expires_at is not None and expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=UTC)
+    is_expiring = expires_at is not None and expires_at <= _now() + timedelta(seconds=60)
+    if not is_expiring:
+        return token
+
+    refresh_token = decrypt_secret(integration.refresh_token) if integration.refresh_token else None
+    if not refresh_token:
+        return token
+
+    client = JiraOAuthClient()
+    result = client.refresh_access_token(refresh_token)
+    integration.access_token = encrypt_secret(result.access_token) or ""
+    integration.refresh_token = encrypt_secret(result.refresh_token) if result.refresh_token else integration.refresh_token
+    integration.expires_at = _now() + timedelta(seconds=result.expires_in) if result.expires_in else None
+    db.flush()
+    return result.access_token
 
 
 def create_oauth_state(db: Session, project_id: UUID, provider: IntegrationProvider, user_id: UUID) -> str:
@@ -130,8 +158,33 @@ def list_project_integration_status(db: Session, project_id: UUID, user_id: UUID
             workspaceName=row.external_site_name,
             workspaceId=row.external_workspace_id or row.notion_workspace_id,
             connectedAt=row.created_at,
+            jiraProjectKey=row.jira_project_key,
+            jiraProjectName=row.jira_project_name,
         )
     return result
+
+
+def list_jira_projects(db: Session, project_id: UUID, user_id: UUID) -> list[JiraProjectOption]:
+    project_service.get_project(db, project_id, user_id)
+    integration = _project_integration(db, project_id, IntegrationProvider.JIRA)
+    if integration is None:
+        raise AppException(detail="Jira is not connected", status_code=403, code="jira_not_connected")
+    token = _get_valid_jira_access_token(db, integration)
+    db.commit()
+    client = JiraOAuthClient(access_token=token, cloud_id=integration.cloud_id, site_url=integration.external_site_url)
+    return client.list_projects()
+
+
+def set_jira_project(db: Session, project_id: UUID, user_id: UUID, key: str, name: str) -> ProjectIntegration:
+    project_service.get_project(db, project_id, user_id)
+    integration = _project_integration(db, project_id, IntegrationProvider.JIRA)
+    if integration is None:
+        raise AppException(detail="Jira is not connected", status_code=403, code="jira_not_connected")
+    integration.jira_project_key = key
+    integration.jira_project_name = name
+    db.commit()
+    db.refresh(integration)
+    return integration
 
 
 def disconnect_project_integration(db: Session, project_id: UUID, provider: IntegrationProvider, user_id: UUID) -> None:
@@ -168,24 +221,39 @@ def _notion_meeting_database_id(db: Session, integration: ProjectIntegration, cl
     return database_id
 
 
-def _meeting_description(meeting: Meeting) -> str:
-    decisions = meeting.action_items if False else []
-    return "\n".join(
-        [
-            f"회의 제목: {meeting.title}",
-            f"회의 날짜: {meeting.date}",
-            "",
-            "회의 요약:",
-            meeting.summary or "",
-            "",
-            "해야 할 일:",
-            *[
+def _meeting_description(db: Session, meeting: Meeting) -> str:
+    payload = _analysis_payload_for_meeting(db, meeting)
+    decisions = [_text_from_item(item) for item in payload.get("decisions", []) if _text_from_item(item)]
+    issues = [_text_from_item(item) for item in payload.get("issues", []) if _text_from_item(item)]
+    next_agenda = [_text_from_item(item) for item in payload.get("next_agenda", []) if _text_from_item(item)]
+    action_items = [item for item in payload.get("action_items", []) if isinstance(item, dict)]
+
+    lines = [
+        f"회의 제목: {meeting.title}",
+        f"회의 날짜: {meeting.date}",
+        "",
+        "회의 요약:",
+        payload.get("summary") or meeting.summary or "",
+        "",
+        "주요 결정사항:",
+        *([f"- {item}" for item in decisions] or ["- 없음"]),
+        "",
+        "해야 할 일:",
+        *(
+            [
                 f"- {item.get('title') or item.get('text') or '업무'} / 담당자: {item.get('assignee') or '-'} / 마감일: {item.get('due') or item.get('due_at') or item.get('dueDate') or '-'}"
-                for item in (meeting.action_items or [])
-                if isinstance(item, dict)
-            ],
-        ]
-    )
+                for item in action_items
+            ]
+            or ["- 없음"]
+        ),
+        "",
+        "이슈:",
+        *([f"- {item}" for item in issues] or ["- 없음"]),
+        "",
+        "다음 안건:",
+        *([f"- {item}" for item in next_agenda] or ["- 없음"]),
+    ]
+    return "\n".join(lines)
 
 
 def _task_id(meeting: Meeting, item: dict, index: int) -> str:
@@ -505,17 +573,17 @@ def ensure_meeting_external_resource(db: Session, meeting: Meeting, provider: In
                 sync_mode,
             )
         elif provider == IntegrationProvider.JIRA:
-            token = decrypt_secret(integration.access_token) or ""
+            token = _get_valid_jira_access_token(db, integration)
             client = JiraOAuthClient(
                 access_token=token,
                 cloud_id=integration.cloud_id,
                 site_url=integration.external_site_url,
             )
-            project_key = settings.jira_project_key
+            project_key = integration.jira_project_key or settings.jira_project_key
             if not project_key:
-                raise RuntimeError("JIRA_PROJECT_KEY is required")
+                raise RuntimeError("Jira project is not selected for this project")
             title = f"Meeting - {meeting.date} {_service_text(meeting.title)}"
-            description = _meeting_description(meeting)
+            description = _meeting_description(db, meeting)
             if link.external_id:
                 client.update_issue(link.external_id, title=title, description=description)
             else:
@@ -661,11 +729,11 @@ def send_meeting_tasks(
             description = _service_text(task.get("description") or meeting.summary or title)
             due_date = str(task.get("due") or task.get("due_at") or task.get("dueDate") or "").strip() or None
             if provider == IntegrationProvider.JIRA:
-                token = decrypt_secret(integration.access_token) or ""
+                token = _get_valid_jira_access_token(db, integration)
                 client = JiraOAuthClient(access_token=token, cloud_id=integration.cloud_id, site_url=integration.external_site_url)
-                project_key = settings.jira_project_key
+                project_key = integration.jira_project_key or settings.jira_project_key
                 if not project_key:
-                    raise RuntimeError("JIRA_PROJECT_KEY is required")
+                    raise RuntimeError("Jira project is not selected for this project")
                 if link.external_id or link.external_key:
                     client.update_issue(link.external_key or link.external_id or "", title=title, description=description, due_date=due_date)
                 else:

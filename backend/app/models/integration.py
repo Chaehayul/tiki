@@ -79,6 +79,8 @@ class ProjectIntegration(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     external_site_url: Mapped[str | None] = mapped_column(String(500))
     external_site_name: Mapped[str | None] = mapped_column(String(255))
     cloud_id: Mapped[str | None] = mapped_column(String(255))
+    jira_project_key: Mapped[str | None] = mapped_column(String(50))
+    jira_project_name: Mapped[str | None] = mapped_column(String(255))
     notion_workspace_id: Mapped[str | None] = mapped_column(String(255))
     notion_bot_id: Mapped[str | None] = mapped_column(String(255))
     connected_by_user_id: Mapped[UUID | None] = mapped_column(

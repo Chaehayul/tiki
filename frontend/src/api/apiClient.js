@@ -210,6 +210,13 @@ export async function removeProjectMember(projectId, memberId) {
   });
 }
 
+export async function updateProjectMember(projectId, memberId, payload) {
+  return request(`/projects/${projectId}/members/${memberId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+}
+
 export async function listProjectInvitations() {
   return request('/projects/invitations');
 }
@@ -277,6 +284,17 @@ export async function disconnectProjectIntegration(projectId, provider) {
 export async function syncProjectIntegrationMeetings(projectId, provider) {
   return request(`/projects/${projectId}/integrations/${provider}/sync-meetings`, {
     method: 'POST',
+  });
+}
+
+export async function listJiraProjects(projectId) {
+  return request(`/projects/${projectId}/integrations/jira/projects`);
+}
+
+export async function setJiraProject(projectId, payload) {
+  return request(`/projects/${projectId}/integrations/jira/project`, {
+    method: 'PUT',
+    body: JSON.stringify(payload),
   });
 }
 

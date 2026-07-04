@@ -4,7 +4,7 @@ import Header from "../components/Header";
 import Footer from "../components/Footer";
 import MobileTab from "../components/MobileTab";
 import ToastPopup from "../components/toastpopup";
-import { clearAuthSession } from "../api/apiClient";
+import { clearAuthSession, getUploadAnalysis, listUploads } from "../api/apiClient";
 
 /* ─── 데이터 ─────────────────────────────────────────── */
 const TX = [
@@ -3117,6 +3117,76 @@ export default function TikiSprint12() {
     issues: SUMMARY_DATA.issues.map((i) => ({ ...i })),
     next_agenda: [...SUMMARY_DATA.next_agenda],
   }));
+
+  // Real per-meeting data. Falls back to the placeholder TX/SUMMARY_DATA above
+  // (used previously for every meeting regardless of what was actually uploaded)
+  // until the matching upload's AI analysis loads.
+  const [txSource, setTxSource] = useState(TX);
+  const [meetingHeader, setMeetingHeader] = useState(null);
+  const [realDataStatus, setRealDataStatus] = useState("idle"); // idle | loading | loaded | missing
+
+  useEffect(() => {
+    const state = location?.state || {};
+    const meetingId = state.meetingId;
+    const projectId = state.projectId;
+    if (!meetingId || !projectId) {
+      setRealDataStatus("missing");
+      return undefined;
+    }
+
+    let cancelled = false;
+    setRealDataStatus("loading");
+
+    const normalizeAction = (item) => ({
+      text: String(item?.text || item?.title || item?.description || "").trim(),
+      assignee: item?.assignee || "미정",
+      due: item?.due || item?.due_at || "",
+      status: item?.status === "완료" || item?.status === "done" ? "done" : "todo",
+    });
+
+    (async () => {
+      try {
+        const uploads = await listUploads({ project_id: projectId });
+        const match = (Array.isArray(uploads) ? uploads : []).find(
+          (file) => String(file?.meeting_id || "") === String(meetingId)
+        );
+        if (!match) {
+          if (!cancelled) setRealDataStatus("missing");
+          return;
+        }
+        const analysis = await getUploadAnalysis(match.id);
+        if (cancelled || !analysis) return;
+
+        if (Array.isArray(analysis.tx) && analysis.tx.length > 0) {
+          setTxSource(analysis.tx);
+        }
+        setSummaryData((prev) => ({
+          ...prev,
+          summary: analysis.summary || prev.summary,
+          keywords: Array.isArray(analysis.keywords) && analysis.keywords.length ? analysis.keywords : prev.keywords,
+          decisions: Array.isArray(analysis.decisions) && analysis.decisions.length ? analysis.decisions : prev.decisions,
+          issues: Array.isArray(analysis.issues) && analysis.issues.length ? analysis.issues : prev.issues,
+          next_agenda: Array.isArray(analysis.next_agenda) && analysis.next_agenda.length ? analysis.next_agenda : prev.next_agenda,
+        }));
+        if (Array.isArray(analysis.action_items) && analysis.action_items.length > 0) {
+          setSummaryActions(analysis.action_items.map(normalizeAction));
+        }
+        setMeetingHeader({
+          title: analysis.meeting_title || state.meeting?.title || "",
+          date: state.meeting?.date || "",
+        });
+        if (!cancelled) setRealDataStatus("loaded");
+      } catch {
+        if (!cancelled) setRealDataStatus("missing");
+      } finally {
+        if (!cancelled) setTranscriptLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [location?.state]);
   const issueAssigneeOptions = useMemo(() => {
     const state = location?.state || {};
     return buildProjectAssigneeOptions({
@@ -3328,10 +3398,10 @@ export default function TikiSprint12() {
       setCollapsedSet(new Set());
       setAllCollapsed(false);
     } else {
-      setCollapsedSet(new Set(TX.map((_, i) => i)));
+      setCollapsedSet(new Set(txSource.map((_, i) => i)));
       setAllCollapsed(true);
     }
-  }, [allCollapsed]);
+  }, [allCollapsed, txSource]);
 
   const handleIssued = useCallback((svcName, issuedItems = []) => {
     const svcIds = Array.isArray(svcName)
@@ -3412,18 +3482,18 @@ export default function TikiSprint12() {
     showToast(svcIds.length > 1 ? "Jira와 Notion에 연동되었습니다." : svcIds[0] === "jira" ? "Jira에 연동되었습니다." : "Notion에 연동되었습니다.");
   }, [location?.state, showToast, summaryData.summary]);
 
-  const txData = TX
+  const txData = txSource
     .map((d, i) => ({ ...d, idx: i }))
     .filter(d =>
       (!bmFilter || bookmarks.has(d.idx)) &&
-      (!searchQ || d.txt.includes(searchQ) || d.spk.includes(searchQ))
+      (!searchQ || String(d.txt || "").includes(searchQ) || String(d.spk || "").includes(searchQ))
     );
   const visibleTx = txData;
   const visible = visibleTx.slice(0, shownCount);
   const remaining = visibleTx.length - shownCount;
 
-  const activeIdx = TX.reduce((acc, item, i) => {
-    const nxt = i + 1 < TX.length ? TX[i + 1].ts : 99999;
+  const activeIdx = txSource.reduce((acc, item, i) => {
+    const nxt = i + 1 < txSource.length ? txSource[i + 1].ts : 99999;
     if (curTime >= item.ts && curTime < nxt) return i;
     return acc;
   }, -1);
@@ -3488,15 +3558,16 @@ export default function TikiSprint12() {
         <div className="bg-white border border-slate-200 rounded-2xl p-5 md:p-6">
           <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-5">
             <div className="flex-1 min-w-0">
+              {realDataStatus === "missing" && (
+                <div className="mb-3 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs font-semibold text-amber-700">
+                  이 회의의 분석 데이터를 찾을 수 없어 예시 데이터를 표시하고 있습니다.
+                </div>
+              )}
               <div className="flex flex-wrap items-center gap-2 mb-2">
-                <span className="text-xs font-semibold text-slate-400">2026.06.14</span>
-                <span className="text-slate-300">·</span>
-                <span className="text-xs font-semibold text-slate-400">오후 2:00 – 3:15</span>
-                <span className="text-slate-300">·</span>
-                <span className="text-xs font-semibold text-cyan-500">75분</span>
+                <span className="text-xs font-semibold text-slate-400">{meetingHeader?.date || "2026.06.14"}</span>
               </div>
               <h1 className="text-lg md:text-xl font-bold text-slate-900 leading-snug mb-4">
-                Sprint 12 킥오프 — AI 회의록 시스템 개발 현황 공유
+                {meetingHeader?.title || "Sprint 12 킥오프 — AI 회의록 시스템 개발 현황 공유"}
               </h1>
               <div className="flex items-center gap-2.5">
                 <div className="flex -space-x-2">

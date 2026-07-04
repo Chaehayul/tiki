@@ -20,6 +20,7 @@ from app.schemas.project import (
     MeetingUpdate,
     MemberInvite,
     MemberResponse,
+    MemberRoleUpdate,
     ProjectCreate,
     ProjectListItem,
     ProjectResponse,
@@ -27,7 +28,7 @@ from app.schemas.project import (
     ProjectUpdate,
     UploadStatusBreakdown,
 )
-from app.schemas.integration import ProjectIntegrationsResponse
+from app.schemas.integration import JiraProjectOptionResponse, JiraProjectSelectRequest, ProjectIntegrationsResponse
 from app.schemas.ticket import ExternalSyncResponse, ProjectTicketItem
 from app.schemas.upload import UploadedFileResponse
 from app.services import project_service
@@ -209,6 +210,28 @@ def disconnect_project_integration(
     external_integration_service.disconnect_project_integration(db, project_id, provider, current_user.id)
 
 
+@router.get("/{project_id}/integrations/jira/projects", response_model=list[JiraProjectOptionResponse])
+def list_jira_projects(
+    project_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[JiraProjectOptionResponse]:
+    options = external_integration_service.list_jira_projects(db, project_id, current_user.id)
+    return [JiraProjectOptionResponse(key=option.key, name=option.name) for option in options]
+
+
+@router.put("/{project_id}/integrations/jira/project", response_model=ProjectIntegrationsResponse)
+def set_jira_project(
+    project_id: UUID,
+    payload: JiraProjectSelectRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> ProjectIntegrationsResponse:
+    external_integration_service.set_jira_project(db, project_id, current_user.id, payload.key, payload.name)
+    statuses = external_integration_service.list_project_integration_status(db, project_id, current_user.id)
+    return ProjectIntegrationsResponse(**statuses)
+
+
 # ── Project Stats ─────────────────────────────────────────────────────────────
 
 @router.get("/{project_id}/stats", response_model=ProjectStats)
@@ -386,3 +409,15 @@ def remove_member(
     db: Session = Depends(get_db),
 ) -> None:
     project_service.remove_member(db, project_id, member_id, current_user.id)
+
+
+@router.patch("/{project_id}/members/{member_id}", response_model=MemberResponse)
+def update_member_role(
+    project_id: UUID,
+    member_id: UUID,
+    payload: MemberRoleUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> MemberResponse:
+    member = project_service.update_member_role(db, project_id, member_id, payload, current_user.id)
+    return _to_member_response(member)

@@ -18,6 +18,18 @@ class ProviderIntegrationStatus(BaseModel):
     workspaceName: str | None = None
     workspaceId: str | None = None
     connectedAt: datetime | None = None
+    jiraProjectKey: str | None = None
+    jiraProjectName: str | None = None
+
+
+class JiraProjectOptionResponse(BaseModel):
+    key: str
+    name: str
+
+
+class JiraProjectSelectRequest(BaseModel):
+    key: str = Field(min_length=1, max_length=50)
+    name: str = Field(min_length=1, max_length=255)
 
 
 class ProjectIntegrationsResponse(BaseModel):

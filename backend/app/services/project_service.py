@@ -1,3 +1,4 @@
+import logging
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
@@ -14,9 +15,12 @@ from app.schemas.project import (
     MeetingCreate,
     MeetingUpdate,
     MemberInvite,
+    MemberRoleUpdate,
     ProjectCreate,
     ProjectUpdate,
 )
+
+logger = logging.getLogger(__name__)
 
 
 # ── 내부 헬퍼 ─────────────────────────────────────────────────────────────────
@@ -229,7 +233,7 @@ def create_meeting(db: Session, project_id: UUID, payload: MeetingCreate, user_i
         external_integration_service.sync_connected_meeting_resources(db, meeting)
         db.refresh(meeting)
     except Exception:
-        pass
+        logger.exception("Failed to sync new meeting %s to external integrations", meeting.id)
     return meeting
 
 
@@ -260,7 +264,7 @@ def update_meeting(
         external_integration_service.sync_connected_meeting_resources(db, meeting, force=True)
         db.refresh(meeting)
     except Exception:
-        pass
+        logger.exception("Failed to sync updated meeting %s to external integrations", meeting.id)
     return meeting
 
 
@@ -288,7 +292,7 @@ def delete_meeting(db: Session, project_id: UUID, meeting_id: UUID, user_id: UUI
 
         external_integration_service.archive_meeting_external_resources(db, meeting)
     except Exception:
-        pass
+        logger.exception("Failed to archive external resources for meeting %s", meeting.id)
     db.delete(meeting)
     db.commit()
 
@@ -401,6 +405,27 @@ def remove_member(
 
     db.delete(member)
     db.commit()
+
+
+def update_member_role(
+    db: Session, project_id: UUID, member_id: UUID, payload: MemberRoleUpdate, user_id: UUID
+) -> ProjectMember:
+    project = _get_project_or_404(db, project_id)
+    _assert_owner(project, user_id)
+
+    member = db.scalar(
+        select(ProjectMember).where(
+            ProjectMember.id == member_id,
+            ProjectMember.project_id == project_id,
+        )
+    )
+    if member is None:
+        raise AppException(detail="멤버를 찾을 수 없습니다", status_code=404, code="not_found")
+
+    member.role = payload.role
+    db.commit()
+    db.refresh(member)
+    return member
 
 
 # ── 프로젝트 전체 티켓 조회 ────────────────────────────────────────────────────

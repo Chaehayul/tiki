@@ -2286,7 +2286,12 @@ export default function ProjectMeetings() {
                                                                                                   projectId: project.id,
                                                                                                   projectName: project.name,
                                                                                               }
-                                                                                            : undefined,
+                                                                                            : {
+                                                                                                  meetingId: meeting.id,
+                                                                                                  meeting,
+                                                                                                  projectId: project.id,
+                                                                                                  projectName: project.name,
+                                                                                              },
                                                                                 }
                                                                             )
                                                                         }
@@ -2611,7 +2616,12 @@ export default function ProjectMeetings() {
                                                                                                       projectId: project.id,
                                                                                                       projectName: project.name,
                                                                                                   }
-                                                                                                : undefined,
+                                                                                                : {
+                                                                                                      meetingId: meeting.id,
+                                                                                                      meeting,
+                                                                                                      projectId: project.id,
+                                                                                                      projectName: project.name,
+                                                                                                  },
                                                                                     }
                                                                                 )
                                                                             }

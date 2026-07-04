@@ -10,8 +10,13 @@ import {
   getProject,
   getProjectIntegrations,
   inviteProjectMember,
+  listJiraProjects,
+  removeProjectMember,
+  setJiraProject,
   syncProjectIntegrationMeetings,
+  updateProject,
   updateProjectMeeting,
+  updateProjectMember,
 } from '../api/apiClient';
 
 const icons = {
@@ -211,10 +216,18 @@ const projectParticipants = (project) => {
   if (Array.isArray(project?.members)) {
     return project.members
       .filter((member) => !member?.invite_status || member.invite_status === 'accepted')
-      .map(memberDisplayName)
-      .filter(Boolean);
+      .map((member) => ({
+        id: member?.id ?? null,
+        name: memberDisplayName(member),
+        role: member?.role === 'admin' ? 'admin' : 'member',
+      }))
+      .filter((participant) => participant.name);
   }
-  return Array.isArray(project?.participants) ? project.participants : [];
+  return Array.isArray(project?.participants)
+    ? project.participants
+        .map((entry) => (typeof entry === 'string' ? { id: null, name: entry, role: 'member' } : entry))
+        .filter((participant) => participant?.name)
+    : [];
 };
 
 const inviteStatusMeta = {
@@ -284,7 +297,11 @@ const Configuration = () => {
     notion: { connected: false, status: 'disconnected' },
   });
   const [integrationLoading, setIntegrationLoading] = useState({ jira: false, notion: false });
+  const [isSavingSettings, setIsSavingSettings] = useState(false);
   const [integrationSyncing, setIntegrationSyncing] = useState({ jira: false, notion: false });
+  const [jiraProjectOptions, setJiraProjectOptions] = useState([]);
+  const [jiraProjectLoading, setJiraProjectLoading] = useState(false);
+  const [jiraProjectSaving, setJiraProjectSaving] = useState(false);
   const [toast, setToast] = useState({ message: '', type: 'info' });
   const toastTimerRef = useRef(null);
   const [guideModal, setGuideModal] = useState(null);
@@ -320,19 +337,26 @@ const Configuration = () => {
   };
 
   const buildInitialAdminNames = (project, participants) => {
+    // Backend ProjectMember.role is now the source of truth when available.
+    const fromRole = participants.filter((p) => p.role === 'admin').map((p) => p.name);
+    if (fromRole.length > 0) {
+      return [...new Set(fromRole)];
+    }
+
+    const names = participants.map((p) => p.name);
     const fromProject = Array.isArray(project?.admins)
-      ? project.admins.filter((name) => participants.includes(name))
+      ? project.admins.filter((name) => names.includes(name))
       : [];
 
     if (fromProject.length > 0) {
       return [...new Set(fromProject)];
     }
 
-    if (project?.teamLead && participants.includes(project.teamLead)) {
+    if (project?.teamLead && names.includes(project.teamLead)) {
       return [project.teamLead];
     }
 
-    return participants[0] ? [participants[0]] : [];
+    return names[0] ? [names[0]] : [];
   };
 
   useEffect(() => {
@@ -516,6 +540,41 @@ const Configuration = () => {
     }
   };
 
+  const handleLoadJiraProjects = async () => {
+    if (!selectedProject?.id) return;
+    setJiraProjectLoading(true);
+    try {
+      const options = await listJiraProjects(selectedProject.id);
+      setJiraProjectOptions(Array.isArray(options) ? options : []);
+    } catch (err) {
+      showToast(err?.message || 'Jira 프로젝트 목록을 불러오지 못했습니다.', 'error');
+    } finally {
+      setJiraProjectLoading(false);
+    }
+  };
+
+  const handleSelectJiraProject = async (key) => {
+    const option = jiraProjectOptions.find((item) => item.key === key);
+    if (!option || !selectedProject?.id) return;
+    setJiraProjectSaving(true);
+    try {
+      await setJiraProject(selectedProject.id, { key: option.key, name: option.name });
+      await refreshIntegrationStatus(selectedProject.id);
+      showToast(`Jira 프로젝트를 "${option.name}"(으)로 설정했습니다.`, 'success');
+    } catch (err) {
+      showToast(err?.message || 'Jira 프로젝트 설정에 실패했습니다.', 'error');
+    } finally {
+      setJiraProjectSaving(false);
+    }
+  };
+
+  useEffect(() => {
+    if (integrationStatus.jira.connected && jiraProjectOptions.length === 0 && !jiraProjectLoading) {
+      handleLoadJiraProjects();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [integrationStatus.jira.connected, selectedProject?.id]);
+
   const syncLocalMeetingsToBackend = async () => {
     const projectId = selectedProject?.id;
     if (!projectId) return 0;
@@ -649,24 +708,51 @@ const Configuration = () => {
     }
   };
 
-  const removeParticipant = (name) => {
-    if (adminNames.includes(name)) return;
+  const removeParticipant = async (participant) => {
+    if (adminNames.includes(participant.name)) return;
+    const projectId = selectedProject?.id;
+
+    if (projectId && participant.id) {
+      try {
+        await removeProjectMember(projectId, participant.id);
+      } catch (err) {
+        showToast(err?.message || '참여자 삭제에 실패했습니다.', 'error');
+        return;
+      }
+    }
+
     setFormData((prev) => ({
       ...prev,
-      participants: prev.participants.filter((item) => item !== name),
+      participants: prev.participants.filter((item) => item.name !== participant.name),
     }));
+    showToast(`${participant.name}님을 프로젝트에서 제외했습니다.`, 'success');
   };
 
-  const toggleAdminRole = (memberName) => {
-    if (!formData.participants.includes(memberName)) return;
+  const toggleAdminRole = async (participant) => {
+    if (!formData.participants.some((item) => item.name === participant.name)) return;
+    const isCurrentlyAdmin = adminNames.includes(participant.name);
+    if (isCurrentlyAdmin && adminNames.length <= 1) return;
+    const nextRole = isCurrentlyAdmin ? 'member' : 'admin';
 
-    setAdminNames((prev) => {
-      if (prev.includes(memberName)) {
-        if (prev.length <= 1) return prev;
-        return prev.filter((item) => item !== memberName);
+    const projectId = selectedProject?.id;
+    if (projectId && participant.id) {
+      try {
+        await updateProjectMember(projectId, participant.id, { role: nextRole });
+      } catch (err) {
+        showToast(err?.message || '권한 변경에 실패했습니다.', 'error');
+        return;
       }
-      return [...prev, memberName];
-    });
+    }
+
+    setFormData((prev) => ({
+      ...prev,
+      participants: prev.participants.map((item) =>
+        item.name === participant.name ? { ...item, role: nextRole } : item
+      ),
+    }));
+    setAdminNames((prev) =>
+      nextRole === 'admin' ? [...new Set([...prev, participant.name])] : prev.filter((item) => item !== participant.name)
+    );
   };
 
   const openGuideModal = (type) => {
@@ -674,13 +760,13 @@ const Configuration = () => {
     setShowGuideDetails(false);
   };
 
-  const handleSaveSettings = () => {
+  const handleSaveSettings = async () => {
     if (!selectedProject?.id) {
       showToast('프로젝트 정보를 찾을 수 없어 저장할 수 없습니다.', 'error');
       return;
     }
 
-    const participants = [...new Set(formData.participants.map((name) => name.trim()).filter(Boolean))];
+    const participants = [...new Set(formData.participants.map((p) => String(p?.name || '').trim()).filter(Boolean))];
     const resolvedAdmins = adminNames.filter((name) => participants.includes(name));
     if (resolvedAdmins.length === 0 && participants[0]) {
       resolvedAdmins.push(participants[0]);
@@ -700,8 +786,29 @@ const Configuration = () => {
       notionDbId: formData.notionDbId.trim(),
     };
 
-    writeProjectOverride(selectedProject.id, nextProject);
-    showToast('설정이 저장되었습니다.', 'success');
+    setIsSavingSettings(true);
+    try {
+      // name/description/visibility/meeting_template/jira/notion metadata are real
+      // Project columns on the backend — persist them there instead of only locally.
+      const updated = await updateProject(selectedProject.id, {
+        name: nextProject.name,
+        description: nextProject.description,
+        visibility: nextProject.visibility,
+        meeting_template: nextProject.meetingTemplate,
+        jira_domain: nextProject.jiraDomain || null,
+        jira_email: nextProject.jiraEmail || null,
+        notion_database_id: nextProject.notionDbId || null,
+      });
+      if (updated?.id) setResolvedProject(updated);
+      // participants/admins/teamLead have no backend column yet (see project_service.py) —
+      // keep them in the local override until member-role management ships server-side.
+      writeProjectOverride(selectedProject.id, nextProject);
+      showToast('설정이 저장되었습니다.', 'success');
+    } catch (err) {
+      showToast(err?.message || '설정 저장에 실패했습니다.', 'error');
+    } finally {
+      setIsSavingSettings(false);
+    }
   };
 
   const goBack = () => {
@@ -1091,10 +1198,11 @@ const Configuration = () => {
                     ) : (
                       <div className="overflow-hidden rounded-xl border border-slate-200">
                         <div className="divide-y divide-slate-100">
-                          {formData.participants.map((name) => {
+                          {formData.participants.map((participant) => {
+                            const name = participant.name;
                             const isAdmin = adminNames.includes(name);
                             return (
-                              <div key={name} className="flex items-center justify-between gap-2 px-3 py-3 sm:gap-3 sm:px-4">
+                              <div key={participant.id || name} className="flex items-center justify-between gap-2 px-3 py-3 sm:gap-3 sm:px-4">
                                 <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
                                   <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-bold text-white ${avatarColor(name)}`}>
                                     {name.slice(0, 1)}
@@ -1113,7 +1221,7 @@ const Configuration = () => {
                                 <div className="flex shrink-0 items-center gap-1">
                                   <button
                                     type="button"
-                                    onClick={() => toggleAdminRole(name)}
+                                    onClick={() => toggleAdminRole(participant)}
                                     className={`whitespace-nowrap rounded-lg px-2 py-1.5 text-[11px] font-semibold transition-colors sm:px-2.5 sm:text-xs ${
                                       isAdmin
                                         ? 'bg-sky-50 text-sky-700 hover:bg-sky-100'
@@ -1124,7 +1232,7 @@ const Configuration = () => {
                                   </button>
                                   <button
                                     type="button"
-                                    onClick={() => removeParticipant(name)}
+                                    onClick={() => removeParticipant(participant)}
                                     disabled={isAdmin}
                                     title="삭제"
                                     className={`flex h-8 w-8 items-center justify-center rounded-lg transition-colors ${
@@ -1163,6 +1271,45 @@ const Configuration = () => {
                         </p>
                       )}
                     </div>
+                    {integrationStatus.jira.connected && (
+                      <div className="mt-3 rounded-2xl border border-slate-100 bg-white px-4 py-3">
+                        <p className="text-xs font-semibold text-slate-500">Jira 프로젝트 선택</p>
+                        <p className="mt-1 text-xs text-slate-400">
+                          이 TIKI 프로젝트의 회의록/할 일을 어느 Jira 프로젝트에 만들지 선택하세요. 사이트 안에 프로젝트가 여러 개 있을 수 있습니다.
+                        </p>
+                        <div className="mt-2 flex items-center gap-2">
+                          <select
+                            value={integrationStatus.jira.jiraProjectKey || ''}
+                            onChange={(e) => handleSelectJiraProject(e.target.value)}
+                            disabled={jiraProjectLoading || jiraProjectSaving || jiraProjectOptions.length === 0}
+                            className="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 disabled:opacity-60"
+                          >
+                            <option value="" disabled>
+                              {jiraProjectLoading ? '불러오는 중...' : jiraProjectOptions.length === 0 ? '프로젝트 없음' : '프로젝트를 선택하세요'}
+                            </option>
+                            {jiraProjectOptions.map((option) => (
+                              <option key={option.key} value={option.key}>
+                                {option.name} ({option.key})
+                              </option>
+                            ))}
+                          </select>
+                          <button
+                            type="button"
+                            onClick={handleLoadJiraProjects}
+                            disabled={jiraProjectLoading}
+                            title="목록 새로고침"
+                            className="shrink-0 rounded-lg border border-slate-200 p-2 text-slate-500 hover:bg-slate-50 disabled:opacity-60"
+                          >
+                            <IIcon name="refreshCw" size={14} />
+                          </button>
+                        </div>
+                        {integrationStatus.jira.jiraProjectName && (
+                          <p className="mt-2 text-xs font-semibold text-sky-700">
+                            현재 선택됨: {integrationStatus.jira.jiraProjectName}
+                          </p>
+                        )}
+                      </div>
+                    )}
                     <button
                       type="button"
                       onClick={() => integrationStatus.jira.connected ? handleDisconnectIntegration('jira') : handleConnectIntegration('jira')}
@@ -1382,9 +1529,10 @@ const Configuration = () => {
           <button
             type="button"
             onClick={handleSaveSettings}
-            className="flex items-center gap-2 rounded-xl bg-gradient-to-br from-sky-500 to-blue-600 px-6 py-2.5 text-sm font-bold text-white shadow-[0_8px_20px_-10px_rgba(14,165,233,0.7)] transition-all hover:brightness-105"
+            disabled={isSavingSettings}
+            className="flex items-center gap-2 rounded-xl bg-gradient-to-br from-sky-500 to-blue-600 px-6 py-2.5 text-sm font-bold text-white shadow-[0_8px_20px_-10px_rgba(14,165,233,0.7)] transition-all hover:brightness-105 disabled:opacity-60"
           >
-            <IIcon name="save" size={17} /> 저장
+            <IIcon name="save" size={17} /> {isSavingSettings ? '저장 중...' : '저장'}
           </button>
         </div>
       </div>

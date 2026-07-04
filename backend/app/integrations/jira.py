@@ -133,6 +133,13 @@ class JiraResource:
     url: str
 
 
+@dataclass
+class JiraProjectOption:
+    key: str
+    name: str
+    id: str
+
+
 class JiraOAuthClient:
     def __init__(self, access_token: str | None = None, cloud_id: str | None = None, site_url: str | None = None) -> None:
         self.client_id = settings.jira_client_id or ""
@@ -184,6 +191,34 @@ class JiraOAuthClient:
             scope=result.get("scope"),
         )
 
+    def refresh_access_token(self, refresh_token: str) -> JiraOAuthTokenResult:
+        body = {
+            "grant_type": "refresh_token",
+            "client_id": self.client_id,
+            "client_secret": self.client_secret,
+            "refresh_token": refresh_token,
+        }
+        req = urllib.request.Request(
+            "https://auth.atlassian.com/oauth/token",
+            data=json.dumps(body).encode("utf-8"),
+            method="POST",
+            headers={"Content-Type": "application/json", "Accept": "application/json"},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=15) as response:
+                result = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            body_text = exc.read().decode("utf-8", errors="replace")
+            raise RuntimeError(f"Jira OAuth refresh {exc.code}: {body_text}") from exc
+        return JiraOAuthTokenResult(
+            access_token=result["access_token"],
+            # Atlassian issues a new rotating refresh_token on every refresh; fall back to
+            # the previous one only if the response omits it (shouldn't normally happen).
+            refresh_token=result.get("refresh_token") or refresh_token,
+            expires_in=result.get("expires_in"),
+            scope=result.get("scope"),
+        )
+
     def list_accessible_resources(self) -> list[JiraResource]:
         req = urllib.request.Request(
             "https://api.atlassian.com/oauth/token/accessible-resources",
@@ -196,6 +231,14 @@ class JiraOAuthClient:
             JiraResource(cloud_id=item.get("id", ""), name=item.get("name", ""), url=item.get("url", ""))
             for item in result
             if item.get("id")
+        ]
+
+    def list_projects(self) -> list["JiraProjectOption"]:
+        result = self._api_request("GET", "project/search?maxResults=100")
+        return [
+            JiraProjectOption(key=item["key"], name=item.get("name", item["key"]), id=item.get("id", ""))
+            for item in result.get("values", [])
+            if item.get("key")
         ]
 
     def _api_request(self, method: str, path: str, body: dict[str, Any] | None = None) -> dict[str, Any]:

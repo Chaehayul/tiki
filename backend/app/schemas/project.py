@@ -60,6 +60,10 @@ class MemberInvite(BaseModel):
     role: str = Field(default="member", pattern="^(admin|member)$")
 
 
+class MemberRoleUpdate(BaseModel):
+    role: str = Field(pattern="^(admin|member)$")
+
+
 class MemberResponse(BaseModel):
     id: UUID
     email: str

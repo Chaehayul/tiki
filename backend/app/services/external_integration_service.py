@@ -8,6 +8,7 @@ from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.core.config import settings
 from app.core.crypto import decrypt_secret, encrypt_secret
@@ -315,84 +316,6 @@ def _service_text(value: object) -> str:
     return text
 
 
-def _analysis_payload_for_meeting(db: Session, meeting: Meeting) -> dict:
-    del db
-    return {
-        "summary": _service_text(meeting.summary),
-        "decisions": [],
-        "action_items": meeting.action_items or [],
-        "issues": [],
-        "next_agenda": [],
-        "raw_text": _service_text(meeting.summary),
-        "keywords": meeting.tags or [],
-        "ai_extra": {},
-    }
-
-
-def _meeting_markdown(db: Session, meeting: Meeting) -> str:
-    project = db.get(Project, meeting.project_id)
-    payload = _analysis_payload_for_meeting(db, meeting)
-    participants = [str(name) for name in (meeting.participants or []) if str(name).strip()]
-    keywords = [str(tag).strip() for tag in (payload.get("keywords") or meeting.tags or []) if str(tag).strip()]
-    decisions = [_text_from_item(item) for item in payload.get("decisions", []) if _text_from_item(item)]
-    issues = [_text_from_item(item) for item in payload.get("issues", []) if _text_from_item(item)]
-    next_agenda = [_text_from_item(item) for item in payload.get("next_agenda", []) if _text_from_item(item)]
-    action_items = [item for item in payload.get("action_items", []) if isinstance(item, dict)]
-
-    lines: list[str] = [
-        f"# {meeting.date} {_service_text(meeting.title)}",
-        "",
-        "## 기본 정보",
-        f"- 프로젝트: {project.name if project else '-'}",
-        f"- 회의 날짜: {meeting.date}",
-        f"- 회의 유형: {meeting.meeting_type or '-'}",
-        f"- 참석자: {', '.join(participants) if participants else '-'}",
-        "",
-        "## 회의 요약",
-        payload.get("summary") or "요약이 없습니다.",
-        "",
-        "## 핵심 키워드",
-    ]
-    lines.extend([f"- #{tag.lstrip('#')}" for tag in keywords] or ["- 없음"])
-    lines.extend(["", "## 주요 결정사항"])
-    lines.extend([f"- {item}" for item in decisions] or ["- 없음"])
-    lines.extend(["", "## 해야 할 일"])
-    if action_items:
-        for item in action_items:
-            title = _service_text(item.get("title") or item.get("text") or "업무")
-            assignee = item.get("assignee") or "-"
-            due = item.get("due") or item.get("due_at") or item.get("dueDate") or "-"
-            checked = "x" if str(item.get("status") or "").strip() == "수행완료" or item.get("checked") else " "
-            lines.extend([f"- [{checked}] {title}", f"담당자 : {assignee}", f"마감일 : {due}", "--------------------"])
-    else:
-        lines.append("- 없음")
-    lines.extend(["", "## 회의 전체 내용", payload.get("raw_text") or meeting.summary or "원문이 없습니다."])
-    lines.extend(["", "## AI 분석 결과", "### AI 요약", payload.get("summary") or "없음", "", "### AI 키워드"])
-    lines.extend([f"- #{tag.lstrip('#')}" for tag in keywords] or ["- 없음"])
-    lines.extend(["", "### AI 해야 할 일"])
-    lines.extend([f"- {_service_text(item.get('title') or item.get('text') or '업무')}" for item in action_items] or ["- 없음"])
-    lines.extend(["", "### AI 이슈"])
-    lines.extend([f"- {item}" for item in issues] or ["- 없음"])
-    lines.extend(["", "### AI 다음 안건"])
-    lines.extend([f"- {item}" for item in next_agenda] or ["- 없음"])
-    return "\n".join(lines)
-
-
-def _service_text(value: object) -> str:
-    text = str(value or "")
-    replacements = {
-        "Action Items": "해야 할 일",
-        "Action Item": "해야 할 일",
-        "action items": "해야 할 일",
-        "action item": "해야 할 일",
-        "액션아이템": "해야 할 일",
-        "액션 아이템": "해야 할 일",
-    }
-    for source, target in replacements.items():
-        text = text.replace(source, target)
-    return text
-
-
 def _meeting_meta(meeting: Meeting) -> dict:
     for item in meeting.action_items or []:
         if not isinstance(item, dict):
@@ -501,12 +424,14 @@ def _meeting_markdown(db: Session, meeting: Meeting) -> str:
             due = _format_due(item.get("due") or item.get("due_at") or item.get("dueDate"))
             status = str(item.get("status") or "").strip()
             checked = "x" if status == "수행완료" or item.get("checked") else " "
+            description = _service_text(item.get("description") or "").strip()
             lines.extend(
                 [
                     f"- [{checked}] {title}",
                     "",
                     f"담당자 : {assignee}",
                     f"마감일 : {due}",
+                    *([f"설명 : {description}"] if description else []),
                     "--------------------",
                 ]
             )
@@ -638,11 +563,17 @@ def ensure_meeting_external_resource(db: Session, meeting: Meeting, provider: In
             if link.external_id:
                 client.update_issue(link.external_id, title=title, description=description)
             else:
+                # Represent the meeting as this project's top-of-hierarchy issue type
+                # (Epic in software projects, Workstream in business projects) so it
+                # reads as a container/document rather than another flat task — falls
+                # back to a plain issue if the project has no such type configured.
+                container_type = client.get_container_issue_type(project_key)
                 issue = client.create_issue(
                     project_key=project_key,
                     title=title,
                     description=description,
                     issue_type="Task",
+                    issue_type_id=container_type["id"] if container_type else None,
                 )
                 link.external_id = issue.issue_id
                 link.external_url = issue.issue_url
@@ -680,6 +611,11 @@ def sync_connected_meeting_resources(db: Session, meeting: Meeting, *, force: bo
                 sync_all_meeting_tasks_to_jira(db, meeting)
             except Exception:
                 logger.exception("Failed to auto-sync meeting %s tasks to Jira", meeting.id)
+        elif provider == IntegrationProvider.NOTION:
+            try:
+                sync_all_meeting_tasks_to_notion(db, meeting)
+            except Exception:
+                logger.exception("Failed to auto-sync meeting %s tasks to Notion", meeting.id)
 
 
 def archive_meeting_external_resources(db: Session, meeting: Meeting) -> None:
@@ -718,6 +654,11 @@ def sync_project_meeting_resources(db: Session, project_id: UUID, provider: Inte
                     sync_all_meeting_tasks_to_jira(db, meeting)
                 except Exception:
                     logger.exception("Failed to auto-sync meeting %s tasks to Jira during bulk resync", meeting.id)
+            elif provider == IntegrationProvider.NOTION:
+                try:
+                    sync_all_meeting_tasks_to_notion(db, meeting)
+                except Exception:
+                    logger.exception("Failed to auto-sync meeting %s tasks to Notion during bulk resync", meeting.id)
         elif link.sync_status == SyncStatus.FAILED:
             result["failed"] += 1
             result["errors"].append({
@@ -751,6 +692,14 @@ def send_meeting_tasks(
     return TaskSendResponse(meetingId=meeting.id, provider=provider, results=results)
 
 
+def _all_task_ids(meeting: Meeting) -> list[str]:
+    return [
+        _task_id(meeting, item, index)
+        for index, item in enumerate(meeting.action_items or [])
+        if isinstance(item, dict) and not item.get("__tiki_meta") and item.get("type") != "__tiki_meeting_meta"
+    ]
+
+
 def sync_all_meeting_tasks_to_jira(db: Session, meeting: Meeting) -> None:
     """Auto-sync every action item on a meeting to its own Jira issue.
 
@@ -760,14 +709,27 @@ def sync_all_meeting_tasks_to_jira(db: Session, meeting: Meeting) -> None:
     integration = _project_integration(db, meeting.project_id, IntegrationProvider.JIRA)
     if integration is None:
         return
-    task_ids = [
-        _task_id(meeting, item, index)
-        for index, item in enumerate(meeting.action_items or [])
-        if isinstance(item, dict)
-    ]
+    task_ids = _all_task_ids(meeting)
     if not task_ids:
         return
     _sync_tasks_to_provider(db, meeting, IntegrationProvider.JIRA, task_ids)
+
+
+def sync_all_meeting_tasks_to_notion(db: Session, meeting: Meeting) -> None:
+    """Auto-link every action item on a meeting to the meeting's Notion page.
+
+    Notion has no separate per-task issue — tasks live as to-do blocks inside the
+    meeting page itself — so this just records that page's URL against each task
+    (mirroring the manual "연동하기" button) so the UI can show "Notion 확인" for
+    every task, not only ones someone happened to send by hand before.
+    """
+    integration = _project_integration(db, meeting.project_id, IntegrationProvider.NOTION)
+    if integration is None:
+        return
+    task_ids = _all_task_ids(meeting)
+    if not task_ids:
+        return
+    _sync_tasks_to_provider(db, meeting, IntegrationProvider.NOTION, task_ids)
 
 
 def _sync_tasks_to_provider(
@@ -843,16 +805,30 @@ def _sync_tasks_to_provider(
                         assignee_account_id=assignee_account_id,
                     )
                 else:
-                    issue = client.create_issue(
-                        project_key=project_key, title=title, description=description, issue_type="Task",
-                        due_date=due_date, assignee_account_id=assignee_account_id,
+                    parent_key = (
+                        meeting_link.external_url.rstrip("/").split("/")[-1] if meeting_link.external_url else None
                     )
+                    try:
+                        # Prefer making the task a real child of the meeting issue (works
+                        # when the project's hierarchy allows it, e.g. a Workstream/Epic
+                        # parent) so it visually nests under the meeting instead of just
+                        # loosely "relating" to it.
+                        issue = client.create_issue(
+                            project_key=project_key, title=title, description=description, issue_type="Task",
+                            due_date=due_date, assignee_account_id=assignee_account_id, parent_key=parent_key,
+                        )
+                    except RuntimeError:
+                        issue = client.create_issue(
+                            project_key=project_key, title=title, description=description, issue_type="Task",
+                            due_date=due_date, assignee_account_id=assignee_account_id,
+                        )
+                        parent_key = None
                     link.external_id = issue.issue_id
                     link.external_key = issue.issue_key
                     link.external_url = issue.issue_url
-                    if meeting_link.external_url and issue.issue_key:
-                        parent_key = meeting_link.external_url.rstrip("/").split("/")[-1]
-                        client.link_issues(parent_key, issue.issue_key)
+                    if not parent_key and meeting_link.external_url and issue.issue_key:
+                        fallback_parent_key = meeting_link.external_url.rstrip("/").split("/")[-1]
+                        client.link_issues(fallback_parent_key, issue.issue_key)
                 # Align the issue's Jira status with whatever TIKI status it already has —
                 # covers tasks synced for the first time (e.g. via bulk resync) that were
                 # already marked 검토완료/수행완료 before a Jira issue existed for them.
@@ -868,7 +844,10 @@ def _sync_tasks_to_provider(
             link.sync_status = SyncStatus.SYNCED
             link.error_message = None
             link.last_synced_at = _now()
-            task["status"] = "연동완료" if task.get("status") != "수행완료" else "수행완료"
+            # Don't touch the task's own status here — with sync now running
+            # automatically on every meeting update, forcing it to "연동완료" would
+            # silently overwrite the user's actual review/completion progress
+            # (검토대기/검토완료/수행완료) on every single sync.
             task.setdefault("integrationLinks", {})[provider.value] = link.external_url
             task["externalLink"] = link.external_url
             task["integrationTool"] = "Notion" if provider == IntegrationProvider.NOTION else "Jira"
@@ -889,7 +868,12 @@ def _sync_tasks_to_provider(
             )
         )
 
+    # Reassigning to list(meeting.action_items) does NOT reliably mark the JSONB column
+    # dirty here: the "new" list is built from the very same (already in-place-mutated)
+    # dict objects SQLAlchemy is comparing against for its change-detection, so the
+    # before/after values look identical and the UPDATE gets silently skipped. Force it.
     meeting.action_items = list(meeting.action_items or [])
+    flag_modified(meeting, "action_items")
     if should_resync_notion_page:
         refreshed_link = ensure_meeting_external_resource(db, meeting, IntegrationProvider.NOTION, force=True)
         for result in results:

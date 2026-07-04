@@ -259,10 +259,11 @@ const Configuration = () => {
   const projectIdFromQuery = searchParams.get('projectId') || searchParams.get('project_id') || '';
   const oauthProviderFromQuery = searchParams.has('jira') ? 'jira' : searchParams.has('notion') ? 'notion' : '';
   const oauthStatusFromQuery = oauthProviderFromQuery ? searchParams.get(oauthProviderFromQuery) : '';
+  const tabFromQuery = searchParams.get('tab') || '';
 
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
   const [activeTab, setActiveTab] = useState('settings');
-  const [settingsTab, setSettingsTab] = useState(() => (oauthProviderFromQuery ? 'integration' : 'basic'));
+  const [settingsTab, setSettingsTab] = useState(() => (oauthProviderFromQuery || tabFromQuery === 'integration' ? 'integration' : 'basic'));
   const [resolvedProject, setResolvedProject] = useState(stateProject);
   const [isResolvingProject, setIsResolvingProject] = useState(Boolean(projectIdFromQuery && !stateProject?.id));
   const selectedProject = resolvedProject || stateProject;
@@ -802,7 +803,11 @@ const Configuration = () => {
       if (updated?.id) setResolvedProject(updated);
       // participants/admins/teamLead have no backend column yet (see project_service.py) —
       // keep them in the local override until member-role management ships server-side.
-      writeProjectOverride(selectedProject.id, nextProject);
+      // Never carry `meetings`/`members` snapshots into the override: other pages merge
+      // {...freshServerData, ...override}, so a stale collection captured here would
+      // permanently shadow real updates (new meetings, status changes) made afterward.
+      const { meetings: _meetings, members: _members, ...overridePayload } = nextProject;
+      writeProjectOverride(selectedProject.id, overridePayload);
       showToast('설정이 저장되었습니다.', 'success');
     } catch (err) {
       showToast(err?.message || '설정 저장에 실패했습니다.', 'error');

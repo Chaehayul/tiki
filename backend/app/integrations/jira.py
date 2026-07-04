@@ -283,6 +283,21 @@ class JiraOAuthClient:
             return result[0].get("accountId")
         return None
 
+    def get_container_issue_type(self, project_key: str) -> dict[str, Any] | None:
+        """Return this project's top-of-hierarchy issue type (Jira's "Epic" in
+        software projects, "Workstream" in business projects), if it has one.
+
+        Used so a whole meeting can be represented as one container issue with
+        its action items as real child issues, instead of everything being a
+        flat, same-looking "Task".
+        """
+        project = self._api_request("GET", f"project/{project_key}")
+        project_id = project.get("id")
+        if not project_id:
+            return None
+        issue_types = self._api_request("GET", f"issuetype/project?projectId={project_id}")
+        return next((t for t in issue_types if t.get("hierarchyLevel") == 1), None)
+
     def create_issue(
         self,
         *,
@@ -290,19 +305,23 @@ class JiraOAuthClient:
         title: str,
         description: str,
         issue_type: str = "Task",
+        issue_type_id: str | None = None,
         due_date: str | None = None,
         assignee_account_id: str | None = None,
+        parent_key: str | None = None,
     ) -> JiraIssueResult:
         fields: dict[str, Any] = {
             "project": {"key": project_key},
             "summary": title[:255],
             "description": self._doc(description or title),
-            "issuetype": {"name": issue_type},
+            "issuetype": {"id": issue_type_id} if issue_type_id else {"name": issue_type},
         }
         if due_date:
             fields["duedate"] = due_date[:10]
         if assignee_account_id:
             fields["assignee"] = {"accountId": assignee_account_id}
+        if parent_key:
+            fields["parent"] = {"key": parent_key}
         result = self._api_request("POST", "issue", {"fields": fields})
         issue_key = result["key"]
         return JiraIssueResult(

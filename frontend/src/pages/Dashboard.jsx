@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useMemo, forwardRef } from "react";
 import { createPortal } from "react-dom";
-import { Navigate } from "react-router-dom";
-import { clearAuthSession, listProjectMeetings, listProjects, sendMeetingTasks, updateProjectMeeting } from "../api/apiClient";
+import { Navigate, useNavigate } from "react-router-dom";
+import { clearAuthSession, getProjectIntegrations, listProjectMeetings, listProjects, sendMeetingTasks, updateProjectMeeting } from "../api/apiClient";
 import Header from "../components/Header";
 import Footer from "../components/Footer";
 import MobileTab from "../components/MobileTab";
@@ -793,6 +793,7 @@ function DDayBadge({ dday }) {
 const PANEL_FIELD_LABEL_CLASS = "text-xs font-bold text-[#0D1B2A]";
 
 export default function App() {
+  const navigate = useNavigate();
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
   const [activeTab, setActiveTab] = useState("home");
 
@@ -833,6 +834,29 @@ export default function App() {
   }, []);
   const [projects, setProjects] = useState([]);
   const [actionItems, setActionItems] = useState([]);
+  const [projectIntegrationStatus, setProjectIntegrationStatus] = useState({});
+
+  useEffect(() => {
+    const projectIds = [...new Set(projects.map((project) => String(project?.id || "")).filter(Boolean))];
+    const pending = projectIds.filter((id) => !(id in projectIntegrationStatus));
+    if (pending.length === 0) return;
+    let cancelled = false;
+    Promise.all(
+      pending.map((id) =>
+        getProjectIntegrations(id)
+          .then((result) => [id, { jira: Boolean(result?.jira?.connected), notion: Boolean(result?.notion?.connected) }])
+          .catch(() => [id, { jira: false, notion: false }])
+      )
+    ).then((entries) => {
+      if (cancelled) return;
+      setProjectIntegrationStatus((prev) => {
+        const next = { ...prev };
+        entries.forEach(([id, status]) => { next[id] = status; });
+        return next;
+      });
+    });
+    return () => { cancelled = true; };
+  }, [projects, projectIntegrationStatus]);
   const [statusFilter, setStatusFilter] = useState("전체");
   const [projectFilter, setProjectFilter] = useState("전체");
   const [collapsedProjectKeys, setCollapsedProjectKeys] = useState(() => new Set());
@@ -991,7 +1015,22 @@ export default function App() {
       action_items_count: visibleCount,
     });
     persistActionItemUpdate(item, patch);
-    return updatedMeeting;
+
+    // Meeting sync (Jira/Notion) runs synchronously inside updateProjectMeeting on the
+    // backend, so the response already carries any freshly-created integration links —
+    // pull those back out so the UI can show "확인하기" instead of a stale "연동하기".
+    const freshRawItem = Array.isArray(updatedMeeting?.action_items)
+      ? updatedMeeting.action_items.find((action) => String(action?.id || "") === String(item.id))
+      : null;
+    const serverSync = freshRawItem
+      ? {
+          status: freshRawItem.status || patch.status || item.status,
+          integrationTool: freshRawItem.integrationTool || null,
+          integrationLinks: freshRawItem.integrationLinks || {},
+          externalLink: freshRawItem.externalLink || "",
+        }
+      : null;
+    return { updatedMeeting, serverSync };
   };
 
   const deleteMeetingActionItem = async (item) => {
@@ -1277,6 +1316,28 @@ export default function App() {
   };
   // ───────────────────────────────────────────────────────────────────────────
 
+  const isProjectIntegrationConnected = (projectKey) => {
+    const status = projectIntegrationStatus[String(projectKey || "")];
+    return Boolean(status?.jira || status?.notion);
+  };
+
+  // "연동완료" in the status filter reflects the task's *project* having both Jira and
+  // Notion connected — not the task's own status — since sync now happens automatically
+  // and a task's status should only ever reflect its own review/completion progress.
+  const isProjectFullyIntegrated = (projectKey) => {
+    const status = projectIntegrationStatus[String(projectKey || "")];
+    return Boolean(status?.jira && status?.notion);
+  };
+
+  // Applies whatever integration links/status the backend's auto-sync produced
+  // (returned from persistMeetingActionItemUpdate) back onto the displayed item,
+  // so "확인하기" shows up instead of a stale "연동하기" once Jira/Notion sync lands.
+  const applyServerSync = (itemId, serverSync) => {
+    if (!serverSync) return;
+    setActionItems(prev => prev.map(item => (item.id === itemId ? { ...item, ...serverSync } : item)));
+    setSelectedItem(prev => (prev?.id === itemId ? { ...prev, ...serverSync } : prev));
+  };
+
   const handleSaveEdit = async () => {
     const shouldComplete = selectedItem?.status === "검토완료";
     const updatedItem = {
@@ -1291,7 +1352,8 @@ export default function App() {
       return item;
     }));
     try {
-      await persistMeetingActionItemUpdate(selectedItem, updatedItem);
+      const { serverSync } = (await persistMeetingActionItemUpdate(selectedItem, updatedItem)) || {};
+      applyServerSync(selectedItem.id, serverSync);
       closePanel();
       triggerToast(
         shouldComplete
@@ -1313,7 +1375,8 @@ export default function App() {
     )));
     setSelectedItem(prev => prev?.id === itemId ? { ...prev, status: "수행완료" } : prev);
     try {
-      await persistMeetingActionItemUpdate(targetItem, updatedItem);
+      const { serverSync } = (await persistMeetingActionItemUpdate(targetItem, updatedItem)) || {};
+      applyServerSync(itemId, serverSync);
       closePanel();
       triggerToast("수행 완료 처리되었습니다.", "success");
     } catch (error) {
@@ -1329,7 +1392,10 @@ export default function App() {
     // 패널 내 selectedItem도 동기화
     setSelectedItem(prev => prev?.id === itemId ? { ...prev, status: "검토완료" } : prev);
     try {
-      if (targetItem) await persistMeetingActionItemUpdate(targetItem, { status: "검토완료" });
+      if (targetItem) {
+        const { serverSync } = (await persistMeetingActionItemUpdate(targetItem, { status: "검토완료" })) || {};
+        applyServerSync(itemId, serverSync);
+      }
       triggerToast("해야 할 일이 검증되어 검토 완료 상태로 전환되었습니다.", "success");
     } catch (error) {
       triggerToast(error?.message || "검토 완료 저장에 실패했습니다.", "warning");
@@ -1487,7 +1553,11 @@ export default function App() {
 
   const filteredItems = useMemo(() => {
     const byAssignee = actionItems.filter((item) => isAssignedToMe(item, userAliases));
-    const byStatus = statusFilter === "전체" ? byAssignee : byAssignee.filter((item) => item.status === statusFilter);
+    const byStatus = statusFilter === "전체"
+      ? byAssignee
+      : statusFilter === "연동완료"
+        ? byAssignee.filter((item) => isProjectFullyIntegrated(item.projectKey))
+        : byAssignee.filter((item) => item.status === statusFilter);
     const byProject = projectFilter === "전체" ? byStatus : byStatus.filter((item) => item.projectKey === projectFilter);
     const query = searchQuery.trim().toLowerCase();
     if (!query) return byProject;
@@ -1495,7 +1565,7 @@ export default function App() {
       const haystack = [item.title, item.assignee, ...(item.assignees || []), item.projectName || ""].join(" ").toLowerCase();
       return haystack.includes(query);
     });
-  }, [actionItems, statusFilter, projectFilter, searchQuery, userAliases]);
+  }, [actionItems, statusFilter, projectFilter, searchQuery, userAliases, projectIntegrationStatus]);
 
   const groupedByProject = useMemo(() => {
     const groups = {};
@@ -1771,7 +1841,11 @@ export default function App() {
                     {isStatusSortOpen && (
                       <div className="absolute left-0 right-0 z-20 mt-1.5 overflow-hidden rounded-xl border border-[rgba(0,0,0,0.08)] bg-white shadow-[0_12px_32px_rgba(0,0,0,0.12)]">
                         {STATUS_TABS.map((option) => {
-                          const count = option === "전체" ? actionItems.length : actionItems.filter((i) => i.status === option).length;
+                          const count = option === "전체"
+                            ? actionItems.length
+                            : option === "연동완료"
+                              ? actionItems.filter((i) => isProjectFullyIntegrated(i.projectKey)).length
+                              : actionItems.filter((i) => i.status === option).length;
                           return (
                             <button key={option} type="button" onClick={() => { setStatusFilter(option); setIsStatusSortOpen(false); }}
                               className={`flex w-full items-center justify-between px-3.5 py-2.5 text-sm transition-colors ${statusFilter === option ? "bg-[#F5F7FB] font-semibold text-[#0099CC]" : "text-[#0D1B2A] hover:bg-[#F5F7FB]"}`}
@@ -1842,25 +1916,51 @@ export default function App() {
               {groupedByProject.map(({ projectKey, items }) => {
                 const projectMeta = getProjectMeta(projectKey);
                 const isCollapsed = collapsedProjectKeys.has(String(projectKey));
+                const integrationStatus = projectIntegrationStatus[String(projectKey || "")];
                 return (
                   <section key={projectKey}>
-                    <button
-                      type="button"
+                    <div
+                      role="button"
+                      tabIndex={0}
                       onClick={() => toggleProjectCollapse(projectKey)}
-                      className="mb-3 flex w-full items-center gap-2 rounded-xl px-1 py-1 text-left transition-colors hover:bg-[#EEF8FF]"
+                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') toggleProjectCollapse(projectKey); }}
                       aria-expanded={!isCollapsed}
+                      className="mb-3 flex w-full items-center gap-2 rounded-xl px-1 py-1 text-left transition-colors hover:bg-[#EEF8FF] cursor-pointer"
                     >
                       {projectMeta.name && <span className="w-2.5 h-2.5 rounded-full bg-[#38BDF8] shadow-[0_0_0_4px_rgba(56,189,248,0.14)]"></span>}
                       {projectMeta.name && <span className="text-sm font-bold text-[#0D1B2A]">{projectMeta.name}</span>}
                       {projectMeta.name && (
                         <span className="rounded-full border border-[#7DD3FC]/70 bg-[#E0F2FE] px-2.5 py-0.5 text-xs font-bold text-[#0284C7]">{items.length}개</span>
                       )}
+                      {integrationStatus && (integrationStatus.jira || integrationStatus.notion) ? (
+                        integrationStatus.jira && integrationStatus.notion ? (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-[3px] text-[10px] font-semibold text-emerald-600">
+                            <LucideIcon name="checkCircle" size={10} />연동완료
+                          </span>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); navigate(`/configuration?projectId=${projectKey}&tab=integration`); }}
+                            className="inline-flex items-center gap-1 rounded-full bg-[#EEF3FF] px-2 py-[3px] text-[10px] font-semibold text-[#0099CC] hover:bg-[#0099CC] hover:text-white transition-colors"
+                          >
+                            {integrationStatus.jira ? "Notion 연동하기" : "Jira 연동하기"}
+                          </button>
+                        )
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); navigate(`/configuration?projectId=${projectKey}&tab=integration`); }}
+                          className="inline-flex items-center gap-1 rounded-full bg-[#EEF3FF] px-2 py-[3px] text-[10px] font-semibold text-[#0099CC] hover:bg-[#0099CC] hover:text-white transition-colors"
+                        >
+                          연동하기
+                        </button>
+                      )}
                       <LucideIcon
                         name="chevronDown"
                         size={16}
                         className={`ml-auto text-[#6B7280] transition-transform ${isCollapsed ? "-rotate-90" : ""}`}
                       />
-                    </button>
+                    </div>
 
                     {!isCollapsed && <div className="rounded-2xl border border-[rgba(0,100,180,0.12)] bg-white overflow-hidden">
                       {items.map((item, idx) => {
@@ -1925,30 +2025,17 @@ export default function App() {
                                 <span className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-[#0099CC]">
                                   <LucideIcon name="loader" size={13} className="spin-slow" />연동 중
                                 </span>
-                              ) : item.status === "연동완료" ? (
-                                <IntegrationLinkButtons item={item} />
                               ) : item.status === "검토대기" ? (
                                 <button type="button" onClick={(e) => { e.stopPropagation(); openPanel(item); }}
                                   className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-[#0099CC] border border-[#0099CC]/40 hover:bg-[#0099CC] hover:text-white hover:border-[#0099CC] hover:shadow-[0_4px_12px_rgba(0,153,204,0.25)] px-2.5 py-1.5 rounded-lg transition-all duration-150"
                                 >
                                   <LucideIcon name="checkCircle" size={12} />검토하기
                                 </button>
-                              ) : item.status === "수행완료" ? (
-                                hasExternalLink(item) ? (
-                                  <IntegrationLinkButtons item={item} />
-                                ) : (
-                                  <button type="button" onClick={(e) => { e.stopPropagation(); openPanel(item); setPanelView("integrate"); }}
-                                    className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-[#0099CC] border border-[#0099CC]/40 hover:bg-[#0099CC] hover:text-white hover:border-[#0099CC] hover:shadow-[0_4px_12px_rgba(0,153,204,0.25)] px-2.5 py-1.5 rounded-lg transition-all duration-150"
-                                  >
-                                    <LucideIcon name="jira" size={12} />연동하기
-                                  </button>
-                                )
                               ) : (
-                                <button type="button" onClick={(e) => { e.stopPropagation(); openPanel(item); }}
-                                  className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-[#0099CC] border border-[#0099CC]/40 hover:bg-[#0099CC] hover:text-white hover:border-[#0099CC] hover:shadow-[0_4px_12px_rgba(0,153,204,0.25)] px-2.5 py-1.5 rounded-lg transition-all duration-150"
-                                >
-                                  <LucideIcon name="jira" size={12} />연동하기
-                                </button>
+                                // Whether/where this task is linked is now shown once at the project
+                                // level (see the group header) — a task row just shows the confirm
+                                // link once auto-sync has produced one, and nothing otherwise.
+                                <IntegrationLinkButtons item={item} />
                               )}
 
                               <div className="sm:hidden inline-flex flex-col items-end justify-center py-0.5">
@@ -2375,56 +2462,18 @@ export default function App() {
                           검토완료
                         </button>
                       )}
-                      {selectedItem.status === "검토완료" && (
-                        <>
-                          <button
-                            type="button"
-                            onClick={() => handleMarkDone(selectedItem.id)}
-                            className="px-5 py-2.5 text-sm font-bold text-[#7C3AED] bg-white border border-[#7C3AED]/60 hover:bg-[#F6F0FF] rounded-xl shadow-sm transition-all cursor-pointer"
-                          >
-                            수행완료
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setPanelView("integrate")}
-                            className="px-5 py-2.5 text-sm font-bold text-white bg-[linear-gradient(135deg,#10B981,#0D9488)] hover:brightness-105 rounded-xl shadow-md shadow-emerald-500/25 transition-all flex items-center gap-1.5 cursor-pointer"
-                          >
-                            <LucideIcon name="zap" size={14} className="text-white" />
-                            연동하기
-                          </button>
-                        </>
-                      )}
-                      {selectedItem.status === "연동완료" && (
-                        <>
-                          <button
-                            type="button"
-                            onClick={() => handleMarkDone(selectedItem.id)}
-                            className="px-5 py-2.5 text-sm font-bold text-[#7C3AED] bg-white border border-[#7C3AED]/60 hover:bg-[#F6F0FF] rounded-xl shadow-sm transition-all cursor-pointer"
-                          >
-                            수행완료
-                          </button>
-                          {getIntegrationEntries(selectedItem).length < 2 && (
-                            <button
-                              type="button"
-                              onClick={() => setPanelView("integrate")}
-                              className="px-5 py-2.5 text-sm font-bold text-white bg-[linear-gradient(135deg,#10B981,#0D9488)] hover:brightness-105 rounded-xl shadow-md shadow-emerald-500/25 transition-all flex items-center gap-1.5 cursor-pointer"
-                            >
-                              <LucideIcon name="zap" size={14} className="text-white" />
-                              추가 연동
-                            </button>
-                          )}
-                        </>
-                      )}
-                      {selectedItem.status === "수행완료" && getIntegrationEntries(selectedItem).length < 2 && (
+                      {(selectedItem.status === "검토완료" || selectedItem.status === "연동완료") && (
                         <button
                           type="button"
-                          onClick={() => setPanelView("integrate")}
-                          className="px-5 py-2.5 text-sm font-bold text-white bg-[linear-gradient(135deg,#10B981,#0D9488)] hover:brightness-105 rounded-xl shadow-md shadow-emerald-500/25 transition-all flex items-center gap-1.5 cursor-pointer"
+                          onClick={() => handleMarkDone(selectedItem.id)}
+                          className="px-5 py-2.5 text-sm font-bold text-[#7C3AED] bg-white border border-[#7C3AED]/60 hover:bg-[#F6F0FF] rounded-xl shadow-sm transition-all cursor-pointer"
                         >
-                          <LucideIcon name="zap" size={14} className="text-white" />
-                          {hasExternalLink(selectedItem) ? "추가 연동" : "연동하기"}
+                          수행완료
                         </button>
                       )}
+                      {/* Whether/where this is linked is shown via the link cards above and the
+                          project-level badge in the list — no manual "연동하기" trigger needed
+                          here since Jira/Notion sync now happens automatically. */}
                     </div>}
                   </>
                 )}

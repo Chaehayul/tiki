@@ -3,7 +3,7 @@ import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import Header from '../components/Header';
 import Footer from '../components/Footer';
 import MobileTab from '../components/MobileTab';
-import { deleteProjectMeeting, getProject, listProjectMeetings, listProjects, sendMeetingTasks, updateProjectMeeting } from '../api/apiClient';
+import { deleteProjectMeeting, getProject, getProjectIntegrations, listProjectMeetings, listProjects, sendMeetingTasks, updateProjectMeeting } from '../api/apiClient';
 
 const isTikiMeetingMetaItem = (item) =>
     Boolean(item && typeof item === 'object' && (item.__tiki_meta || item.type === '__tiki_meeting_meta'));
@@ -1070,6 +1070,15 @@ export default function ProjectMeetings() {
             });
     }, [projectId, isDeletedProject]);
 
+    const [isIntegrationConnected, setIsIntegrationConnected] = useState(false);
+    useEffect(() => {
+        const id = normalizeProjectId(projectId);
+        if (!id) return;
+        getProjectIntegrations(id)
+            .then((result) => setIsIntegrationConnected(Boolean(result?.jira?.connected || result?.notion?.connected)))
+            .catch(() => setIsIntegrationConnected(false));
+    }, [projectId]);
+
     const project = useMemo(() => {
         const id = normalizeProjectId(projectId);
         if (!id) return null;
@@ -1606,6 +1615,14 @@ export default function ProjectMeetings() {
         setIsActionDrawerOpen(true);
     };
 
+    const openIntegrateView = () => {
+        if (isIntegrationConnected) {
+            setActionDrawerView('integrate');
+        } else {
+            navigate(`/configuration?projectId=${project?.id || projectId}&tab=integration`);
+        }
+    };
+
     const closeActionDrawer = () => {
         setIsActionDrawerOpen(false);
         setActiveActionItemId(null);
@@ -1694,9 +1711,31 @@ export default function ProjectMeetings() {
                           }
                         : raw
             );
-            updateProjectMeeting(project.id, sourceMeeting.id, { action_items: rawActionItems }).catch((err) => {
-                showToast(err?.message || '변경 사항을 서버에 저장하지 못했습니다.', 'error');
-            });
+            const savedActionDraftId = actionDraft.id;
+            updateProjectMeeting(project.id, sourceMeeting.id, { action_items: rawActionItems })
+                .then((updatedMeeting) => {
+                    // Meeting sync (Jira/Notion) runs synchronously on the backend as part of
+                    // this request, so its response already carries any freshly-created
+                    // integration links — apply them so "확인하기" shows up instead of a
+                    // stale "연동하기" once auto-sync lands.
+                    const freshRawItem = Array.isArray(updatedMeeting?.action_items)
+                        ? updatedMeeting.action_items.find((raw) => String(raw?.id || '') === String(savedActionDraftId))
+                        : null;
+                    if (!freshRawItem) return;
+                    const serverSync = {
+                        status: freshRawItem.status || normalizedStatus,
+                        integrationTool: freshRawItem.integrationTool || null,
+                        integrationLinks: getActionIntegrationLinks(freshRawItem),
+                        externalLink: freshRawItem.externalLink || '',
+                    };
+                    setActionItems((prev) =>
+                        prev.map((item) => (item.id === savedActionDraftId ? { ...item, ...serverSync } : item))
+                    );
+                    setActionDraft((prev) => (prev?.id === savedActionDraftId ? { ...prev, ...serverSync } : prev));
+                })
+                .catch((err) => {
+                    showToast(err?.message || '변경 사항을 서버에 저장하지 못했습니다.', 'error');
+                });
         }
         return true;
     };
@@ -3541,7 +3580,7 @@ export default function ProjectMeetings() {
                                                 </button>
                                                 <button
                                                     type="button"
-                                                    onClick={() => setActionDrawerView('integrate')}
+                                                    onClick={openIntegrateView}
                                                     className="flex items-center gap-1.5 text-sm font-bold px-5 py-2 rounded-xl text-white transition-all hover:-translate-y-0.5"
                                                     style={{
                                                         background:
@@ -3570,7 +3609,7 @@ export default function ProjectMeetings() {
                                                 {getActionIntegrationEntries(actionDraft).length < 2 && (
                                                     <button
                                                         type="button"
-                                                        onClick={() => setActionDrawerView('integrate')}
+                                                        onClick={openIntegrateView}
                                                         className="flex items-center gap-1.5 text-sm font-bold px-5 py-2 rounded-xl text-white transition-all hover:-translate-y-0.5"
                                                         style={{
                                                             background:
@@ -3618,7 +3657,7 @@ export default function ProjectMeetings() {
                                                 {getActionIntegrationEntries(actionDraft).length < 2 && (
                                                     <button
                                                         type="button"
-                                                        onClick={() => setActionDrawerView('integrate')}
+                                                        onClick={openIntegrateView}
                                                         className="flex items-center gap-1.5 text-sm font-bold px-5 py-2 rounded-xl text-white transition-all hover:-translate-y-0.5"
                                                         style={{
                                                             background:

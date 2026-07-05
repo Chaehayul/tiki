@@ -1041,19 +1041,28 @@ export default function ProjectMeetings() {
                 const isUUID = (id) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(id));
                 setProjectCatalog((prev) => {
                     const base = Array.isArray(prev) ? prev : [];
-                    // listProjects() returns a lighter-weight ProjectListItem without per-member
-                    // position data, so carry forward any positionByName already resolved by the
-                    // getProject() detail fetch — otherwise this replace wipes it back to empty.
-                    const priorPositionByName = {};
+                    // listProjects() returns a lighter-weight ProjectListItem with no per-member
+                    // position data and no meetings at all, so carry forward whatever the
+                    // getProject() detail fetch already resolved for those two fields —
+                    // otherwise this replace wipes them back to empty every time it re-runs
+                    // (e.g. right after a fresh upload adds a real meeting to the catalog).
+                    const priorEnriched = {};
                     base.forEach((p) => {
-                        if (p?.id && p?.positionByName && typeof p.positionByName === 'object') {
-                            priorPositionByName[String(p.id)] = p.positionByName;
+                        if (!p?.id) return;
+                        const hasPosition = p?.positionByName && typeof p.positionByName === 'object';
+                        const hasMeetings = Array.isArray(p?.meetings) && p.meetings.length > 0;
+                        if (hasPosition || hasMeetings) {
+                            priorEnriched[String(p.id)] = { positionByName: p.positionByName, meetings: p.meetings };
                         }
                     });
                     const mappedWithPosition = mapped.map((m) => {
-                        const prior = priorPositionByName[String(m.id)];
+                        const prior = priorEnriched[String(m.id)];
                         if (!prior) return m;
-                        return { ...m, positionByName: { ...prior, ...m.positionByName } };
+                        return {
+                            ...m,
+                            positionByName: { ...(prior.positionByName || {}), ...(m.positionByName || {}) },
+                            meetings: Array.isArray(m.meetings) && m.meetings.length > 0 ? m.meetings : prior.meetings,
+                        };
                     });
                     const next = [...base.filter((p) => !isUUID(p?.id)), ...mappedWithPosition];
                     writeProjectCatalog(next);
@@ -1124,6 +1133,12 @@ export default function ProjectMeetings() {
                     ? override.participants
                     : baseProject?.participants,
                 admins: Array.isArray(override?.admins) ? override.admins : baseProject?.admins,
+                // A stale local override (e.g. saved before meetings/members were
+                // excluded from writeProjectOverride) can carry an old, empty
+                // "meetings" snapshot that would otherwise shadow the real,
+                // freshly-fetched meetings/action items from getProject() here —
+                // always trust the live fetch over anything cached in the override.
+                meetings: Array.isArray(baseProject?.meetings) ? baseProject.meetings : override?.meetings,
             });
         };
 

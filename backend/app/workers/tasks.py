@@ -8,7 +8,7 @@ from sqlalchemy import select
 
 from app.db.database import SessionLocal
 from app.models.analysis import AnalysisResult
-from app.models.enums import FileKind, ProcessingStatus
+from app.models.enums import FileKind, ProcessingStatus, TicketStatus
 from app.models.file import ExtractedContent, UploadedFile
 from app.models.project import Meeting, Project, ProjectMember
 from app.models.ticket import Ticket
@@ -27,6 +27,12 @@ def process_uploaded_file(file_id: UUID) -> None:
         _run_pipeline(db, file_id)
     except Exception as exc:
         logger.exception("Pipeline failed for file %s", file_id)
+        # A failed flush/commit above leaves the session's transaction aborted —
+        # writing the failure status through the same session without rolling
+        # back first raises PendingRollbackError, so _mark_failed silently fails
+        # too and the row is stuck at "processing" forever with no error ever
+        # recorded (indistinguishable from a genuinely hung analysis).
+        db.rollback()
         _mark_failed(db, file_id, str(exc))
     finally:
         db.close()
@@ -70,7 +76,14 @@ def _normalize_action_items(raw_items) -> list[dict]:
                 **item,
                 "id": str(item.get("id") or item.get("task_id") or uuid4()),
                 "title": title,
-                "status": item.get("status") or "검토대기",
+                # Always start a freshly analyzed task at 검토대기, regardless of
+                # any status-like word the extractor happened to pick up from the
+                # source text (e.g. a meeting note that already had its own
+                # "진행중"/"미착수" labels per line) — those aren't TIKI's own
+                # workflow states and must not be mistaken for one, especially
+                # since the frontend's legacy STATUS_LABEL alias table maps
+                # "진행중" straight to "검토완료".
+                "status": "검토대기",
             }
         )
     return normalized
@@ -194,7 +207,11 @@ def _run_pipeline(db, file_id: UUID) -> None:
                 title=item.get("title", "제목 없음"),
                 description=item.get("description", ""),
                 priority=item.get("priority", "medium"),
-                status=item.get("status", "draft"),
+                # item["status"] holds the meeting task's Korean workflow status
+                # (검토대기/진행중/완료 등), not a ticket_status enum value — a
+                # freshly created ticket always starts as "draft" (not yet synced
+                # to Jira/Notion) regardless of that workflow status.
+                status=TicketStatus.DRAFT.value,
                 assignee=item.get("assignee"),
                 due_at=_parse_due_at(item.get("due_at")),
             )

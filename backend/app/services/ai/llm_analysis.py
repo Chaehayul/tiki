@@ -4801,6 +4801,28 @@ class OpenAIAnalysisService(LLMAnalysisService):
         return {"value": str(usage)}
 
 
+def _parse_llm_json_response(text: str) -> dict[str, Any]:
+    """Parse a chat-completion response as JSON, tolerating common formatting noise.
+
+    Unlike OpenAIAnalysisService (which uses the Responses API with a strict
+    json_schema format), LangChainAnalysisService sends plain chat messages with
+    no structured-output enforcement — models (especially Groq/Llama) routinely
+    wrap the answer in ```json fences or add a leading/trailing sentence, which
+    makes a bare json.loads() fail with "Expecting value: line 1 column 1" even
+    though the payload is otherwise fine.
+    """
+    candidate = text.strip()
+    fence_match = re.search(r"```(?:json)?\s*(\{.*\})\s*```", candidate, re.DOTALL)
+    if fence_match:
+        candidate = fence_match.group(1).strip()
+    else:
+        start = candidate.find("{")
+        end = candidate.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            candidate = candidate[start : end + 1]
+    return json.loads(candidate)
+
+
 class LangChainAnalysisService(LLMAnalysisService):
     """LangChain-backed meeting analysis that keeps the same JSON contract."""
 
@@ -4979,7 +5001,7 @@ class LangChainAnalysisService(LLMAnalysisService):
             resolved_model_name = _resolve_model_name_for_tier(model_tier, fallback=self.model_name)
             name_candidates = _collect_assignee_name_candidates(transcript, context)
             response_text, provider_used, provider_model_name = self._invoke_chain(normalized, context, model_name=resolved_model_name)
-            payload = json.loads(response_text)
+            payload = _parse_llm_json_response(response_text)
 
             normalized_summary = _normalize_summary_card_value(payload.get("summary", ""))
             normalized_action_items = _normalize_action_items_value(

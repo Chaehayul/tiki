@@ -41,6 +41,8 @@ class Settings(BaseSettings):
     notion_task_database_id: str | None = Field(default=None, alias="NOTION_TASK_DATABASE_ID")
     notion_parent_page_id: str | None = Field(default=None, alias="NOTION_PARENT_PAGE_ID")
     frontend_base_url: str = Field(default="http://localhost:5173", alias="FRONTEND_BASE_URL")
+    toss_secret_key: str | None = Field(default=None, alias="TOSS_SECRET_KEY")
+    toss_client_key: str | None = Field(default=None, alias="TOSS_CLIENT_KEY")
     integration_token_encryption_key: str | None = Field(default=None, alias="INTEGRATION_TOKEN_ENCRYPTION_KEY")
     openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")
     openai_model: str = Field(default="gpt-5.4-mini", alias="OPENAI_MODEL")

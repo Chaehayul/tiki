@@ -472,7 +472,6 @@ export default function Subscription() {
   };
 
   const handleSelectPlan = async (plan, selectedBilling) => {
-    // 로그인 상태에서 현재 플랜보다 낮거나 같은 플랜 선택 → 토스트
     if (isLoggedIn) {
       const currentTier = PLAN_TIER[currentPlanId] ?? 0;
       const selectedTier = PLAN_TIER[plan.id] ?? 0;
@@ -482,8 +481,27 @@ export default function Subscription() {
         showAlreadyMsg(`이미 ${currentPlan?.name} 플랜을 이용 중입니다`);
         return;
       }
+      // Downgrading (including to Free, i.e. cancelling) removes access rather
+      // than adding it, so it doesn't need a real charge — apply it directly
+      // instead of a payment flow. This used to just refuse and tell people to
+      // go to 마이페이지, which itself only ever bounced back here.
       if (selectedTier < currentTier) {
-        showAlreadyMsg('하위 플랜 변경은 마이페이지에서 진행해주세요');
+        const activePlan = PLANS.find((p) => p.id === currentPlanId);
+        const confirmed = window.confirm(
+          plan.id === 'free'
+            ? `구독을 해지하고 무료 플랜으로 전환할까요? 유료 기능(${activePlan?.name} 플랜 전용 기능 포함)을 더 이상 사용할 수 없습니다.`
+            : `${activePlan?.name}에서 ${plan.name} 플랜으로 변경할까요? 다운그레이드는 즉시 적용되며, 상위 플랜 전용 기능을 더 이상 사용할 수 없습니다.`
+        );
+        if (!confirmed) return;
+        try {
+          const subscription = await subscribePlan({ planId: plan.id, billing: selectedBilling });
+          saveLocalSubscription(subscription);
+          setCurrentPlanId(subscription.plan_id);
+          setCurrentBilling(subscription.billing ?? selectedBilling);
+          showAlreadyMsg(plan.id === 'free' ? '구독이 해지되었습니다' : '플랜이 변경되었습니다');
+        } catch (error) {
+          showAlreadyMsg(error.message || '플랜 변경에 실패했습니다');
+        }
         return;
       }
     }

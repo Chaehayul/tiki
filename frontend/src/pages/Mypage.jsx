@@ -16,6 +16,7 @@ import {
   listProjectTickets,
   logoutOtherAuthSessions,
   revokeAuthSession,
+  subscribePlan,
   updateCurrentUser,
 } from "../api/apiClient";
 import { PLANS, yearlyDiscount } from "../data/subscriptionPlans";
@@ -1980,6 +1981,25 @@ function SubscriptionSection({ showToast, isMobile }) {
     }
   })();
 
+  const syncLocalSubscription = (sub) => {
+    try {
+      const raw = localStorage.getItem("tiki_user");
+      const user = raw ? JSON.parse(raw) : {};
+      localStorage.setItem("tiki_user", JSON.stringify({
+        ...user,
+        isSubscribed: sub.plan_id !== "free",
+        planId: sub.plan_id || "free",
+        billing: sub.billing || "monthly",
+        nextBillingAt: sub.next_billing_at || null,
+        currentPeriodStartedAt: sub.current_period_started_at || sub.updated_at || null,
+        currentPeriodEndsAt: sub.current_period_ends_at || sub.next_billing_at || null,
+      }));
+      window.dispatchEvent(new Event("tiki-auth-changed"));
+    } catch {
+      // 서버 구독 정보가 원본이므로 로컬 캐시 저장 실패는 무시한다.
+    }
+  };
+
   useEffect(() => {
     if (!localStorage.getItem("tiki_access_token")) return;
 
@@ -1989,22 +2009,7 @@ function SubscriptionSection({ showToast, isMobile }) {
       .then((sub) => {
         if (cancelled) return;
         setSubscription(sub);
-        try {
-          const raw = localStorage.getItem("tiki_user");
-          const user = raw ? JSON.parse(raw) : {};
-          localStorage.setItem("tiki_user", JSON.stringify({
-            ...user,
-            isSubscribed: sub.plan_id !== "free",
-            planId: sub.plan_id || "free",
-            billing: sub.billing || "monthly",
-            nextBillingAt: sub.next_billing_at || null,
-            currentPeriodStartedAt: sub.current_period_started_at || sub.updated_at || null,
-            currentPeriodEndsAt: sub.current_period_ends_at || sub.next_billing_at || null,
-          }));
-          window.dispatchEvent(new Event("tiki-auth-changed"));
-        } catch {
-          // 서버 구독 정보가 원본이므로 로컬 캐시 저장 실패는 무시한다.
-        }
+        syncLocalSubscription(sub);
       })
       .catch(() => {
         // Keep locally cached plan info when API lookup fails.
@@ -2046,6 +2051,43 @@ function SubscriptionSection({ showToast, isMobile }) {
   ].filter(Boolean);
   const includedFeatures = currentPlan.features.filter((feature) => feature.included);
   const goSubscription = () => navigate("/subscription", { state: { mobileTab: "mypage" } });
+
+  const [changingPlanId, setChangingPlanId] = useState(null);
+
+  // Upgrades need a real charge, so send those through the actual Toss
+  // checkout flow. A downgrade (including cancelling back to Free) removes
+  // access rather than adding it, so it doesn't need payment — apply it here
+  // directly instead of bouncing to /subscription, which itself used to just
+  // refuse downgrades and point back to this page (a dead end for the user).
+  const handleChangePlan = async (plan) => {
+    if (plan.id === currentPlanId) return;
+    const isUpgrade = (PLAN_TIER[plan.id] ?? 0) > (PLAN_TIER[currentPlanId] ?? 0);
+    if (isUpgrade) {
+      navigate("/subscription/checkout", { state: { plan, billing: currentBilling } });
+      return;
+    }
+
+    const confirmed = window.confirm(
+      plan.id === "free"
+        ? `구독을 해지하고 무료 플랜으로 전환할까요? 유료 기능(${currentPlan.name} 플랜 전용 기능 포함)을 더 이상 사용할 수 없습니다.`
+        : `${currentPlan.name}에서 ${plan.name} 플랜으로 변경할까요? 다운그레이드는 즉시 적용되며, 상위 플랜 전용 기능을 더 이상 사용할 수 없습니다.`
+    );
+    if (!confirmed) return;
+
+    setChangingPlanId(plan.id);
+    try {
+      const sub = await subscribePlan({ planId: plan.id, billing: currentBilling });
+      setSubscription(sub);
+      syncLocalSubscription(sub);
+      showToast(plan.id === "free" ? "구독이 해지되었습니다." : "플랜이 변경되었습니다.");
+    } catch (error) {
+      showToast(error?.message || "플랜 변경에 실패했습니다.", "error");
+    } finally {
+      setChangingPlanId(null);
+    }
+  };
+
+  const handleCancelSubscription = () => handleChangePlan(PLANS.find((p) => p.id === "free"));
 
   return (
     <div className="space-y-8">
@@ -2125,10 +2167,10 @@ function SubscriptionSection({ showToast, isMobile }) {
               <p className="mt-2 text-[11px] text-[#5A6F8A]">{plan.tagline}</p>
               <button
                 type="button"
-                onClick={goSubscription}
-                disabled={selected}
+                onClick={() => handleChangePlan(plan)}
+                disabled={selected || changingPlanId !== null}
                 className={cn(
-                  "mt-3 w-full rounded-xl px-3 py-2 text-[12px] font-bold transition-colors",
+                  "mt-3 w-full rounded-xl px-3 py-2 text-[12px] font-bold transition-colors disabled:opacity-60",
                   selected
                     ? "cursor-default bg-[rgba(0,153,204,.08)] text-[#0099CC]"
                     : isUpgrade
@@ -2136,12 +2178,35 @@ function SubscriptionSection({ showToast, isMobile }) {
                     : "border border-[rgba(0,100,180,.12)] bg-white text-[#5A6F8A] hover:bg-[rgba(0,60,150,.04)]"
                 )}
               >
-                {selected ? "현재 이용 중" : isUpgrade ? "업그레이드" : "플랜 변경"}
+                {selected
+                  ? "현재 이용 중"
+                  : changingPlanId === plan.id
+                    ? "변경 중..."
+                    : isUpgrade
+                      ? "업그레이드"
+                      : "플랜 변경"}
               </button>
             </div>
           );
         })}
       </div>
+
+      {currentPlanId !== "free" && (
+        <div className="rounded-2xl border border-[rgba(239,68,68,.15)] bg-[rgba(239,68,68,.03)] p-4 sm:flex sm:items-center sm:justify-between">
+          <div>
+            <p className="text-[13px] font-bold text-[#0D1B2A]">구독 해지</p>
+            <p className="mt-0.5 text-[12px] text-[#5A6F8A]">해지하면 즉시 무료 플랜으로 전환되고, 유료 기능 이용이 중단됩니다.</p>
+          </div>
+          <button
+            type="button"
+            onClick={handleCancelSubscription}
+            disabled={changingPlanId !== null}
+            className="mt-3 w-full rounded-xl border border-[rgba(239,68,68,.3)] px-4 py-2 text-[12px] font-bold text-[#EF4444] transition-colors hover:bg-[rgba(239,68,68,.06)] disabled:opacity-60 sm:mt-0 sm:w-auto"
+          >
+            {changingPlanId === "free" ? "해지 중..." : "구독 해지하기"}
+          </button>
+        </div>
+      )}
 
       <div className="rounded-2xl border border-[rgba(0,100,180,.1)] bg-white p-4">
         <p className="text-[12px] font-semibold text-[#5A6F8A]">현재 플랜 전체 제공 항목</p>

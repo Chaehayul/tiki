@@ -16,6 +16,8 @@ import Landingpage from './pages/Landingpage';
 import OnboardingPage from './pages/Onboarding';
 import Subscription from './pages/Subscription';
 import SubscriptionCheckout from './pages/SubscriptionCheckout';
+import SubscriptionCheckoutSuccess from './pages/SubscriptionCheckoutSuccess';
+import SubscriptionCheckoutFail from './pages/SubscriptionCheckoutFail';
 import SubscriptionComplete from './pages/SubscriptionComplete';
 import ContactPage from './pages/Contact';
 import { clearAuthSession, getCurrentUser } from './api/apiClient';
@@ -92,6 +94,8 @@ function App() {
       />
       <Route path="/subscription" element={<Subscription />} />
       <Route path="/subscription/checkout" element={<SubscriptionCheckout />} />
+      <Route path="/subscription/checkout/success" element={<SubscriptionCheckoutSuccess />} />
+      <Route path="/subscription/checkout/fail" element={<SubscriptionCheckoutFail />} />
       <Route path="/subscription/complete" element={<SubscriptionComplete />} />
       <Route path="/landing" element={<Landingpage />} />
       <Route

@@ -359,3 +359,20 @@ export async function subscribePlan({ planId, billing }) {
     body: JSON.stringify({ plan_id: planId, billing }),
   });
 }
+
+export async function getTossCheckoutConfig() {
+  return request('/subscription/checkout/config');
+}
+
+export async function confirmTossPayment({ paymentKey, orderId, amount, planId, billing }) {
+  return request('/subscription/checkout/confirm', {
+    method: 'POST',
+    body: JSON.stringify({
+      payment_key: paymentKey,
+      order_id: orderId,
+      amount,
+      plan_id: planId,
+      billing,
+    }),
+  });
+}

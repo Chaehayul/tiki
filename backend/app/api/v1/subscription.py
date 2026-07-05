@@ -5,11 +5,15 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_current_user
+from app.core.config import settings
+from app.core.exceptions import AppException
 from app.db.database import get_db
+from app.integrations.toss import TossPaymentError, TossPaymentsClient
 from app.models.enums import PlanId
+from app.models.payment import Payment
 from app.models.subscription import Subscription
 from app.models.user import User
-from app.schemas.subscription import BillingCycle, SubscribeRequest, SubscriptionResponse
+from app.schemas.subscription import BillingCycle, ConfirmPaymentRequest, SubscribeRequest, SubscriptionResponse
 
 router = APIRouter(prefix="/subscription", tags=["subscription"])
 
@@ -58,6 +62,14 @@ def _subscription_response(plan_id: str, billing: str, updated_at: datetime) -> 
     )
 
 
+@router.get("/checkout/config")
+def get_checkout_config() -> dict[str, str | None]:
+    # Toss's client key is meant to be used client-side (it's the public half
+    # of the key pair) — served from settings so the frontend never needs the
+    # value hardcoded in source.
+    return {"clientKey": settings.toss_client_key}
+
+
 @router.get("/plans")
 def list_subscription_plans() -> dict[str, object]:
     return {
@@ -93,6 +105,75 @@ def subscribe(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> SubscriptionResponse:
+    sub = db.scalar(select(Subscription).where(Subscription.user_id == current_user.id))
+    if sub is None:
+        sub = Subscription(
+            user_id=current_user.id,
+            plan_id=payload.plan_id.value,
+            billing=payload.billing.value,
+        )
+        db.add(sub)
+    else:
+        sub.plan_id = payload.plan_id.value
+        sub.billing = payload.billing.value
+    db.commit()
+    db.refresh(sub)
+    return _subscription_response(sub.plan_id, sub.billing, sub.updated_at)
+
+
+@router.post("/checkout/confirm", response_model=SubscriptionResponse)
+def confirm_checkout_payment(
+    payload: ConfirmPaymentRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> SubscriptionResponse:
+    # Cross-check against our own price catalog rather than trusting the
+    # client outright — otherwise a tampered request could confirm a cheap
+    # payment key while claiming a higher-tier plan. Coupons (up to 20% off,
+    # see frontend/src/data/subscriptionPlans.js COUPON_CODES) aren't tracked
+    # server-side yet, so allow that range rather than requiring an exact
+    # match; Toss's own confirm call is still the actual source of truth for
+    # what was charged.
+    plan = PLAN_CATALOG[payload.plan_id]
+    expected_amount = plan[payload.billing.value]
+    min_allowed_amount = int(expected_amount * 0.8)
+    if expected_amount > 0 and not (min_allowed_amount <= payload.amount <= expected_amount):
+        raise AppException(
+            detail="결제 금액이 요금제 가격과 일치하지 않습니다.",
+            status_code=400,
+            code="amount_mismatch",
+        )
+
+    existing = db.scalar(select(Payment).where(Payment.toss_order_id == payload.order_id))
+    if existing is not None:
+        # Already confirmed (e.g. a duplicate success-page load) — return the
+        # current subscription state instead of re-confirming with Toss.
+        sub = db.scalar(select(Subscription).where(Subscription.user_id == current_user.id))
+        if sub is not None:
+            return _subscription_response(sub.plan_id, sub.billing, sub.updated_at)
+
+    try:
+        client = TossPaymentsClient()
+        result = client.confirm_payment(payload.payment_key, payload.order_id, payload.amount)
+    except TossPaymentError as exc:
+        raise AppException(detail=exc.message, status_code=400, code=f"toss_{exc.code.lower()}") from exc
+    except RuntimeError as exc:
+        raise AppException(detail=str(exc), status_code=500, code="toss_not_configured") from exc
+
+    db.add(
+        Payment(
+            user_id=current_user.id,
+            plan_id=payload.plan_id.value,
+            billing=payload.billing.value,
+            amount=result.total_amount,
+            status=result.status,
+            toss_order_id=result.order_id,
+            toss_payment_key=result.payment_key,
+            method=result.method,
+            receipt_url=result.receipt_url,
+        )
+    )
+
     sub = db.scalar(select(Subscription).where(Subscription.user_id == current_user.id))
     if sub is None:
         sub = Subscription(

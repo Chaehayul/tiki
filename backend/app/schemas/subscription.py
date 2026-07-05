@@ -16,6 +16,14 @@ class SubscribeRequest(BaseModel):
     billing: BillingCycle = BillingCycle.MONTHLY
 
 
+class ConfirmPaymentRequest(BaseModel):
+    payment_key: str
+    order_id: str
+    amount: int
+    plan_id: PlanId
+    billing: BillingCycle = BillingCycle.MONTHLY
+
+
 class SubscriptionResponse(BaseModel):
     plan_id: str
     billing: str

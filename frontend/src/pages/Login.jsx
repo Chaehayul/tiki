@@ -164,6 +164,12 @@ export default function LoginPage() {
         }
     };
 
+    const handleFillDemoCredentials = () => {
+        setError('');
+        setEmail('demo@tiki.app');
+        setPassword('TikiDemo2026!');
+    };
+
     return (
         <div
             className="relative flex min-h-screen flex-col items-center justify-center bg-[#F0F4FF] px-4 pb-10 pt-24"
@@ -188,6 +194,16 @@ export default function LoginPage() {
                     </h1>
                     <p className="text-[13px] text-[#5A6F8A]">회의록과 작업을 이어가세요</p>
                 </div>
+
+                {/* Demo account — fills the fields below, doesn't log in automatically */}
+                <button
+                    type="button"
+                    onClick={handleFillDemoCredentials}
+                    className="mb-5 flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl border-0 bg-[linear-gradient(135deg,#0099CC_0%,#7C3AED_100%)] py-[13px] text-[14px] font-bold text-white shadow-[0_4px_20px_rgba(0,153,204,.20)] transition-all duration-200 hover:-translate-y-0.5"
+                >
+                    <Icon name="zap" size={15} color="#fff" />
+                    데모 계정 정보 자동입력
+                </button>
 
                 {/* Social buttons */}
                 <div className="mb-5 flex flex-col gap-2.5">

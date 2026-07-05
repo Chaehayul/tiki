@@ -2,7 +2,25 @@ import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import Header from '../components/Header';
 import { PLANS, COUPON_CODES, applyCoupon, formatPrice } from '../data/subscriptionPlans';
-import { subscribePlan } from '../api/apiClient';
+import { getTossCheckoutConfig, subscribePlan } from '../api/apiClient';
+
+const CUSTOMER_KEY_STORAGE = 'tiki_toss_customer_key';
+
+function getOrCreateCustomerKey() {
+  try {
+    const raw = localStorage.getItem('tiki_user');
+    const user = raw ? JSON.parse(raw) : null;
+    if (user?.id) return String(user.id);
+  } catch {
+    // fall through to a locally generated key
+  }
+  let key = localStorage.getItem(CUSTOMER_KEY_STORAGE);
+  if (!key) {
+    key = `guest_${crypto.randomUUID()}`;
+    localStorage.setItem(CUSTOMER_KEY_STORAGE, key);
+  }
+  return key;
+}
 
 const cn = (...c) => c.filter(Boolean).join(' ');
 const CHECKOUT_KEY = 'tiki_subscription_checkout';
@@ -60,13 +78,6 @@ function StepIndicator({ current }) {
     </div>
   );
 }
-
-const formatCardNumber = (val) => val.replace(/\D/g, '').slice(0, 16).replace(/(.{4})/g, '$1 ').trim();
-
-const formatExpiry = (val) => {
-  const digits = val.replace(/\D/g, '').slice(0, 4);
-  return digits.length >= 3 ? `${digits.slice(0, 2)} / ${digits.slice(2)}` : digits;
-};
 
 function CouponInput({ onApply, applied, onRemove }) {
   const [code, setCode] = useState('');
@@ -144,7 +155,6 @@ export default function SubscriptionCheckout() {
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
   const [loading, setLoading] = useState(false);
   const [agreed, setAgreed] = useState(false);
-  const [form, setForm] = useState({ cardNumber: '', expiry: '', cvv: '', name: '' });
   const [errors, setErrors] = useState({});
   const [coupon, setCoupon] = useState(null);
   const [submitError, setSubmitError] = useState('');
@@ -180,22 +190,6 @@ export default function SubscriptionCheckout() {
   const couponDiscount = applyCoupon(chargeTotal, coupon);
   const finalPrice = Math.max(0, chargeTotal - couponDiscount);
 
-  const updateForm = (field, value) => {
-    setForm((prev) => ({ ...prev, [field]: value }));
-    setErrors((prev) => ({ ...prev, [field]: '' }));
-    setSubmitError('');
-  };
-
-  const validateCard = () => {
-    const nextErrors = {};
-    if (form.cardNumber.replace(/\D/g, '').length < 16) nextErrors.cardNumber = '카드 번호 16자리를 입력해주세요.';
-    if (form.expiry.replace(/\D/g, '').length < 4) nextErrors.expiry = '유효기간을 입력해주세요.';
-    if (form.cvv.replace(/\D/g, '').length < 3) nextErrors.cvv = 'CVV 3자리를 입력해주세요.';
-    if (!form.name.trim()) nextErrors.name = '카드 소유자 이름을 입력해주세요.';
-    if (!agreed) nextErrors.agreed = '이용약관에 동의해주세요.';
-    return nextErrors;
-  };
-
   const saveLocalSubscription = (subscription) => {
     try {
       const raw = localStorage.getItem('tiki_user');
@@ -217,25 +211,61 @@ export default function SubscriptionCheckout() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    const nextErrors = validateCard();
-    if (Object.keys(nextErrors).length) {
-      setErrors(nextErrors);
+    if (!agreed) {
+      setErrors({ agreed: '이용약관에 동의해주세요.' });
+      return;
+    }
+    setErrors({});
+    setLoading(true);
+    setSubmitError('');
+
+    // A plan/coupon combination that comes out to 0 needs no real charge —
+    // Toss doesn't accept a 0-amount payment request, so just activate it directly.
+    if (finalPrice <= 0) {
+      try {
+        const subscription = await subscribePlan({ planId: plan.id, billing });
+        saveLocalSubscription(subscription);
+        sessionStorage.removeItem(CHECKOUT_KEY);
+        navigate('/subscription/complete', {
+          replace: true,
+          state: { plan, billing, subscription, paidAmount: 0 },
+        });
+      } catch (error) {
+        setSubmitError(error.message || '구독 처리에 실패했습니다. 잠시 후 다시 시도해주세요.');
+      } finally {
+        setLoading(false);
+      }
       return;
     }
 
-    setLoading(true);
-    setSubmitError('');
     try {
-      const subscription = await subscribePlan({ planId: plan.id, billing });
-      saveLocalSubscription(subscription);
-      sessionStorage.removeItem(CHECKOUT_KEY);
-      navigate('/subscription/complete', {
-        replace: true,
-        state: { plan, billing, subscription, paidAmount: finalPrice },
+      const { clientKey } = await getTossCheckoutConfig();
+      if (!clientKey) throw new Error('결제 설정이 완료되지 않았습니다. 잠시 후 다시 시도해주세요.');
+      if (!window.TossPayments) throw new Error('결제 모듈을 불러오지 못했습니다. 새로고침 후 다시 시도해주세요.');
+
+      const tossPayments = window.TossPayments(clientKey);
+      const payment = tossPayments.payment({ customerKey: getOrCreateCustomerKey() });
+      const orderId = `tiki_${plan.id}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      const successParams = new URLSearchParams({ planId: plan.id, billing }).toString();
+
+      // requestPayment redirects the browser to Toss's hosted payment page —
+      // nothing after this call runs on the success path; the actual charge is
+      // only finalized once /subscription/checkout/success confirms it with our
+      // backend (see SubscriptionCheckoutSuccess.jsx).
+      await payment.requestPayment({
+        method: 'CARD',
+        amount: { currency: 'KRW', value: finalPrice },
+        orderId,
+        orderName: `TIKI ${plan.name} 플랜 (${billingLabel} 구독)`,
+        successUrl: `${window.location.origin}/subscription/checkout/success?${successParams}`,
+        failUrl: `${window.location.origin}/subscription/checkout/fail`,
       });
     } catch (error) {
-      setSubmitError(error.message || '결제를 완료하지 못했습니다. 잠시 후 다시 시도해주세요.');
-    } finally {
+      if (error?.code === 'USER_CANCEL') {
+        // Visitor closed the Toss payment window — not a real failure.
+      } else {
+        setSubmitError(error.message || '결제 요청에 실패했습니다. 잠시 후 다시 시도해주세요.');
+      }
       setLoading(false);
     }
   };
@@ -252,77 +282,28 @@ export default function SubscriptionCheckout() {
               <div className="mb-5 flex items-start justify-between gap-4">
                 <div>
                   <h2 className="text-[17px] font-bold text-[#0D1B2A]">결제 정보</h2>
-                  <p className="mt-1 text-[12px] text-[#8A9AB0]">데모 결제입니다. 실제 카드 승인은 진행되지 않습니다.</p>
+                  <p className="mt-1 text-[12px] text-[#8A9AB0]">
+                    {finalPrice > 0 ? '토스페이먼츠 결제창에서 카드 정보를 입력합니다.' : '결제 없이 바로 구독이 시작됩니다.'}
+                  </p>
                 </div>
                 <span className="inline-flex items-center gap-1.5 rounded-full bg-[rgba(0,153,204,0.08)] px-3 py-1 text-[12px] font-semibold text-[#0099CC]">
                   <Icon name="lock" size={12} />
-                  보안 입력
+                  안전 결제
                 </span>
               </div>
 
-              <div className="mb-4">
-                <label className="mb-1.5 block text-[13px] font-semibold text-[#0D1B2A]">카드 번호</label>
-                <div className={cn('flex items-center gap-3 rounded-[10px] border px-4 py-3 transition-colors', errors.cardNumber ? 'border-[#EF4444]' : 'border-[rgba(0,100,180,0.15)] focus-within:border-[#0099CC]')}>
-                  <Icon name="creditCard" size={16} color="#8A9AB0" />
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    placeholder="0000 0000 0000 0000"
-                    value={form.cardNumber}
-                    onChange={(e) => updateForm('cardNumber', formatCardNumber(e.target.value))}
-                    className="min-w-0 flex-1 bg-transparent text-[14px] text-[#0D1B2A] outline-none placeholder:text-[#C0CAD4]"
-                  />
+              {finalPrice > 0 && (
+                <div className="mb-5 flex items-center gap-3 rounded-[12px] border border-[rgba(0,100,180,0.12)] bg-[#F8FAFF] px-4 py-3.5">
+                  <Icon name="creditCard" size={18} color="#0099CC" />
+                  <span className="text-[13px] text-[#5A6F8A]">
+                    "결제하기" 버튼을 누르면 <span className="font-semibold text-[#0D1B2A]">토스페이먼츠</span> 결제창으로 이동해요. 카드 정보는 TIKI 서버에 저장되지 않습니다.
+                  </span>
                 </div>
-                {errors.cardNumber && <p className="mt-1 text-[12px] text-[#EF4444]">{errors.cardNumber}</p>}
-              </div>
-
-              <div className="mb-4 grid grid-cols-2 gap-3">
-                <div>
-                  <label className="mb-1.5 block text-[13px] font-semibold text-[#0D1B2A]">유효기간</label>
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    placeholder="MM / YY"
-                    value={form.expiry}
-                    onChange={(e) => updateForm('expiry', formatExpiry(e.target.value))}
-                    className={cn('w-full rounded-[10px] border px-4 py-3 text-[14px] text-[#0D1B2A] outline-none placeholder:text-[#C0CAD4] transition-colors', errors.expiry ? 'border-[#EF4444]' : 'border-[rgba(0,100,180,0.15)] focus:border-[#0099CC]')}
-                  />
-                  {errors.expiry && <p className="mt-1 text-[12px] text-[#EF4444]">{errors.expiry}</p>}
-                </div>
-                <div>
-                  <label className="mb-1.5 block text-[13px] font-semibold text-[#0D1B2A]">CVV</label>
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    placeholder="000"
-                    value={form.cvv}
-                    onChange={(e) => updateForm('cvv', e.target.value.replace(/\D/g, '').slice(0, 4))}
-                    className={cn('w-full rounded-[10px] border px-4 py-3 text-[14px] text-[#0D1B2A] outline-none placeholder:text-[#C0CAD4] transition-colors', errors.cvv ? 'border-[#EF4444]' : 'border-[rgba(0,100,180,0.15)] focus:border-[#0099CC]')}
-                  />
-                  {errors.cvv && <p className="mt-1 text-[12px] text-[#EF4444]">{errors.cvv}</p>}
-                </div>
-              </div>
-
-              <div className="mb-5">
-                <label className="mb-1.5 block text-[13px] font-semibold text-[#0D1B2A]">카드 소유자 이름</label>
-                <input
-                  type="text"
-                  placeholder="HONG GILDONG"
-                  value={form.name}
-                  onChange={(e) => updateForm('name', e.target.value)}
-                  className={cn('w-full rounded-[10px] border px-4 py-3 text-[14px] text-[#0D1B2A] outline-none placeholder:text-[#C0CAD4] transition-colors', errors.name ? 'border-[#EF4444]' : 'border-[rgba(0,100,180,0.15)] focus:border-[#0099CC]')}
-                />
-                {errors.name && <p className="mt-1 text-[12px] text-[#EF4444]">{errors.name}</p>}
-              </div>
+              )}
 
               <div className="mb-5">
                 <p className="mb-2 text-[13px] font-semibold text-[#0D1B2A]">쿠폰 / 할인 코드</p>
                 <CouponInput applied={coupon} onApply={setCoupon} onRemove={() => setCoupon(null)} />
-              </div>
-
-              <div className="mb-5 flex items-center gap-2 rounded-[8px] bg-[rgba(0,153,204,0.06)] px-3 py-2.5">
-                <Icon name="shield" size={14} color="#0099CC" />
-                <span className="text-[12px] text-[#5A6F8A]">결제 정보는 서버에 저장하지 않으며, 구독 상태만 안전하게 반영합니다.</span>
               </div>
 
               <label className={cn('mb-5 flex cursor-pointer items-start gap-3 rounded-[10px] border p-3.5 transition-colors', agreed ? 'border-[rgba(0,153,204,0.3)] bg-[rgba(0,153,204,0.04)]' : errors.agreed ? 'border-[#EF4444]' : 'border-[rgba(0,100,180,0.12)]')}>
@@ -346,7 +327,11 @@ export default function SubscriptionCheckout() {
                 disabled={loading}
                 className="w-full rounded-[12px] bg-[linear-gradient(135deg,#0099CC,#7C3AED)] py-4 text-[15px] font-bold text-white shadow-[0_4px_16px_rgba(0,153,204,0.35)] transition-all duration-200 hover:shadow-[0_6px_24px_rgba(0,153,204,0.45)] hover:opacity-95 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                {loading ? '결제 처리 중...' : `${formatPrice(finalPrice)} 결제하고 구독 시작`}
+                {loading
+                  ? '이동 중...'
+                  : finalPrice > 0
+                    ? `${formatPrice(finalPrice)} 결제하고 구독 시작`
+                    : '구독 시작하기'}
               </button>
 
               <button type="button" onClick={() => navigate('/subscription')} className="mt-3 flex w-full items-center justify-center gap-1.5 py-2 text-[13px] text-[#8A9AB0] transition-colors hover:text-[#5A6F8A]">

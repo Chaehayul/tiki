@@ -1,10 +1,10 @@
 ﻿import { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { useLocation } from "react-router-dom";
+import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import Header from "../components/Header";
 import Footer from "../components/Footer";
 import MobileTab from "../components/MobileTab";
 import ToastPopup from "../components/toastpopup";
-import { clearAuthSession, getUploadAnalysis, listUploads } from "../api/apiClient";
+import { clearAuthSession, getProjectIntegrations, getUploadAnalysis, listProjectMeetings, listUploads } from "../api/apiClient";
 
 /* ─── 데이터 ─────────────────────────────────────────── */
 const TX = [
@@ -2980,6 +2980,51 @@ function AudioPlayer({ curTime, playing, spdIdx, onSeek, onTogglePlay, onCycleSp
 }
 
 /* ─── 연동 컨트롤 타워 ───────────────────────────────── */
+// Replaces the old IntegrationControlTower's fake "업무 보내기"/simulated issue
+// count with the same real, project-level connection status already shown on
+// Dashboard.jsx/ProjectMeetings.jsx — sync itself is automatic (see
+// external_integration_service.sync_connected_meeting_resources), so there is
+// nothing to manually "send" here anymore.
+function RealIntegrationStatus({ connectedProviders, onManage }) {
+  const jiraConnected = Boolean(connectedProviders?.jira);
+  const notionConnected = Boolean(connectedProviders?.notion);
+  return (
+    <div
+      className="lg:w-auto flex-shrink-0 rounded-2xl px-4 py-4 flex flex-wrap items-center gap-3"
+      style={{ border: "1px solid rgba(0,100,180,0.12)", background: "rgba(0,153,204,0.03)" }}
+    >
+      <p className="text-xs font-semibold text-slate-400">연동 현황</p>
+      <span
+        className="inline-flex items-center gap-1.5 text-xs font-bold px-2.5 py-1 rounded-full"
+        style={{
+          background: jiraConnected ? "rgba(16,185,129,0.1)" : "rgba(90,111,138,0.08)",
+          color: jiraConnected ? "#10B981" : "#5A6F8A",
+        }}
+      >
+        Jira {jiraConnected ? "연동됨" : "미연동"}
+      </span>
+      <span
+        className="inline-flex items-center gap-1.5 text-xs font-bold px-2.5 py-1 rounded-full"
+        style={{
+          background: notionConnected ? "rgba(16,185,129,0.1)" : "rgba(90,111,138,0.08)",
+          color: notionConnected ? "#10B981" : "#5A6F8A",
+        }}
+      >
+        Notion {notionConnected ? "연동됨" : "미연동"}
+      </span>
+      {!(jiraConnected && notionConnected) && (
+        <button
+          type="button"
+          onClick={onManage}
+          className="text-xs font-bold text-[#0099CC] hover:underline cursor-pointer"
+        >
+          프로젝트 설정에서 연동하기
+        </button>
+      )}
+    </div>
+  );
+}
+
 function IntegrationControlTower({ services, auditLog, onBadgeClick, onIssueOpen, isMobile }) {
   const generatedLogs = auditLog.filter(isGeneratedAuditLog);
   const generatedCountByService = generatedLogs.reduce((acc, log) => {
@@ -3079,6 +3124,8 @@ function IssueButton({ onClick, issuingGlobal = false }) {
 /* ─── Main App ───────────────────────────────────────── */
 export default function TikiSprint12() {
   const location = useLocation();
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [curTime, setCurTime] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [spdIdx, setSpdIdx] = useState(0);
@@ -3092,6 +3139,18 @@ export default function TikiSprint12() {
 
   const [services, setServices] = useState(INITIAL_INTEGRATION_SERVICES);
   const [auditLog, setAuditLog] = useState([]);
+
+  const [connectedProviders, setConnectedProviders] = useState({ jira: false, notion: false });
+  useEffect(() => {
+    const projectId = location?.state?.projectId || searchParams.get("projectId");
+    if (!projectId) return;
+    getProjectIntegrations(projectId)
+      .then((result) => setConnectedProviders({
+        jira: Boolean(result?.jira?.connected),
+        notion: Boolean(result?.notion?.connected),
+      }))
+      .catch(() => setConnectedProviders({ jira: false, notion: false }));
+  }, [location?.state, searchParams]);
   const mergedAuditLog = useMemo(() => {
     const state = location?.state || {};
     const storedLogs = buildStoredIntegrationLogs({
@@ -3128,14 +3187,32 @@ export default function TikiSprint12() {
   // rule-based heuristic summary (see LangChainAnalysisService.summarize_and_extract_tickets) —
   // the content is a best-effort stand-in, not a real AI analysis, so it needs review.
   const [analysisDegraded, setAnalysisDegraded] = useState(false);
+  // Whether the underlying source actually had audio (real speaker/timestamp
+  // dialogue) vs. a document/direct-write meeting with no such thing. Defaults
+  // to true only until the real fetch below resolves and overrides it — see
+  // `transcriptEnabled` further down, which used to guess this from
+  // navigation-state hints that are never actually populated on a normal
+  // click-through, silently defaulting to "audio" for every meeting.
+  const [sourceIsAudio, setSourceIsAudio] = useState(true);
 
   useEffect(() => {
     const state = location?.state || {};
-    const meetingId = state.meetingId;
-    const projectId = state.projectId;
+    // location.state only survives an in-app navigation (clicking through from
+    // the meeting list) — a refresh, direct URL visit, or reopened bookmark
+    // loses it entirely, which used to fall back straight to the placeholder
+    // content with no way to recover. Fall back to the URL's query params
+    // instead, and mirror state into the URL below so a refresh keeps working.
+    const meetingId = state.meetingId || searchParams.get("meetingId");
+    const projectId = state.projectId || searchParams.get("projectId");
     if (!meetingId || !projectId) {
       setRealDataStatus("missing");
       return undefined;
+    }
+    if (state.meetingId && state.projectId && (searchParams.get("meetingId") !== state.meetingId || searchParams.get("projectId") !== state.projectId)) {
+      const next = new URLSearchParams(searchParams);
+      next.set("meetingId", state.meetingId);
+      next.set("projectId", state.projectId);
+      setSearchParams(next, { replace: true });
     }
 
     let cancelled = false;
@@ -3154,15 +3231,81 @@ export default function TikiSprint12() {
         const match = (Array.isArray(uploads) ? uploads : []).find(
           (file) => String(file?.meeting_id || "") === String(meetingId)
         );
+
         if (!match) {
-          if (!cancelled) setRealDataStatus("missing");
+          // Not every meeting comes from a file upload — one created via
+          // "회의록 직접 작성" has real summary/action_items straight on the
+          // Meeting record but no uploaded_file/analysis_result to look up here.
+          // Fall back to the meeting itself instead of declaring it "missing".
+          const meetings = await listProjectMeetings(projectId).catch(() => []);
+          const meeting = (Array.isArray(meetings) ? meetings : []).find(
+            (m) => String(m?.id || "") === String(meetingId)
+          );
+          if (!meeting) {
+            if (!cancelled) setRealDataStatus("missing");
+            return;
+          }
+          if (cancelled) return;
+          // No file was ever uploaded/transcribed for this meeting, so there is
+          // no real transcript — clear the placeholder script rather than show
+          // fake dialogue alongside the real summary/action items above.
+          setTxSource([]);
+          setSourceIsAudio(false);
+
+          const rawItems = Array.isArray(meeting.action_items) ? meeting.action_items : [];
+          // "회의록 직접 작성" stores the structured summary (keywords/decisions/
+          // issues/next agenda) in a hidden __tiki_meeting_meta marker item
+          // inside action_items, not as separate Meeting columns — pull it out
+          // here rather than showing it as a blank to-do row.
+          const metaItem = rawItems.find((item) => item?.__tiki_meta || item?.type === "__tiki_meeting_meta");
+          const visibleItems = rawItems.filter((item) => !(item?.__tiki_meta || item?.type === "__tiki_meeting_meta"));
+          const metaData = metaItem?.data || {};
+          const priorityToLevel = { 높음: "high", 보통: "medium", 낮음: "low" };
+
+          setSummaryData((prev) => ({
+            ...prev,
+            summary: metaData.summary || meeting.summary || prev.summary,
+            keywords: Array.isArray(metaData.keywords) && metaData.keywords.length
+              ? metaData.keywords.map((kw) => ({ text: kw, type: "cyan" }))
+              // Older manually-written meetings (before the meta marker existed)
+              // never got a keywords list, but the meeting's own tags are
+              // effectively the same thing — use those instead of showing blank.
+              : Array.isArray(meeting.tags) && meeting.tags.length
+                ? meeting.tags.map((tag) => ({ text: String(tag || "").replace(/^#/, ""), type: "cyan" })).filter((k) => k.text)
+                : [],
+            decisions: Array.isArray(metaData.decisions) && metaData.decisions.length
+              ? metaData.decisions.map((d) => (typeof d === "string" ? d : d?.text || "")).filter(Boolean)
+              : [],
+            issues: Array.isArray(metaData.issues) && metaData.issues.length
+              ? metaData.issues.map((i) => ({ level: priorityToLevel[i?.priority] || "medium", text: i?.text || "" })).filter((i) => i.text)
+              : [],
+            next_agenda: typeof metaData.nextAgenda === "string" && metaData.nextAgenda.trim()
+              ? metaData.nextAgenda.split("\n").map((line) => line.replace(/^-\s*/, "").trim()).filter(Boolean)
+              : [],
+          }));
+          if (visibleItems.length > 0) {
+            setSummaryActions(visibleItems.map(normalizeAction));
+          }
+          setMeetingHeader({ title: meeting.title || "", date: meeting.date || "" });
+          setAnalysisDegraded(false);
+          setRealDataStatus("loaded");
           return;
         }
+
         const analysis = await getUploadAnalysis(match.id);
         if (cancelled || !analysis) return;
 
-        if (Array.isArray(analysis.tx) && analysis.tx.length > 0) {
+        // Document uploads (docx/hwp/txt/pdf) go through the same pipeline as
+        // audio and get synthetic "script" rows built by splitting sentences —
+        // fabricated speaker labels and timestamps with no real dialogue behind
+        // them. Only actually-transcribed audio (extraction_method "whisper")
+        // should render as a speaker/timestamp script.
+        const isAudio = analysis.extraction_method === "whisper";
+        setSourceIsAudio(isAudio);
+        if (isAudio && Array.isArray(analysis.tx) && analysis.tx.length > 0) {
           setTxSource(analysis.tx);
+        } else {
+          setTxSource([]);
         }
         setSummaryData((prev) => ({
           ...prev,
@@ -3301,7 +3444,7 @@ export default function TikiSprint12() {
     return "audio";
   }, [location?.search, location?.state]);
 
-  const transcriptEnabled = uploadKind === "audio";
+  const transcriptEnabled = sourceIsAudio;
   const transcriptVisibleResolved = transcriptEnabled && transcriptVisible;
 
   const stateLabels = {
@@ -3604,12 +3747,12 @@ export default function TikiSprint12() {
               </div>
             </div>
 
-            <IntegrationControlTower
-              services={services}
-              auditLog={mergedAuditLog}
-              onBadgeClick={handleBadgeClick}
-              onIssueOpen={() => setIssueOpen(true)}
-              isMobile={isMobile}
+            <RealIntegrationStatus
+              connectedProviders={connectedProviders}
+              onManage={() => {
+                const projectId = location?.state?.projectId || searchParams.get("projectId");
+                navigate(`/configuration?projectId=${projectId}&tab=integration`);
+              }}
             />
           </div>
         </div>
@@ -3734,15 +3877,17 @@ export default function TikiSprint12() {
         </div>
       </div>
 
-      <AudioPlayer
-        curTime={curTime}
-        playing={playing}
-        spdIdx={spdIdx}
-        onSeek={v => setCurTime(v)}
-        onTogglePlay={() => setPlaying(p => !p)}
-        onCycleSpeed={() => setSpdIdx(i => (i + 1) % SPEEDS.length)}
-        bottomOffset={isMobile ? "calc(74px + env(safe-area-inset-bottom, 0px))" : 0}
-      />
+      {txSource.length > 0 && (
+        <AudioPlayer
+          curTime={curTime}
+          playing={playing}
+          spdIdx={spdIdx}
+          onSeek={v => setCurTime(v)}
+          onTogglePlay={() => setPlaying(p => !p)}
+          onCycleSpeed={() => setSpdIdx(i => (i + 1) % SPEEDS.length)}
+          bottomOffset={isMobile ? "calc(74px + env(safe-area-inset-bottom, 0px))" : 0}
+        />
+      )}
 
       {isMobile && <MobileTab active={activeTab} onChange={setActiveTab} />}
 

@@ -1,10 +1,10 @@
 ﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import Header from '../components/Header';
 import Footer from '../components/Footer';
 import MobileTab from '../components/MobileTab';
 import ToastPopup from '../components/toastpopup';
-import { listProjectMeetings, updateProjectMeeting } from '../api/apiClient';
+import { getProjectIntegrations, listProjectMeetings, updateProjectMeeting } from '../api/apiClient';
 
 const MANUAL_MEETING_RECORDS_KEY = 'tiki_manual_minutes_records';
 const PROJECT_OVERRIDE_STORAGE_KEY = 'tiki_project_overrides';
@@ -86,6 +86,51 @@ const mergeMinutesWithServerMeeting = (minutes, meeting) => {
     meetingId: minutes.meetingId || meeting.id || '',
     serverMeetingId: minutes.serverMeetingId || meeting.id || '',
     actions: nextActions,
+  };
+};
+
+// Reverse of buildServerManualActionItems — reconstructs a full `minutes`
+// object straight from a real backend Meeting when there is no localStorage
+// record for it at all (e.g. a fresh page load with no navigation state to
+// carry the in-memory copy). The structured summary/decisions/issues/next
+// agenda live inside a hidden __tiki_meeting_meta marker in action_items.
+const buildMinutesFromServerMeeting = (meeting, { recordId, projectId, projectName } = {}) => {
+  const items = Array.isArray(meeting?.action_items) ? meeting.action_items : [];
+  const metaItem = items.find((item) => item?.__tiki_meta || item?.type === '__tiki_meeting_meta');
+  const visibleItems = items.filter((item) => !(item?.__tiki_meta || item?.type === '__tiki_meeting_meta'));
+  const data = metaItem?.data || {};
+
+  return {
+    id: recordId || String(meeting?.id || '').trim() || `manual-${Date.now()}`,
+    meetingId: String(meeting?.id || '').trim(),
+    serverMeetingId: String(meeting?.id || '').trim(),
+    projectId: String(projectId || '').trim(),
+    projectName: projectName || '',
+    title: meeting?.title || '회의 제목 없음',
+    date: meeting?.date || '-',
+    rawDate: '',
+    type: meeting?.meeting_type || '정기',
+    participants: Array.isArray(meeting?.participants) ? meeting.participants : [],
+    summary: data.summary || meeting?.summary || '',
+    // Older records (created before the meta marker existed) never got a
+    // keywords list, but the meeting's own tags serve the same purpose.
+    keywords: Array.isArray(data.keywords) && data.keywords.length
+      ? data.keywords
+      : Array.isArray(meeting?.tags)
+        ? meeting.tags.map((tag) => String(tag || '').replace(/^#/, '')).filter(Boolean)
+        : [],
+    decisions: Array.isArray(data.decisions) ? data.decisions : [],
+    issues: Array.isArray(data.issues) ? data.issues : [],
+    nextAgenda: typeof data.nextAgenda === 'string' ? data.nextAgenda : '',
+    actions: visibleItems.map((item) => ({
+      id: item?.id || '',
+      text: item?.text || item?.title || '',
+      assignee: item?.assignee || '',
+      dueDate: item?.dueDate || item?.due || '',
+      checked: item?.status === '수행완료' || Boolean(item?.checked),
+      status: item?.status || '검토대기',
+    })),
+    createdAt: meeting?.created_at || new Date().toISOString(),
   };
 };
 
@@ -812,6 +857,50 @@ function IssueButton({ onClick, issuingGlobal = false }) {
   );
 }
 
+// Replaces the old IntegrationControlTower's fake "업무 보내기"/simulated issue
+// count with the same real, project-level connection status already shown on
+// Dashboard.jsx/ProjectMeetings.jsx — sync itself is automatic, so there is
+// nothing to manually "send" here anymore.
+function RealIntegrationStatus({ connectedProviders, onManage }) {
+  const jiraConnected = Boolean(connectedProviders?.jira);
+  const notionConnected = Boolean(connectedProviders?.notion);
+  return (
+    <div
+      className="lg:w-auto flex-shrink-0 rounded-2xl px-4 py-4 flex flex-wrap items-center gap-3"
+      style={{ border: '1px solid rgba(0,100,180,0.12)', background: 'rgba(0,153,204,0.03)' }}
+    >
+      <p className="text-xs font-semibold text-slate-400">연동 현황</p>
+      <span
+        className="inline-flex items-center gap-1.5 text-xs font-bold px-2.5 py-1 rounded-full"
+        style={{
+          background: jiraConnected ? 'rgba(16,185,129,0.1)' : 'rgba(90,111,138,0.08)',
+          color: jiraConnected ? '#10B981' : '#5A6F8A',
+        }}
+      >
+        Jira {jiraConnected ? '연동됨' : '미연동'}
+      </span>
+      <span
+        className="inline-flex items-center gap-1.5 text-xs font-bold px-2.5 py-1 rounded-full"
+        style={{
+          background: notionConnected ? 'rgba(16,185,129,0.1)' : 'rgba(90,111,138,0.08)',
+          color: notionConnected ? '#10B981' : '#5A6F8A',
+        }}
+      >
+        Notion {notionConnected ? '연동됨' : '미연동'}
+      </span>
+      {!(jiraConnected && notionConnected) && (
+        <button
+          type="button"
+          onClick={onManage}
+          className="text-xs font-bold text-[#0099CC] hover:underline cursor-pointer"
+        >
+          프로젝트 설정에서 연동하기
+        </button>
+      )}
+    </div>
+  );
+}
+
 function IntegrationControlTower({ services, auditLog, onBadgeClick, onIssueOpen, isMobile, issuing }) {
   const latestLog = auditLog[auditLog.length - 1] || null;
   const hasIssued = Boolean(latestLog);
@@ -1193,6 +1282,7 @@ function buildInitialServices(minutes) {
 export default function MeetingManualDetail() {
   const navigate = useNavigate();
   const location = useLocation();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
   const [activeTab, setActiveTab] = useState('home');
@@ -1238,7 +1328,27 @@ export default function MeetingManualDetail() {
     window.scrollTo(0, 0);
   }, []);
 
-  const recordId = location.state?.recordId || location.state?.meetingId || '';
+  // location.state only survives an in-app navigation from the meeting list —
+  // a refresh or direct URL visit loses it, which used to fall back straight to
+  // placeholder content with no way to recover. Fall back to the URL's query
+  // params instead, and mirror state into the URL so a refresh keeps working.
+  const recordId = location.state?.recordId || location.state?.meetingId || searchParams.get('recordId') || '';
+  const urlProjectId = location.state?.projectId || searchParams.get('projectId') || '';
+
+  useEffect(() => {
+    const stateRecordId = location.state?.recordId || location.state?.meetingId;
+    const stateProjectId = location.state?.projectId;
+    if (
+      (stateRecordId && searchParams.get('recordId') !== stateRecordId) ||
+      (stateProjectId && searchParams.get('projectId') !== stateProjectId)
+    ) {
+      const next = new URLSearchParams(searchParams);
+      if (stateRecordId) next.set('recordId', stateRecordId);
+      if (stateProjectId) next.set('projectId', stateProjectId);
+      setSearchParams(next, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.state]);
 
   const initialRecord = useMemo(() => {
     const all = readManualMeetingRecords();
@@ -1259,30 +1369,34 @@ export default function MeetingManualDetail() {
 
     const fromMeeting = location.state?.meeting;
     if (fromMeeting && typeof fromMeeting === 'object') {
-      const isManualMeeting = fromMeeting.detailType === 'manual' || location.state?.detailType === 'manual';
+      // fromMeeting is the real backend Meeting object — its structured summary/
+      // decisions/issues/next agenda and real to-do items live inside a hidden
+      // __tiki_meeting_meta marker in action_items, so reconstruct from that
+      // instead of hardcoding them empty.
+      const built = buildMinutesFromServerMeeting(fromMeeting, {
+        recordId: recordId || undefined,
+        projectId: location.state?.projectId,
+        projectName: location.state?.projectName,
+      });
       return {
-        id: recordId || String(fromMeeting.id || '').trim() || `manual-${Date.now()}`,
-        projectId: String(location.state?.projectId || '').trim(),
-        projectName: location.state?.projectName || '',
-        title: fromMeeting.title || '회의 제목 없음',
-        date: fromMeeting.date || '-',
-        rawDate: '',
-        type: fromMeeting.type || '정기',
+        ...built,
+        keywords: built.keywords.length
+          ? built.keywords
+          : Array.isArray(fromMeeting.tags)
+            ? fromMeeting.tags.map((tag) => String(tag || '').replace(/^#/, '')).filter(Boolean)
+            : [],
         participants: buildAcceptedProjectParticipants({
           projectId: location.state?.projectId,
           state: location.state,
         }),
-        summary: fromMeeting.summary || '',
-        keywords: Array.isArray(fromMeeting.tags)
-          ? fromMeeting.tags.map((tag) => String(tag || '').replace(/^#/, '')).filter(Boolean)
-          : [],
-        decisions: [],
-        actions: [],
-        issues: [],
-        nextAgenda: '',
-        createdAt: new Date().toISOString(),
       };
     }
+
+    // A specific recordId was requested (from the URL, surviving a refresh)
+    // but isn't in localStorage and there's no navigation state to build from —
+    // don't guess by grabbing an unrelated recent record here. A dedicated
+    // effect below fetches the real meeting from the backend instead.
+    if (recordId) return null;
 
     const values = Object.values(all);
     if (values.length === 0) return null;
@@ -1297,6 +1411,47 @@ export default function MeetingManualDetail() {
   const [minutes, setMinutes] = useState(initialRecord);
   const [services, setServices] = useState(() => (initialRecord ? buildInitialServices(initialRecord) : []));
   const [auditLog, setAuditLog] = useState([]);
+
+  const [connectedProviders, setConnectedProviders] = useState({ jira: false, notion: false });
+  useEffect(() => {
+    const projectId = minutes?.projectId || location.state?.projectId || urlProjectId;
+    if (!projectId) return;
+    getProjectIntegrations(projectId)
+      .then((result) => setConnectedProviders({
+        jira: Boolean(result?.jira?.connected),
+        notion: Boolean(result?.notion?.connected),
+      }))
+      .catch(() => setConnectedProviders({ jira: false, notion: false }));
+  }, [minutes?.projectId, location.state, urlProjectId]);
+
+  // Nothing local and no navigation state to build from (a refresh/direct URL
+  // visit on a meeting that only ever lived on the server) — fetch the real
+  // meeting directly instead of showing an empty/placeholder page.
+  useEffect(() => {
+    if (minutes || !recordId || !urlProjectId) return undefined;
+    let cancelled = false;
+    listProjectMeetings(urlProjectId)
+      .then((meetings) => {
+        if (cancelled) return;
+        const serverMeeting = (Array.isArray(meetings) ? meetings : []).find(
+          (m) => String(m?.id || '') === String(recordId)
+        );
+        if (!serverMeeting) return;
+        const built = buildMinutesFromServerMeeting(serverMeeting, {
+          recordId,
+          projectId: urlProjectId,
+        });
+        setMinutes(built);
+        setServices(buildInitialServices(built));
+      })
+      .catch(() => {
+        if (!cancelled) showToast('회의록을 불러오지 못했습니다.', 'error');
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recordId, urlProjectId]);
 
   const mergedAuditLog = useMemo(() => {
     const storedLogs = buildStoredIntegrationLogs({
@@ -2130,13 +2285,12 @@ export default function MeetingManualDetail() {
               </div>
             </div>
 
-            <IntegrationControlTower
-              services={services}
-              auditLog={mergedAuditLog}
-              onBadgeClick={setDetailSvc}
-              onIssueOpen={openIssueModal}
-              isMobile={isMobile}
-              issuing={issuing}
+            <RealIntegrationStatus
+              connectedProviders={connectedProviders}
+              onManage={() => {
+                const projectId = minutes?.projectId || location.state?.projectId || urlProjectId;
+                navigate(`/configuration?projectId=${projectId}&tab=integration`);
+              }}
             />
           </div>
         </div>

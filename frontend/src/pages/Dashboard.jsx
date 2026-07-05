@@ -1343,11 +1343,16 @@ export default function App() {
   };
 
   const handleSaveEdit = async () => {
-    const shouldComplete = selectedItem?.status === "검토완료";
+    // Saving edited fields (title/description/due date/assignee) must never
+    // change the task's status — that was previously hardcoded to advance it
+    // one stage on every save (검토대기 -> 검토완료 -> 수행완료), so just editing
+    // a description or due date silently marked the task reviewed/done without
+    // the user ever pressing the actual status buttons. Status only ever
+    // changes via those dedicated buttons now.
     const updatedItem = {
       ...selectedItem,
       ...editForm,
-      status: shouldComplete ? "수행완료" : "검토완료"
+      status: selectedItem?.status,
     };
     setActionItems(prev => prev.map(item => {
       if (item.id === selectedItem.id) {
@@ -1359,12 +1364,7 @@ export default function App() {
       const { serverSync } = (await persistMeetingActionItemUpdate(selectedItem, updatedItem)) || {};
       applyServerSync(selectedItem.id, serverSync);
       closePanel();
-      triggerToast(
-        shouldComplete
-          ? "수행 완료 처리되었습니다."
-          : "해야 할 일이 성공적으로 수정되었습니다.",
-        "success"
-      );
+      triggerToast("해야 할 일이 성공적으로 수정되었습니다.", "success");
     } catch (error) {
       triggerToast(error?.message || "해야 할 일 저장에 실패했습니다.", "warning");
     }

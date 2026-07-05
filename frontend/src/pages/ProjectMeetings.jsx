@@ -8,6 +8,20 @@ import { deleteProjectMeeting, getProject, getProjectIntegrations, listProjectMe
 const isTikiMeetingMetaItem = (item) =>
     Boolean(item && typeof item === 'object' && (item.__tiki_meta || item.type === '__tiki_meeting_meta'));
 
+// Older "회의록 직접 작성" records (before the __tiki_meeting_meta marker existed)
+// have no meta item, but their action items carry a distinctive synthetic
+// description ("업무: .../담당자: .../마감일: .../회의 내용 기반: ...") that
+// nothing else produces — same signature Dashboard.jsx's
+// normalizeEditableDescription already uses to detect and strip it.
+const MANUAL_DESCRIPTION_SIGNATURE = /^(업무|담당자|마감일|회의 내용 기반):\s*/m;
+
+const isManualMeetingRecord = (rawItems) => {
+    const items = Array.isArray(rawItems) ? rawItems : [];
+    return items.some(
+        (item) => isTikiMeetingMetaItem(item) || MANUAL_DESCRIPTION_SIGNATURE.test(String(item?.description || ''))
+    );
+};
+
 function statusBadgeClass(status) {
     if (status === '완료') return 'bg-[#E6F4EA] text-[#10B981]';
     if (status === '보류') return 'bg-[#FCE8E6] text-[#EF4444]';
@@ -447,7 +461,14 @@ function normalizeProject(project) {
               title: meeting.title || '회의 제목 없음',
               status: meeting.status || '진행 중',
               type: meeting.type || '정기',
-              detailType: meeting.detailType || 'uploaded',
+              // "회의록 직접 작성" tags itself via a __tiki_meeting_meta marker
+              // baked into action_items, persisted on the real backend Meeting —
+              // trust that over meeting.detailType, which only ever lived in a
+              // client-side override and reverts to the 'uploaded' default the
+              // moment a fresh getProject() fetch supersedes that override.
+              detailType: isManualMeetingRecord(meeting.action_items || meeting.actionItemsList)
+                ? 'manual'
+                : meeting.detailType || 'uploaded',
               detailRecordId: meeting.detailRecordId || '',
               tags: Array.isArray(meeting.tags) && meeting.tags.length > 0 ? meeting.tags : ['#회의'],
               participants: Array.isArray(meeting.participants) ? meeting.participants.filter(Boolean) : [],
@@ -455,6 +476,10 @@ function normalizeProject(project) {
               actionItems: typeof meeting.actionItems === 'number' ? meeting.actionItems : 0,
               action_items: (Array.isArray(meeting.action_items) ? meeting.action_items : Array.isArray(meeting.actionItemsList) ? meeting.actionItemsList : []).filter((item) => !isTikiMeetingMetaItem(item)),
               actionItemsList: (Array.isArray(meeting.actionItemsList) ? meeting.actionItemsList : Array.isArray(meeting.action_items) ? meeting.action_items : []).filter((item) => !isTikiMeetingMetaItem(item)),
+              // Unfiltered copy (meta marker included) for MeetingManualDetail.jsx,
+              // which needs the hidden __tiki_meeting_meta item to reconstruct the
+              // structured summary/decisions/issues/next agenda.
+              rawActionItems: Array.isArray(meeting.action_items) ? meeting.action_items : Array.isArray(meeting.actionItemsList) ? meeting.actionItemsList : [],
               jiraLinked: typeof meeting.jiraLinked === 'number' ? meeting.jiraLinked : 0,
           }))
         : [];
@@ -1248,7 +1273,14 @@ export default function ProjectMeetings() {
         }
 
         const manualRecords = readManualMeetingRecords();
-        const serverMeetings = Array.isArray(project.meetings) ? project.meetings : [];
+        // A just-deleted meeting is only optimistically hidden client-side
+        // (deletedMeetingIds) until the backend delete resolves and the next
+        // project refetch drops it for good — without filtering here too, its
+        // to-do items and "회의록 출처" source label kept showing up in the
+        // 해야 할 일 tab even though the meeting itself was gone from the list.
+        const serverMeetings = (Array.isArray(project.meetings) ? project.meetings : []).filter(
+            (meeting) => !deletedMeetingIds.includes(meeting?.id)
+        );
         const serverMeetingIds = new Set(serverMeetings.map((meeting) => String(meeting?.id || '')).filter(Boolean));
         const serverMeetingTitles = new Set(serverMeetings.map((meeting) => String(meeting?.title || '').trim()).filter(Boolean));
         const serverMeetingHasActions = (record) => {
@@ -1382,7 +1414,7 @@ export default function ProjectMeetings() {
                 meeting: null,
             }))
         );
-    }, [project]);
+    }, [project, deletedMeetingIds]);
 
     const allActionItems = actionItems;
     const computedProjectStatus = useMemo(() => {
@@ -1438,13 +1470,14 @@ export default function ProjectMeetings() {
     }, [allActionItems]);
     const actionSourceOptions = useMemo(() => {
         const meetingTitles = (project?.meetings || [])
+            .filter((meeting) => !deletedMeetingIds.includes(meeting?.id))
             .map((meeting) => String(meeting?.title || '').trim())
             .filter(Boolean);
         const itemSources = allActionItems
             .map((item) => String(item?.source || '').trim())
             .filter(Boolean);
         return ['전체', ...new Set([...meetingTitles, ...itemSources])];
-    }, [project?.meetings, allActionItems]);
+    }, [project?.meetings, allActionItems, deletedMeetingIds]);
 
     const actionMetricItems = useMemo(() => {
         return allActionItems.filter((item) => {
@@ -2390,7 +2423,7 @@ export default function ProjectMeetings() {
                                                                                             ? {
                                                                                                   recordId: meeting.detailRecordId || meeting.id,
                                                                                                   meetingId: meeting.id,
-                                                                                                  meeting,
+                                                                                                  meeting: { ...meeting, action_items: meeting.rawActionItems || meeting.action_items },
                                                                                                   projectId: project.id,
                                                                                                   projectName: project.name,
                                                                                               }
@@ -2720,7 +2753,7 @@ export default function ProjectMeetings() {
                                                                                                 ? {
                                                                                                       recordId: meeting.detailRecordId || meeting.id,
                                                                                                       meetingId: meeting.id,
-                                                                                                      meeting,
+                                                                                                      meeting: { ...meeting, action_items: meeting.rawActionItems || meeting.action_items },
                                                                                                       projectId: project.id,
                                                                                                       projectName: project.name,
                                                                                                   }

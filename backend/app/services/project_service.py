@@ -1,4 +1,5 @@
 import logging
+import threading
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
@@ -204,6 +205,39 @@ def list_meetings(db: Session, project_id: UUID, user_id: UUID) -> list[Meeting]
     )
 
 
+def _run_meeting_integration_sync_in_background(
+    meeting_id: UUID, project_id: UUID, task_status_changes: list[tuple[str, str]], *, force: bool
+) -> None:
+    """Sync a meeting (and any task status transitions) to Jira/Notion on its own
+    thread with its own DB session.
+
+    Jira/Notion sync makes several real, sequential external API calls per task —
+    running it inline on the request that saves a meeting/task edit made even a
+    trivial save (e.g. editing one task's description) take tens of seconds, since
+    every task in the meeting gets re-synced. Running it here lets the save return
+    immediately; the confirm links just take a few extra seconds to show up.
+    """
+    from app.db.database import SessionLocal
+    from app.services import external_integration_service
+
+    db = SessionLocal()
+    try:
+        meeting = db.get(Meeting, meeting_id)
+        if meeting is None:
+            return
+        try:
+            external_integration_service.sync_connected_meeting_resources(db, meeting, force=force)
+        except Exception:
+            logger.exception("Background sync failed for meeting %s", meeting_id)
+        for task_id, category_key in task_status_changes:
+            try:
+                external_integration_service.sync_task_status_to_jira(db, project_id, task_id, category_key)
+            except Exception:
+                logger.exception("Background task-status sync failed for task %s", task_id)
+    finally:
+        db.close()
+
+
 def create_meeting(db: Session, project_id: UUID, payload: MeetingCreate, user_id: UUID) -> Meeting:
     project = _get_project_or_404(db, project_id)
     _assert_member(project, user_id)
@@ -227,13 +261,12 @@ def create_meeting(db: Session, project_id: UUID, payload: MeetingCreate, user_i
     db.add(meeting)
     db.commit()
     db.refresh(meeting)
-    try:
-        from app.services import external_integration_service
-
-        external_integration_service.sync_connected_meeting_resources(db, meeting)
-        db.refresh(meeting)
-    except Exception:
-        logger.exception("Failed to sync new meeting %s to external integrations", meeting.id)
+    threading.Thread(
+        target=_run_meeting_integration_sync_in_background,
+        args=(meeting.id, project_id, []),
+        kwargs={"force": False},
+        daemon=True,
+    ).start()
     return meeting
 
 
@@ -276,17 +309,12 @@ def update_meeting(
         and previous_status_by_id.get(str(item.get("id"))) != str(item.get("status"))
     ]
 
-    try:
-        external_integration_service.sync_connected_meeting_resources(db, meeting, force=True)
-        db.refresh(meeting)
-    except Exception:
-        logger.exception("Failed to sync updated meeting %s to external integrations", meeting.id)
-
-    for task_id, category_key in task_status_changes:
-        try:
-            external_integration_service.sync_task_status_to_jira(db, project_id, task_id, category_key)
-        except Exception:
-            logger.exception("Failed to sync task %s status to Jira", task_id)
+    threading.Thread(
+        target=_run_meeting_integration_sync_in_background,
+        args=(meeting.id, project_id, task_status_changes),
+        kwargs={"force": True},
+        daemon=True,
+    ).start()
 
     return meeting
 

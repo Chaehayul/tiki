@@ -8,6 +8,7 @@ import {
   clearAuthSession,
   deleteCurrentUser,
   getProject,
+  getProjectIntegrations,
   getSubscription,
   listAuthSessions,
   listProjectMeetings,
@@ -79,13 +80,19 @@ const NAV_ITEMS = [
 ];
 
 const DEPARTMENTS = [
+  "기획팀",
+  "개발팀",
+  "디자인팀",
+  "마케팅팀",
+  "직접 입력",
+];
+
+const POSITIONS = [
   "개발자",
-  "마케터",
-  "PM",
   "디자이너",
+  "PM",
+  "마케터",
   "기획자",
-  "운영",
-  "기타",
   "직접 입력",
 ];
 
@@ -102,10 +109,6 @@ const DEVICES = [
   { id: 3, name: "Chrome · macOS",      location: "Busan, KR", lastActive: "3일 전",       icon: "globe", current: false },
 ];
 
-const INTEGRATIONS = [
-  { id: "jira",   name: "Jira",   desc: "TIKI 앱 개발 외 3개 프로젝트 연동",  connected: true,  color: "#0052CC", initial: "J" },
-  { id: "notion", name: "Notion", desc: "아직 연동되지 않았습니다",             connected: false, color: "#111827", initial: "N" },
-];
 
 const PROFILE_ALIAS_STORAGE_KEY = "tiki_profile_identity_aliases";
 const PLAN_TIER = { free: 0, pro: 1, team: 2 };
@@ -736,13 +739,19 @@ function dedupeByKey(items, makeKey) {
 }
 
 function HomeSection({ goTo, name, email, department, aliases = [] }) {
+  const navigate = useNavigate();
   const aliasKey = aliases.join("|");
   const [homeLoading, setHomeLoading] = useState(true);
   const [homeStats, setHomeStats] = useState({
     meetingsThisMonth: 0,
     doneActionItems: 0,
     totalActionItems: 0,
+    // Counts of *projects* connected to each provider — not a tally of individual
+    // task links, which could keep counting a task's leftover link after the
+    // project itself was disconnected.
     integrationCounts: { jira: 0, notion: 0 },
+    integratedProjectCount: 0,
+    totalProjectCount: 0,
     recentMeetings: [],
     pendingActions: [],
   });
@@ -816,16 +825,20 @@ function HomeSection({ goTo, name, email, department, aliases = [] }) {
           .forEach((project) => projectMap.set(String(project.id), project));
         const projects = Array.from(projectMap.values());
 
+        const hasSession = Boolean(localStorage.getItem("tiki_access_token"));
         const results = await Promise.all(
           projects.map((project) =>
             Promise.all([
-              localStorage.getItem("tiki_access_token") ? getProject(project.id).catch(() => null) : null,
-              localStorage.getItem("tiki_access_token") ? listProjectTickets(project.id).catch(() => []) : [],
-              localStorage.getItem("tiki_access_token") ? listProjectMeetings(project.id).catch(() => []) : [],
-            ]).then(([projectDetail, tickets, meetings]) => ({
+              hasSession ? getProject(project.id).catch(() => null) : null,
+              hasSession ? listProjectTickets(project.id).catch(() => []) : [],
+              hasSession ? listProjectMeetings(project.id).catch(() => []) : [],
+              hasSession ? getProjectIntegrations(project.id).catch(() => null) : null,
+            ]).then(([projectDetail, tickets, meetings, integrations]) => ({
               project: projectDetail || project,
               tickets: Array.isArray(tickets) ? tickets : [],
               meetings: Array.isArray(meetings) ? meetings : [],
+              jiraConnected: Boolean(integrations?.jira?.connected),
+              notionConnected: Boolean(integrations?.notion?.connected),
             }))
           )
         );
@@ -880,6 +893,8 @@ function HomeSection({ goTo, name, email, department, aliases = [] }) {
             projectId: String(record?.projectId || ""),
             projectName: record?.projectName || project.name || "",
             action_items: record.actions,
+            detailType: "manual",
+            detailRecordId: String(record?.id || ""),
           };
           meetings.push(meeting);
           record.actions.forEach((item, index) => {
@@ -922,16 +937,21 @@ function HomeSection({ goTo, name, email, department, aliases = [] }) {
             dueLabel: formatDueLabel(item.dueDate),
             status: normalizeStatus(item.status),
           }));
-        const integrationCounts = uniqueActions.reduce(
-          (counts, item) => {
-            getIntegrationKinds(item).forEach((kind) => {
-              if (kind === "jira") counts.jira += 1;
-              if (kind === "notion") counts.notion += 1;
-            });
+        // Count *projects* connected to each provider (real, current status from
+        // getProjectIntegrations) rather than individual task links — a task can
+        // keep a leftover link after its project disconnects, which would make a
+        // per-task tally wrong/stale.
+        const integrationCounts = results.reduce(
+          (counts, { jiraConnected, notionConnected }) => {
+            if (jiraConnected) counts.jira += 1;
+            if (notionConnected) counts.notion += 1;
             return counts;
           },
           { jira: 0, notion: 0 }
         );
+        const integratedProjectCount = results.filter(
+          ({ jiraConnected, notionConnected }) => jiraConnected || notionConnected
+        ).length;
 
         const enrichedMeetings = uniqueMeetings.map((meeting) => {
           const meetingTitle = String(meeting?.title || "").trim();
@@ -961,6 +981,12 @@ function HomeSection({ goTo, name, email, department, aliases = [] }) {
               dateValue: meetingDate ? meetingDate.getTime() : 0,
               actionItems: displayActions.length,
               done: displayActions.filter((item) => isActionDone(item)).length,
+              projectId: String(meeting.meeting?.projectId || ""),
+              projectName: meeting.meeting?.projectName || "",
+              meetingId: meeting.meetingId,
+              detailType: meeting.meeting?.detailType === "manual" ? "manual" : "uploaded",
+              detailRecordId: meeting.meeting?.detailRecordId || "",
+              rawMeeting: meeting.meeting,
             };
           })
           .sort((a, b) => b.dateValue - a.dateValue)
@@ -972,6 +998,8 @@ function HomeSection({ goTo, name, email, department, aliases = [] }) {
             doneActionItems: scopedActions.filter((item) => isActionDone(item)).length,
             totalActionItems: scopedActions.length,
             integrationCounts,
+            integratedProjectCount,
+            totalProjectCount: projects.length,
             recentMeetings,
             pendingActions,
           });
@@ -983,6 +1011,8 @@ function HomeSection({ goTo, name, email, department, aliases = [] }) {
             doneActionItems: 0,
             totalActionItems: 0,
             integrationCounts: { jira: 0, notion: 0 },
+            integratedProjectCount: 0,
+            totalProjectCount: 0,
             recentMeetings: [],
             pendingActions: [],
           });
@@ -1018,8 +1048,8 @@ function HomeSection({ goTo, name, email, department, aliases = [] }) {
           <StatBlock value={homeLoading ? "..." : `${homeStats.meetingsThisMonth}건`} label="이번 달 회의" />
           <StatBlock value={homeLoading ? "..." : `${homeStats.doneActionItems}/${homeStats.totalActionItems}`} label="내 업무 처리" accent />
           <StatBlock
-            value={homeLoading ? "..." : `${homeStats.integrationCounts.jira + homeStats.integrationCounts.notion}건`}
-            label="연동 완료"
+            value={homeLoading ? "..." : `${homeStats.integratedProjectCount}/${homeStats.totalProjectCount}`}
+            label="연동 완료 프로젝트"
           />
         </div>
       </div>
@@ -1042,11 +1072,34 @@ function HomeSection({ goTo, name, email, department, aliases = [] }) {
                 </div>
               )}
               {!homeLoading && homeStats.recentMeetings.map((m, i) => (
-                <div key={m.id || i}
+                <button
+                  key={m.id || i}
+                  type="button"
+                  onClick={() => {
+                    if (!m.projectId) return;
+                    const isManual = m.detailType === "manual";
+                    navigate(isManual ? "/meeting-manual-detail" : "/meeting-detail", {
+                      state: isManual
+                        ? {
+                            recordId: m.detailRecordId || m.meetingId,
+                            meetingId: m.meetingId,
+                            meeting: m.rawMeeting,
+                            projectId: m.projectId,
+                            projectName: m.projectName,
+                          }
+                        : {
+                            meetingId: m.meetingId,
+                            meeting: m.rawMeeting,
+                            projectId: m.projectId,
+                            projectName: m.projectName,
+                          },
+                    });
+                  }}
                   className={cn(
-                    "flex items-center gap-3 py-3",
+                    "flex w-full items-center gap-3 py-3 text-left transition-colors hover:bg-[rgba(0,100,180,.03)]",
                     i !== homeStats.recentMeetings.length - 1 && "border-b border-[rgba(0,100,180,.07)]"
-                  )}>
+                  )}
+                >
                   <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[rgba(0,153,204,.08)]">
                     <Icon name="checkCircle" size={15} color={m.actionItems > 0 && m.done === m.actionItems ? "#10B981" : "#0099CC"} />
                   </div>
@@ -1055,7 +1108,7 @@ function HomeSection({ goTo, name, email, department, aliases = [] }) {
                     <p className="mt-0.5 text-[11px] text-[#9BAABE]">{m.date} · 해야 할일 {m.done}/{m.actionItems} 완료</p>
                   </div>
                   <Icon name="chevronRight" size={14} color="#9BAABE" />
-                </div>
+                </button>
               ))}
             </div>
           </div>
@@ -1156,7 +1209,7 @@ function HomeSection({ goTo, name, email, department, aliases = [] }) {
                     </span>
                     <p className="text-[12px] font-bold text-[#0D1B2A]">{item.label}</p>
                     <p className="mt-0.5 text-[13px] font-black text-[#0099CC]">
-                      {homeLoading ? "..." : `${item.count}건`}
+                      {homeLoading ? "..." : `${item.count}개 프로젝트`}
                     </p>
                   </button>
                 ))}
@@ -1188,7 +1241,7 @@ function HomeSection({ goTo, name, email, department, aliases = [] }) {
   );
 }
 
-function ProfileSection({ showToast, initialName, initialEmail, initialDepartment }) {
+function ProfileSection({ showToast, initialName, initialEmail, initialDepartment, initialPosition }) {
   const fileRef = useRef(null);
   const [name, setName] = useState(initialName);
   const [email, setEmail] = useState(initialEmail);
@@ -1200,8 +1253,15 @@ function ProfileSection({ showToast, initialName, initialEmail, initialDepartmen
   const [deptSelect, setDeptSelect] = useState(initialIsCustom ? "직접 입력" : (initialDepartment || ""));
   const [deptCustom, setDeptCustom] = useState(initialIsCustom ? initialDepartment : "");
 
+  const initialPositionIsCustom = !!initialPosition && !POSITIONS.includes(initialPosition);
+  const [positionSelect, setPositionSelect] = useState(initialPositionIsCustom ? "직접 입력" : (initialPosition || ""));
+  const [positionCustom, setPositionCustom] = useState(initialPositionIsCustom ? initialPosition : "");
+
   const isCustomDept = deptSelect === "직접 입력";
   const resolvedDepartment = isCustomDept ? deptCustom.trim() : deptSelect;
+
+  const isCustomPosition = positionSelect === "직접 입력";
+  const resolvedPosition = isCustomPosition ? positionCustom.trim() : positionSelect;
 
   useEffect(() => {
     setName(initialName);
@@ -1209,8 +1269,11 @@ function ProfileSection({ showToast, initialName, initialEmail, initialDepartmen
     const nextIsCustom = !!initialDepartment && !DEPARTMENTS.includes(initialDepartment);
     setDeptSelect(nextIsCustom ? "직접 입력" : (initialDepartment || ""));
     setDeptCustom(nextIsCustom ? initialDepartment : "");
+    const nextPositionIsCustom = !!initialPosition && !POSITIONS.includes(initialPosition);
+    setPositionSelect(nextPositionIsCustom ? "직접 입력" : (initialPosition || ""));
+    setPositionCustom(nextPositionIsCustom ? initialPosition : "");
     setErrors({});
-  }, [initialName, initialEmail, initialDepartment]);
+  }, [initialName, initialEmail, initialDepartment, initialPosition]);
 
   const handleFile = (e) => {
     const f = e.target.files?.[0];
@@ -1225,6 +1288,7 @@ function ProfileSection({ showToast, initialName, initialEmail, initialDepartmen
     const nextName = name.trim();
     const nextEmail = email.trim().toLowerCase();
     const nextDepartment = resolvedDepartment.trim();
+    const nextPosition = resolvedPosition.trim();
 
     if (!nextName) nextErrors.name = "이름을 입력해 주세요.";
     if (!nextEmail) nextErrors.email = "이메일을 입력해 주세요.";
@@ -1246,6 +1310,7 @@ function ProfileSection({ showToast, initialName, initialEmail, initialDepartmen
           name: nextName,
           email: nextEmail,
           role: nextDepartment,
+          position: nextPosition,
         });
       }
 
@@ -1271,6 +1336,7 @@ function ProfileSection({ showToast, initialName, initialEmail, initialDepartmen
         email: serverUser?.email || nextEmail,
         role: serverUser?.role ?? nextDepartment,
         department: nextDepartment,
+        position: serverUser?.position ?? nextPosition,
         aliases: uniqueAliases,
       };
       localStorage.setItem("tiki_user", JSON.stringify(nextUser));
@@ -1360,6 +1426,24 @@ function ProfileSection({ showToast, initialName, initialEmail, initialDepartmen
                 onChange={e => { setDeptCustom(e.target.value); setErrors((prev) => ({ ...prev, department: "" })); }}
                 placeholder="부서명을 입력하세요"
                 error={!!errors.department}
+              />
+            )}
+          </div>
+        </Field>
+
+        <Field label="포지션">
+          <div className="space-y-2">
+            <Select
+              value={positionSelect}
+              onChange={e => setPositionSelect(e.target.value)}
+              options={POSITIONS}
+              placeholder="포지션 선택"
+            />
+            {isCustomPosition && (
+              <Input
+                value={positionCustom}
+                onChange={e => setPositionCustom(e.target.value)}
+                placeholder="포지션을 입력하세요"
               />
             )}
           </div>
@@ -1553,49 +1637,126 @@ function AccountDeleteModal({ onCancel, onDeleted, showToast }) {
 
 // ─────────────────────────────────────────────────────────────────────────
 function IntegrationsSection({ showToast }) {
-  const [items, setItems] = useState(INTEGRATIONS);
+  const navigate = useNavigate();
+  const [loading, setLoading] = useState(true);
+  const [rows, setRows] = useState([]);
+  const [searchQuery, setSearchQuery] = useState("");
 
-  const toggle = (id) => {
-    setItems(p => p.map(i => i.id === id ? { ...i, connected: !i.connected } : i));
-    const item = items.find(i => i.id === id);
-    showToast(item.connected ? `${item.name} 연동이 해제됐습니다.` : `${item.name}과 연동됐습니다.`);
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      setLoading(true);
+      try {
+        if (!localStorage.getItem("tiki_access_token")) {
+          if (!cancelled) setRows([]);
+          return;
+        }
+        const apiProjects = await listProjects().catch(() => []);
+        const projects = (Array.isArray(apiProjects) ? apiProjects : []).filter(
+          (project) => project?.id && !isTemporaryProject(project)
+        );
+        const results = await Promise.all(
+          projects.map((project) =>
+            getProjectIntegrations(project.id)
+              .then((integrations) => ({
+                id: project.id,
+                name: project.name || "이름 없는 프로젝트",
+                createdAt: project.created_at || "",
+                jiraConnected: Boolean(integrations?.jira?.connected),
+                notionConnected: Boolean(integrations?.notion?.connected),
+              }))
+              .catch(() => ({
+                id: project.id,
+                name: project.name || "이름 없는 프로젝트",
+                createdAt: project.created_at || "",
+                jiraConnected: false,
+                notionConnected: false,
+              }))
+          )
+        );
+        results.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+        if (!cancelled) setRows(results);
+      } catch (error) {
+        if (!cancelled) {
+          setRows([]);
+          showToast(error?.message || "연동 현황을 불러오지 못했습니다.", "error");
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, [showToast]);
+
+  const goToProjectIntegration = (projectId) => {
+    navigate(`/configuration?projectId=${projectId}&tab=integration`);
   };
+
+  const visibleRows = rows.filter((row) =>
+    row.name.toLowerCase().includes(searchQuery.trim().toLowerCase())
+  );
 
   return (
     <div className="space-y-8">
       <div>
         <h2 className="text-[18px] font-bold tracking-[-0.3px] text-[#0D1B2A]">외부 툴 연동</h2>
-        <p className="mt-1 text-[13px] text-[#5A6F8A]">TIKI와 연동된 외부 서비스를 한눈에 확인하고 관리하세요.</p>
+        <p className="mt-1 text-[13px] text-[#5A6F8A]">
+          Jira/Notion 연동은 프로젝트 단위로 이루어집니다. 아래에서 프로젝트별 연동 상태를 확인하고, 프로젝트를 선택하면 실제 연동/해제가 가능한 설정 화면으로 이동합니다.
+        </p>
       </div>
 
-      <div className="space-y-3">
-        {items.map(item => (
-          <div key={item.id}
-            className="flex items-center gap-4 rounded-2xl border border-[rgba(0,100,180,.1)] bg-white p-4 transition-shadow hover:shadow-[0_4px_16px_rgba(0,60,150,.07)]">
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-[14px] font-black text-white"
-              style={{ background: item.color }}>
-              {item.initial}
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2">
-                <span className="text-[14px] font-bold text-[#0D1B2A]">{item.name}</span>
-                <Badge label={item.connected ? "연동됨" : "미연동"} variant={item.connected ? "success" : "default"} />
-              </div>
-              <p className="mt-0.5 truncate text-[12px] text-[#5A6F8A]">{item.desc}</p>
-            </div>
+      {!loading && rows.length > 0 && (
+        <input
+          type="text"
+          value={searchQuery}
+          onChange={(event) => setSearchQuery(event.target.value)}
+          placeholder="프로젝트 이름으로 검색"
+          className="w-full max-w-sm rounded-xl border border-[rgba(0,100,180,.15)] bg-white px-4 py-2.5 text-[13px] text-[#0D1B2A] placeholder:text-[#9BAABE] focus:outline-none focus:ring-2 focus:ring-[rgba(0,100,180,.2)]"
+        />
+      )}
+
+      {loading ? (
+        <div className="rounded-2xl border border-[rgba(0,100,180,.1)] bg-white p-8 text-center text-[13px] text-[#9BAABE]">
+          연동 현황을 불러오는 중입니다.
+        </div>
+      ) : rows.length === 0 ? (
+        <div className="rounded-2xl border border-[rgba(0,100,180,.1)] bg-white p-8 text-center text-[13px] text-[#9BAABE]">
+          참여 중인 프로젝트가 없습니다.
+        </div>
+      ) : visibleRows.length === 0 ? (
+        <div className="rounded-2xl border border-[rgba(0,100,180,.1)] bg-white p-8 text-center text-[13px] text-[#9BAABE]">
+          검색 결과가 없습니다.
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {visibleRows.map((row) => (
             <button
-              onClick={() => toggle(item.id)}
-              className={cn(
-                "shrink-0 rounded-xl px-4 py-2 text-[12px] font-bold transition-all",
-                item.connected
-                  ? "border border-[rgba(0,0,0,.1)] bg-[rgba(0,0,0,.04)] text-[#5A6F8A] hover:border-[rgba(239,68,68,.3)] hover:bg-[rgba(239,68,68,.06)] hover:text-[#EF4444]"
-                  : "bg-[linear-gradient(135deg,#0099CC,#0077AA)] text-white shadow-[0_2px_8px_rgba(0,153,204,.25)] hover:shadow-[0_4px_14px_rgba(0,153,204,.35)]"
-              )}>
-              {item.connected ? "연동 해제" : "연동하기"}
+              key={row.id}
+              type="button"
+              onClick={() => goToProjectIntegration(row.id)}
+              className="flex w-full items-center gap-4 rounded-2xl border border-[rgba(0,100,180,.1)] bg-white p-4 text-left transition-shadow hover:shadow-[0_4px_16px_rgba(0,60,150,.07)]"
+            >
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-[14px] font-bold text-[#0D1B2A]">{row.name}</p>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <Badge
+                  label={`Jira ${row.jiraConnected ? "연동됨" : "미연동"}`}
+                  variant={row.jiraConnected ? "success" : "default"}
+                />
+                <Badge
+                  label={`Notion ${row.notionConnected ? "연동됨" : "미연동"}`}
+                  variant={row.notionConnected ? "success" : "default"}
+                />
+              </div>
+              <Icon name="chevronRight" size={14} color="#9BAABE" />
             </button>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -2116,6 +2277,7 @@ export default function MyPage() {
     ROLE_LABELS[sessionUser?.role] ||
     sessionUser?.role ||
     "";
+  const profilePosition = sessionUser?.position || "";
 
   return (
     <div className="relative min-h-screen bg-white text-[#0D1B2A] [font-family:'Pretendard']">
@@ -2203,7 +2365,7 @@ export default function MyPage() {
 
             <div className="rounded-2xl border border-[rgba(0,100,180,.1)] bg-white p-5 shadow-[0_2px_16px_rgba(0,60,150,.05)] sm:p-7">
               {activeTab === "home"          && <HomeSection goTo={setActiveTab} name={profileName} email={profileEmail} department={profileDepartment} aliases={profileAliases} />}
-              {activeTab === "profile"      && <ProfileSection showToast={showToast} initialName={profileName} initialEmail={profileEmail} initialDepartment={profileDepartment} />}
+              {activeTab === "profile"      && <ProfileSection showToast={showToast} initialName={profileName} initialEmail={profileEmail} initialDepartment={profileDepartment} initialPosition={profilePosition} />}
               {activeTab === "security"     && <SecuritySection showToast={showToast} setModal={handleModal} />}
               {activeTab === "integrations" && <IntegrationsSection showToast={showToast} />}
               {activeTab === "subscription" && <SubscriptionSection showToast={showToast} isMobile={isMobile} />}

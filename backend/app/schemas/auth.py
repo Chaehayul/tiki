@@ -21,6 +21,7 @@ class UserResponse(BaseModel):
     email: EmailStr
     name: str
     role: str | None
+    position: str | None
     is_active: bool
     created_at: datetime
 
@@ -37,6 +38,7 @@ class UserUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=100)
     email: EmailStr | None = None
     role: str | None = Field(default=None, max_length=50)
+    position: str | None = Field(default=None, max_length=50)
 
 
 class PasswordChange(BaseModel):

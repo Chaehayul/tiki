@@ -106,22 +106,25 @@ function getActionIntegrationLinks(item) {
     };
 }
 
-function hasActionIntegration(item) {
+// connectedProviders reflects the project's *current* integration status. A task can
+// carry a leftover link from before someone disconnected Jira/Notion — without this
+// filter it would still show as linked to a provider the project isn't connected to
+// anymore.
+function getActionIntegrationEntries(item, connectedProviders) {
     const links = getActionIntegrationLinks(item);
-    return Boolean(links.jira || links.notion || item?.externalLink || item?.integrationTool);
+    return [
+        links.jira && (!connectedProviders || connectedProviders.jira) ? { id: 'jira', label: 'Jira', link: links.jira } : null,
+        links.notion && (!connectedProviders || connectedProviders.notion) ? { id: 'notion', label: 'Notion', link: links.notion } : null,
+    ].filter(Boolean);
+}
+
+function hasActionIntegration(item, connectedProviders) {
+    return getActionIntegrationEntries(item, connectedProviders).length > 0;
 }
 
 function hasActionIntegrationTool(item, tool) {
     const links = getActionIntegrationLinks(item);
     return Boolean(links[String(tool || '').toLowerCase()]);
-}
-
-function getActionIntegrationEntries(item) {
-    const links = getActionIntegrationLinks(item);
-    return [
-        links.jira ? { id: 'jira', label: 'Jira', link: links.jira } : null,
-        links.notion ? { id: 'notion', label: 'Notion', link: links.notion } : null,
-    ].filter(Boolean);
 }
 
 function getMeetingDisplayStatus(meeting, actionItems) {
@@ -228,25 +231,16 @@ function buildExternalLink(tool, title = '') {
     return '';
 }
 
-const ROLE_MAP = {
-    정아름: 'PM',
-    김민수: 'Backend',
-    송지영: 'PM',
-    김소현: 'ML Engineer',
-    채하율: 'Frontend',
-    박디자이너: 'Designer',
-    외부리서처A: 'QA',
-};
+const PARTICIPANT_COLOR_PALETTE = ['#0099CC', '#10B981', '#7C3AED', '#F59E0B', '#0EA5E9', '#EF4444', '#5A6F8A'];
 
-const PARTICIPANT_COLOR_MAP = {
-    정아름: '#0099CC',
-    김민수: '#10B981',
-    송지영: '#7C3AED',
-    김소현: '#F59E0B',
-    채하율: '#0EA5E9',
-    박디자이너: '#EF4444',
-    외부리서처A: '#5A6F8A',
-};
+function colorForParticipant(name) {
+    const key = String(name || '');
+    let hash = 0;
+    for (let i = 0; i < key.length; i += 1) {
+        hash = (hash * 31 + key.charCodeAt(i)) | 0;
+    }
+    return PARTICIPANT_COLOR_PALETTE[Math.abs(hash) % PARTICIPANT_COLOR_PALETTE.length];
+}
 
 const PROJECT_OVERRIDE_STORAGE_KEY = 'tiki_project_overrides';
 const PROJECT_CATALOG_STORAGE_KEY = 'tiki_project_catalog';
@@ -435,6 +429,17 @@ function normalizeProject(project) {
         const fallbackAdmin = teamLead && participants.includes(teamLead) ? teamLead : participants[0];
         admins.push(fallbackAdmin);
     }
+    const positionByName = {
+        ...(project.positionByName && typeof project.positionByName === 'object' ? project.positionByName : {}),
+    };
+    if (teamLead && project.teamLeadPosition) positionByName[teamLead] = project.teamLeadPosition;
+    if (Array.isArray(project.members)) {
+        project.members.forEach((member) => {
+            if (typeof member === 'string') return;
+            const key = member?.name || member?.email;
+            if (key && member?.position) positionByName[key] = member.position;
+        });
+    }
     const meetings = Array.isArray(project.meetings)
         ? project.meetings.map((meeting, idx) => ({
               id: meeting.id || `m-${project.id}-${idx + 1}`,
@@ -463,6 +468,7 @@ function normalizeProject(project) {
         teamLead: teamLead || participants[0] || '담당자',
         participants,
         admins,
+        positionByName,
         myActionItems: Array.isArray(project.myActionItems) ? project.myActionItems : [],
         meetings,
     };
@@ -917,6 +923,7 @@ export default function ProjectMeetings() {
     const [isParticipantsModalOpen, setIsParticipantsModalOpen] = useState(false);
     const [participantsModalMembers, setParticipantsModalMembers] = useState([]);
     const [participantsModalTitle, setParticipantsModalTitle] = useState('회의 참여자');
+    const [participantsModalPositions, setParticipantsModalPositions] = useState({});
     const [deletedMeetingIds, setDeletedMeetingIds] = useState([]);
     const [meetings, setMeetings] = useState([]);
     const [pendingEditMeetingId, setPendingEditMeetingId] = useState(null);
@@ -1022,6 +1029,7 @@ export default function ProjectMeetings() {
                         description: p.description,
                         createdAt: p.created_at ? String(p.created_at) : '',
                         teamLead: p.team_lead || (p.owner?.name),
+                        teamLeadPosition: p.team_lead_position,
                         members: Array.isArray(p.members) ? p.members : [],
                     })
                 );
@@ -1032,8 +1040,22 @@ export default function ProjectMeetings() {
                 // be retained here even if it was cached from an earlier visit.
                 const isUUID = (id) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(id));
                 setProjectCatalog((prev) => {
-                    const base = (Array.isArray(prev) ? prev : []).filter((p) => !isUUID(p?.id));
-                    const next = [...base, ...mapped];
+                    const base = Array.isArray(prev) ? prev : [];
+                    // listProjects() returns a lighter-weight ProjectListItem without per-member
+                    // position data, so carry forward any positionByName already resolved by the
+                    // getProject() detail fetch — otherwise this replace wipes it back to empty.
+                    const priorPositionByName = {};
+                    base.forEach((p) => {
+                        if (p?.id && p?.positionByName && typeof p.positionByName === 'object') {
+                            priorPositionByName[String(p.id)] = p.positionByName;
+                        }
+                    });
+                    const mappedWithPosition = mapped.map((m) => {
+                        const prior = priorPositionByName[String(m.id)];
+                        if (!prior) return m;
+                        return { ...m, positionByName: { ...prior, ...m.positionByName } };
+                    });
+                    const next = [...base.filter((p) => !isUUID(p?.id)), ...mappedWithPosition];
                     writeProjectCatalog(next);
                     return next;
                 });
@@ -1052,6 +1074,7 @@ export default function ProjectMeetings() {
                     ...data,
                     createdAt: data?.created_at ? String(data.created_at) : data?.createdAt,
                     teamLead: data?.team_lead,
+                    teamLeadPosition: data?.team_lead_position,
                     members: Array.isArray(data?.members) ? data.members : [],
                     meetings: Array.isArray(data?.meetings) ? data.meetings : [],
                 });
@@ -1070,13 +1093,17 @@ export default function ProjectMeetings() {
             });
     }, [projectId, isDeletedProject]);
 
-    const [isIntegrationConnected, setIsIntegrationConnected] = useState(false);
+    const [connectedProviders, setConnectedProviders] = useState({ jira: false, notion: false });
+    const isIntegrationConnected = Boolean(connectedProviders.jira || connectedProviders.notion);
     useEffect(() => {
         const id = normalizeProjectId(projectId);
         if (!id) return;
         getProjectIntegrations(id)
-            .then((result) => setIsIntegrationConnected(Boolean(result?.jira?.connected || result?.notion?.connected)))
-            .catch(() => setIsIntegrationConnected(false));
+            .then((result) => setConnectedProviders({
+                jira: Boolean(result?.jira?.connected),
+                notion: Boolean(result?.notion?.connected),
+            }))
+            .catch(() => setConnectedProviders({ jira: false, notion: false }));
     }, [projectId]);
 
     const project = useMemo(() => {
@@ -1419,21 +1446,21 @@ export default function ProjectMeetings() {
             const statusOk =
                 actionStatusFilter === '전체' ||
                 (actionStatusFilter === '연동완료'
-                    ? normalizedStatus === '연동완료' || hasActionIntegration(item)
+                    ? normalizedStatus === '연동완료' || hasActionIntegration(item, connectedProviders)
                     : normalizedStatus === actionStatusFilter);
             const sourceOk = actionSourceFilter === '전체' || item.source === actionSourceFilter;
             return assigneeOk && statusOk && sourceOk;
         });
-    }, [allActionItems, actionAssigneeFilter, actionStatusFilter, actionSourceFilter]);
+    }, [allActionItems, actionAssigneeFilter, actionStatusFilter, actionSourceFilter, connectedProviders]);
 
     const actionDashboardStats = useMemo(() => {
         return {
             reviewPending: actionMetricItems.filter((item) => normalizeActionStatus(item.status) === '검토대기').length,
             reviewDone: actionMetricItems.filter((item) => normalizeActionStatus(item.status) === '검토완료').length,
             performed: actionMetricItems.filter((item) => normalizeActionStatus(item.status) === '수행완료').length,
-            linked: actionMetricItems.filter((item) => normalizeActionStatus(item.status) === '연동완료' || hasActionIntegration(item)).length,
+            linked: actionMetricItems.filter((item) => normalizeActionStatus(item.status) === '연동완료' || hasActionIntegration(item, connectedProviders)).length,
         };
-    }, [actionMetricItems]);
+    }, [actionMetricItems, connectedProviders]);
 
     const activeActionItem = useMemo(() => {
         if (!activeActionItemId) return null;
@@ -1494,10 +1521,11 @@ export default function ProjectMeetings() {
         if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
         toastTimerRef.current = setTimeout(() => setToast({ message: '', type: 'info' }), 2200);
     };
-    const openParticipantsModal = (members = [], title = '회의 참여자') => {
+    const openParticipantsModal = (members = [], title = '회의 참여자', positions = {}) => {
         const normalized = Array.isArray(members) ? members.filter(Boolean) : [];
         setParticipantsModalMembers(normalized);
         setParticipantsModalTitle(title);
+        setParticipantsModalPositions(positions && typeof positions === 'object' ? positions : {});
         setIsParticipantsModalOpen(true);
     };
     const closeParticipantsModal = () => setIsParticipantsModalOpen(false);
@@ -2001,7 +2029,7 @@ export default function ProjectMeetings() {
                                             <div
                                                 className="flex -space-x-2 cursor-pointer"
                                                 onClick={() =>
-                                                    openParticipantsModal(project.participants, '프로젝트 참여자')
+                                                    openParticipantsModal(project.participants, '프로젝트 참여자', project.positionByName)
                                                 }
                                             >
                                                 {visibleParticipants.map((name) => (
@@ -2009,7 +2037,7 @@ export default function ProjectMeetings() {
                                                         key={name}
                                                         className="w-7 h-7 rounded-full text-[11px] font-bold flex items-center justify-center border-2 border-white text-white"
                                                         style={{
-                                                            backgroundColor: PARTICIPANT_COLOR_MAP[name] || '#0099CC',
+                                                            backgroundColor: colorForParticipant(name),
                                                         }}
                                                         title={name}
                                                     >
@@ -2025,7 +2053,7 @@ export default function ProjectMeetings() {
                                             <button
                                                 type="button"
                                                 onClick={() =>
-                                                    openParticipantsModal(project.participants, '프로젝트 참여자')
+                                                    openParticipantsModal(project.participants, '프로젝트 참여자', project.positionByName)
                                                 }
                                                 className="text-xs text-slate-400 hover:text-slate-600"
                                             >
@@ -3354,9 +3382,9 @@ export default function ProjectMeetings() {
                                         </div>
                                     </div>
 
-                                    {hasActionIntegration(actionDraft) && (
+                                    {hasActionIntegration(actionDraft, connectedProviders) && (
                                         <div className="space-y-2">
-                                            {getActionIntegrationEntries(actionDraft).map((entry) => (
+                                            {getActionIntegrationEntries(actionDraft, connectedProviders).map((entry) => (
                                                 <div key={entry.id} className="rounded-xl border border-[#10B981]/30 bg-[#E6F4EA] p-4 flex items-center justify-between gap-3">
                                                     <div className="flex items-center gap-2 min-w-0">
                                                         <span className="shrink-0 w-7 h-7 rounded-lg bg-[#10B981]/15 text-[#10B981] flex items-center justify-center">
@@ -3564,113 +3592,58 @@ export default function ProjectMeetings() {
                                         )}
 
                                         {normalizeActionStatus(actionDraft.status) === '검토완료' && (
-                                            <>
-                                                <button
-                                                    type="button"
-                                                    onClick={() => {
-                                                        const ok = saveActionDraft({
-                                                            nextStatus: '수행완료',
-                                                            closeAfterSave: true,
-                                                        });
-                                                        if (ok) showToast('수행 완료 처리되었습니다.', 'success');
-                                                    }}
-                                                    className="text-sm font-semibold px-4 py-2 rounded-xl text-slate-500 border border-slate-200 bg-white hover:bg-slate-50 transition-colors"
-                                                >
-                                                    수행완료
-                                                </button>
-                                                <button
-                                                    type="button"
-                                                    onClick={openIntegrateView}
-                                                    className="flex items-center gap-1.5 text-sm font-bold px-5 py-2 rounded-xl text-white transition-all hover:-translate-y-0.5"
-                                                    style={{
-                                                        background:
-                                                            'linear-gradient(135deg,#0099CC,#7C3AED)',
-                                                        boxShadow: '0 4px 12px rgba(0,100,180,0.18)',
-                                                    }}
-                                                >
-                                                    <ZapIcon className="text-white" />
-                                                    연동하기
-                                                </button>
-                                            </>
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    const ok = saveActionDraft({
+                                                        nextStatus: '수행완료',
+                                                        closeAfterSave: true,
+                                                    });
+                                                    if (ok) showToast('수행 완료 처리되었습니다.', 'success');
+                                                }}
+                                                className="text-sm font-semibold px-4 py-2 rounded-xl text-slate-500 border border-slate-200 bg-white hover:bg-slate-50 transition-colors"
+                                            >
+                                                수행완료
+                                            </button>
                                         )}
 
-                                        {normalizeActionStatus(actionDraft.status) === '수행완료' && (
-                                            <>
-                                                <button
-                                                    type="button"
-                                                    onClick={() => {
-                                                        const ok = saveActionDraft({ closeAfterSave: true });
-                                                        if (ok) showToast('변경 사항이 저장되었습니다.', 'success');
-                                                    }}
-                                                    className="text-sm font-semibold px-4 py-2 rounded-xl text-slate-500 border border-slate-200 bg-white hover:bg-slate-50 transition-colors"
-                                                >
-                                                    수정 저장
-                                                </button>
-                                                {getActionIntegrationEntries(actionDraft).length < 2 && (
-                                                    <button
-                                                        type="button"
-                                                        onClick={openIntegrateView}
-                                                        className="flex items-center gap-1.5 text-sm font-bold px-5 py-2 rounded-xl text-white transition-all hover:-translate-y-0.5"
-                                                        style={{
-                                                            background:
-                                                                'linear-gradient(135deg,#0099CC,#7C3AED)',
-                                                            boxShadow: '0 4px 12px rgba(0,100,180,0.18)',
-                                                        }}
-                                                    >
-                                                        <ZapIcon className="text-white" />
-                                                        연동하기
-                                                    </button>
-                                                )}
-                                            </>
+                                        {(normalizeActionStatus(actionDraft.status) === '수행완료' ||
+                                            normalizeActionStatus(actionDraft.status) === '연동완료') && (
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    const ok = saveActionDraft({ closeAfterSave: true });
+                                                    if (ok) showToast('변경 사항이 저장되었습니다.', 'success');
+                                                }}
+                                                className="text-sm font-semibold px-4 py-2 rounded-xl text-slate-500 border border-slate-200 bg-white hover:bg-slate-50 transition-colors"
+                                            >
+                                                수정 저장
+                                            </button>
                                         )}
 
                                         {normalizeActionStatus(actionDraft.status) === '연동완료' && (
-                                            <>
-                                                <button
-                                                    type="button"
-                                                    onClick={() => {
-                                                        const ok = saveActionDraft({ closeAfterSave: true });
-                                                        if (ok) showToast('변경 사항이 저장되었습니다.', 'success');
-                                                    }}
-                                                    className="text-sm font-semibold px-4 py-2 rounded-xl text-slate-500 border border-slate-200 bg-white hover:bg-slate-50 transition-colors"
-                                                >
-                                                    수정 저장
-                                                </button>
-                                                <button
-                                                    type="button"
-                                                    onClick={() => {
-                                                        const ok = saveActionDraft({
-                                                            nextStatus: '수행완료',
-                                                            closeAfterSave: true,
-                                                        });
-                                                        if (ok) showToast('수행 완료 처리되었습니다.', 'success');
-                                                    }}
-                                                    className="flex items-center gap-1.5 text-sm font-bold px-5 py-2 rounded-xl text-white transition-all hover:-translate-y-0.5"
-                                                    style={{
-                                                        background:
-                                                            'linear-gradient(135deg,#0099CC,#7C3AED)',
-                                                        boxShadow: '0 4px 12px rgba(0,100,180,0.18)',
-                                                    }}
-                                                >
-                                                    수행완료
-                                                </button>
-                                                {getActionIntegrationEntries(actionDraft).length < 2 && (
-                                                    <button
-                                                        type="button"
-                                                        onClick={openIntegrateView}
-                                                        className="flex items-center gap-1.5 text-sm font-bold px-5 py-2 rounded-xl text-white transition-all hover:-translate-y-0.5"
-                                                        style={{
-                                                            background:
-                                                                'linear-gradient(135deg,#0099CC,#7C3AED)',
-                                                            boxShadow: '0 4px 12px rgba(0,100,180,0.18)',
-                                                        }}
-                                                    >
-                                                        <ZapIcon className="text-white" />
-                                                        추가 연동
-                                                    </button>
-                                                )}
-                                            </>
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    const ok = saveActionDraft({
+                                                        nextStatus: '수행완료',
+                                                        closeAfterSave: true,
+                                                    });
+                                                    if (ok) showToast('수행 완료 처리되었습니다.', 'success');
+                                                }}
+                                                className="flex items-center gap-1.5 text-sm font-bold px-5 py-2 rounded-xl text-white transition-all hover:-translate-y-0.5"
+                                                style={{
+                                                    background:
+                                                        'linear-gradient(135deg,#0099CC,#7C3AED)',
+                                                    boxShadow: '0 4px 12px rgba(0,100,180,0.18)',
+                                                }}
+                                            >
+                                                수행완료
+                                            </button>
                                         )}
+                                        {/* Whether/where this is linked is shown via the link cards above and the
+                                            project-level badge in the list — no manual "연동하기" trigger needed
+                                            here since Jira/Notion sync now happens automatically. */}
                                     </div>
                                 </div>
                             </div>
@@ -3715,7 +3688,7 @@ export default function ProjectMeetings() {
                                     >
                                         <div
                                             className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-white shrink-0"
-                                            style={{ backgroundColor: PARTICIPANT_COLOR_MAP[member] || '#0099CC' }}
+                                            style={{ backgroundColor: colorForParticipant(member) }}
                                         >
                                             {member.slice(0, 1)}
                                         </div>
@@ -3744,7 +3717,7 @@ export default function ProjectMeetings() {
                                                 )}
                                             </div>
                                             <p className="text-xs text-slate-400">
-                                                {ROLE_MAP[member] || 'Team Member'}
+                                                {participantsModalPositions[member] || '포지션 미설정'}
                                             </p>
                                         </div>
                                         <span className="text-xs font-bold px-2 py-0.5 rounded bg-emerald-100 text-emerald-600">

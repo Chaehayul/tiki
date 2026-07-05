@@ -69,6 +69,7 @@ class MemberResponse(BaseModel):
     email: str
     name: str | None
     role: str
+    position: str | None = None
     invite_status: str = "pending"
     invited_by_name: str | None = None
     project_id: UUID | None = None
@@ -125,6 +126,7 @@ class ProjectResponse(BaseModel):
     notion_token_configured: bool = False
     owner_id: UUID
     team_lead: str
+    team_lead_position: str | None = None
     member_count: int
     members: list[MemberResponse]
     meetings: list[MeetingResponse]

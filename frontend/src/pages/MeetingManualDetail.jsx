@@ -97,27 +97,16 @@ const stateLabels = {
   FAILED: '오류 발생',
 };
 
-const ROLE_MAP = {
-  정아름: 'PM',
-  김민수: 'Backend',
-  송지영: 'PM',
-  김소현: 'ML Engineer',
-  채하율: 'Frontend',
-  박디자이너: 'Designer',
-  외부리서처A: 'QA',
-};
-
-const PARTICIPANT_COLOR_MAP = {
-  정아름: '#0099CC',
-  김민수: '#10B981',
-  송지영: '#7C3AED',
-  김소현: '#F59E0B',
-  채하율: '#0EA5E9',
-  박디자이너: '#EF4444',
-  외부리서처A: '#5A6F8A',
-};
-
 const PARTICIPANT_COLORS = ['#0099CC', '#7C3AED', '#10B981', '#F59E0B', '#EF4444', '#0EA5E9'];
+
+function colorForParticipant(name) {
+  const key = String(name || '');
+  let hash = 0;
+  for (let i = 0; i < key.length; i += 1) {
+    hash = (hash * 31 + key.charCodeAt(i)) | 0;
+  }
+  return PARTICIPANT_COLORS[Math.abs(hash) % PARTICIPANT_COLORS.length];
+}
 
 const readManualMeetingRecords = () => {
   try {
@@ -2121,7 +2110,7 @@ export default function MeetingManualDetail() {
                       key={`${name}-${idx}`}
                       onClick={() => openParticipantsModal(participants)}
                       className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold text-white border-2 border-white"
-                      style={{ background: PARTICIPANT_COLOR_MAP[name] || PARTICIPANT_COLORS[idx % PARTICIPANT_COLORS.length] }}
+                      style={{ background: colorForParticipant(name) }}
                       title={name}
                     >
                       {name[0] || '?'}
@@ -3074,7 +3063,7 @@ export default function MeetingManualDetail() {
                     >
                       <div
                         className="w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-bold text-white shrink-0"
-                        style={{ backgroundColor: PARTICIPANT_COLOR_MAP[name] || PARTICIPANT_COLORS[idx % PARTICIPANT_COLORS.length] }}
+                        style={{ backgroundColor: colorForParticipant(name) }}
                       >
                         {String(name || '?').slice(0, 1)}
                       </div>
@@ -3088,7 +3077,7 @@ export default function MeetingManualDetail() {
                             </span>
                           )}
                         </div>
-                        <p className="text-xs text-slate-400">{ROLE_MAP[name] || 'Team Member'}</p>
+                        <p className="text-xs text-slate-400">포지션 미설정</p>
                       </div>
                       <span className="text-xs font-bold px-2 py-0.5 rounded bg-emerald-100 text-emerald-600">참여 중</span>
                     </div>

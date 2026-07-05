@@ -424,22 +424,56 @@ def _extract_plain_text(file_path: Path) -> tuple[str, dict[str, Any]]:
     return _normalize_paragraph(text), {"page_count": 1 if text else 0}
 
 
+_SOFFICE_FALLBACK_PATHS = (
+    r"C:\Program Files\LibreOffice\program\soffice.exe",
+    r"C:\Program Files (x86)\LibreOffice\program\soffice.exe",
+    "/usr/bin/soffice",
+    "/opt/libreoffice/program/soffice",
+)
+
+
+def _find_soffice() -> str | None:
+    found = shutil.which("soffice") or shutil.which("libreoffice")
+    if found:
+        return found
+    # A freshly-installed LibreOffice won't be on PATH for processes started before
+    # the install (Windows doesn't propagate PATH changes to running processes), so
+    # also check well-known install locations directly rather than depending on the
+    # backend process being restarted after every install.
+    for candidate in _SOFFICE_FALLBACK_PATHS:
+        if Path(candidate).is_file():
+            return candidate
+    return None
+
+
 def _extract_hwp_text(file_path: Path) -> tuple[str, dict[str, Any]]:
-    soffice = shutil.which("soffice") or shutil.which("libreoffice")
+    soffice = _find_soffice()
     if not soffice:
         raise FileNotFoundError("LibreOffice/soffice is required for HWP/HWPX extraction")
 
     with tempfile.TemporaryDirectory(prefix="tiki-hwp-") as tmpdir:
         output_dir = Path(tmpdir)
         subprocess.run(
-            [soffice, "--headless", "--convert-to", "txt:Text", "--outdir", str(output_dir), str(file_path)],
+            # Explicitly request UTF-8 output — LibreOffice's plain "Text" filter
+            # otherwise defaults to the OS locale encoding (e.g. CP949 on Korean
+            # Windows), which silently mangles Korean text if read back as UTF-8.
+            [soffice, "--headless", "--convert-to", "txt:Text (encoded):UTF8", "--outdir", str(output_dir), str(file_path)],
             check=True,
             capture_output=True,
         )
         converted_files = sorted(output_dir.glob("*.txt"))
         if not converted_files:
             raise FileNotFoundError(f"Converted text file not found for {file_path}")
-        text = converted_files[0].read_text(encoding="utf-8", errors="ignore")
+        raw = converted_files[0].read_bytes()
+        text = None
+        for encoding in ("utf-8-sig", "utf-8", "cp949", "euc-kr"):
+            try:
+                text = raw.decode(encoding)
+                break
+            except UnicodeDecodeError:
+                continue
+        if text is None:
+            text = raw.decode("utf-8", errors="ignore")
         return (
             _normalize_paragraph(text),
             {
@@ -467,8 +501,13 @@ def _extract_document_pages(file_path: Path) -> tuple[list[str], dict[str, Any]]
         try:
             text, metadata = _extract_hwp_text(file_path)
             return ([text] if text else []), metadata
-        except Exception as exc:  # pragma: no cover - fallback path
-            logger.warning("soffice failed for %s: %s", file_path, exc)
+        except Exception as exc:
+            # Do NOT fall through to _extract_plain_text here: HWP/HWPX is a binary
+            # OLE2/zip container, not text, so decoding it as text (the fallback below)
+            # silently produces garbage that still gets summarized by the LLM and saved
+            # as a "completed" meeting with no visible error. Fail loudly instead.
+            logger.warning("HWP/HWPX extraction failed for %s: %s", file_path, exc)
+            raise RuntimeError(f"한글(HWP) 파일을 변환할 수 없습니다: {exc}") from exc
 
     if extension == "doc":
         try:
@@ -479,8 +518,11 @@ def _extract_document_pages(file_path: Path) -> tuple[list[str], dict[str, Any]]
             )
             text = completed.stdout.decode("utf-8", errors="ignore")
             return ([ _normalize_paragraph(text) ] if text else []), {"page_count": 1 if text else 0, "extraction_tool": "textutil"}
-        except Exception as exc:  # pragma: no cover - fallback path
-            logger.warning("textutil failed for %s: %s", file_path, exc)
+        except Exception as exc:
+            # Same reasoning as HWP above: .doc is a binary format, don't silently
+            # decode it as text and pretend the analysis succeeded.
+            logger.warning(".doc extraction failed for %s: %s", file_path, exc)
+            raise RuntimeError(f".doc 파일을 변환할 수 없습니다: {exc}") from exc
 
     text, metadata = _extract_plain_text(file_path)
     return ([text] if text else []), metadata

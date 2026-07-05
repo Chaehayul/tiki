@@ -80,20 +80,24 @@ function getIntegrationLinks(item) {
   };
 }
 
-function getIntegrationEntries(item) {
+// connectedProviders (e.g. {jira: true, notion: false}) reflects the project's *current*
+// integration status. A task can carry a leftover link from before someone disconnected
+// Jira/Notion — without this filter it would still show "확인" for a provider that's no
+// longer connected, which reads as if the project were still linked to it.
+function getIntegrationEntries(item, connectedProviders) {
   const links = getIntegrationLinks(item);
   return [
     { id: "jira", label: "Jira", url: links.jira, icon: "jira" },
     { id: "notion", label: "Notion", url: links.notion, icon: "arrowUpRight" },
-  ].filter((entry) => Boolean(entry.url));
+  ].filter((entry) => Boolean(entry.url) && (!connectedProviders || connectedProviders[entry.id]));
 }
 
-function hasExternalLink(item) {
-  return getIntegrationEntries(item).length > 0;
+function hasExternalLink(item, connectedProviders) {
+  return getIntegrationEntries(item, connectedProviders).length > 0;
 }
 
-function IntegrationLinkButtons({ item }) {
-  const entries = getIntegrationEntries(item);
+function IntegrationLinkButtons({ item, connectedProviders }) {
+  const entries = getIntegrationEntries(item, connectedProviders);
   if (entries.length === 0) return null;
 
   return (
@@ -2035,7 +2039,7 @@ export default function App() {
                                 // Whether/where this task is linked is now shown once at the project
                                 // level (see the group header) — a task row just shows the confirm
                                 // link once auto-sync has produced one, and nothing otherwise.
-                                <IntegrationLinkButtons item={item} />
+                                <IntegrationLinkButtons item={item} connectedProviders={projectIntegrationStatus[String(item.projectKey || "")]} />
                               )}
 
                               <div className="sm:hidden inline-flex flex-col items-end justify-center py-0.5">
@@ -2286,9 +2290,9 @@ export default function App() {
                   </div>
 
                   {/* 외부 툴 링크 카드 */}
-                  {hasExternalLink(selectedItem) && (
+                  {hasExternalLink(selectedItem, projectIntegrationStatus[String(selectedItem?.projectKey || "")]) && (
                     <div className="space-y-2">
-                      {getIntegrationEntries(selectedItem).map((entry) => (
+                      {getIntegrationEntries(selectedItem, projectIntegrationStatus[String(selectedItem?.projectKey || "")]).map((entry) => (
                         <div key={entry.id} className="rounded-2xl border border-[rgba(0,153,204,0.28)] bg-[#EEF8FF] px-3.5 py-3 flex items-center justify-between gap-3">
                           <div className="flex items-center gap-2 min-w-0">
                             <span className="shrink-0 w-7 h-7 rounded-lg bg-[#EEF3FF] text-[#0099CC] flex items-center justify-center">

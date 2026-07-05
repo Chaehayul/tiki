@@ -10,7 +10,9 @@
       "Bash(tasklist)",
       "Read(//c//**)",
       "Bash(wmic process *)",
-      "Bash(powershell -Command \"Get-CimInstance Win32_Process -Filter \\\\\"name='python.exe'\\\\\" | Select-Object ProcessId, CommandLine | Format-List\")"
+      "Bash(powershell -Command \"Get-CimInstance Win32_Process -Filter \\\\\"name='python.exe'\\\\\" | Select-Object ProcessId, CommandLine | Format-List\")",
+      "Read(//c/Program Files/LibreOffice/program/**)",
+      "Read(//c/Program Files \\(x86\\)/LibreOffice/program/**)"
     ]
   }
 }

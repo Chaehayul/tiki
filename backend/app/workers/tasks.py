@@ -157,6 +157,13 @@ def _run_pipeline(db, file_id: UUID) -> None:
             if text:
                 tags.append(text if text.startswith("#") else f"#{text}")
 
+        # Groq/OpenAI both failed and the analysis fell back to the rule-based
+        # heuristic service (see LangChainAnalysisService.summarize_and_extract_tickets) —
+        # flag it visibly wherever tags are shown, since it's a best-effort stand-in,
+        # not a real AI analysis.
+        if extra_data.get("analysis_provider") == "heuristic":
+            tags.insert(0, "#검토필요(AI분석실패)")
+
         meeting = Meeting(
             project_id=uploaded_file.project_id,
             title=str(title).strip()[:255] or uploaded_file.original_filename,

@@ -3124,6 +3124,10 @@ export default function TikiSprint12() {
   const [txSource, setTxSource] = useState(TX);
   const [meetingHeader, setMeetingHeader] = useState(null);
   const [realDataStatus, setRealDataStatus] = useState("idle"); // idle | loading | loaded | missing
+  // Set when both Groq and OpenAI failed and the backend fell back to a
+  // rule-based heuristic summary (see LangChainAnalysisService.summarize_and_extract_tickets) —
+  // the content is a best-effort stand-in, not a real AI analysis, so it needs review.
+  const [analysisDegraded, setAnalysisDegraded] = useState(false);
 
   useEffect(() => {
     const state = location?.state || {};
@@ -3175,6 +3179,7 @@ export default function TikiSprint12() {
           title: analysis.meeting_title || state.meeting?.title || "",
           date: state.meeting?.date || "",
         });
+        if (!cancelled) setAnalysisDegraded(analysis?.extra_data?.analysis_provider === "heuristic");
         if (!cancelled) setRealDataStatus("loaded");
       } catch {
         if (!cancelled) setRealDataStatus("missing");
@@ -3561,6 +3566,11 @@ export default function TikiSprint12() {
               {realDataStatus === "missing" && (
                 <div className="mb-3 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs font-semibold text-amber-700">
                   이 회의의 분석 데이터를 찾을 수 없어 예시 데이터를 표시하고 있습니다.
+                </div>
+              )}
+              {realDataStatus === "loaded" && analysisDegraded && (
+                <div className="mb-3 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs font-semibold text-amber-700">
+                  AI 분석이 일시적으로 실패해 간이 자동 요약으로 대체되었습니다. 내용을 꼭 검토해 주세요.
                 </div>
               )}
               <div className="flex flex-wrap items-center gap-2 mb-2">

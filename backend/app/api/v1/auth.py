@@ -293,6 +293,9 @@ def update_me(
     if "role" in changes:
         current_user.role = changes["role"]
 
+    if "position" in changes:
+        current_user.position = changes["position"]
+
     linked_members = db.scalars(
         select(ProjectMember).where(ProjectMember.user_id == current_user.id)
     ).all()

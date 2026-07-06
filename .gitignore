@@ -1,0 +1,32 @@
+# Python
+backend/.venv/
+__pycache__/
+*.pyc
+
+# Node
+frontend/node_modules/
+frontend/dist/
+
+# Secrets / env
+.env
+backend/.env
+
+# User-uploaded files
+backend/uploads/
+
+# Claude Code local/runtime state (not shareable across machines)
+.claude/settings.json
+.claude/scheduled_tasks.lock
+.claude/scheduled_tasks.json
+.claude/routines/.state/
+.claude/worktrees/
+.claude/checkpoints/
+.claude/mailbox/
+.claude/agent-registry.json
+.claude/agent-memory-local
+.claude/first-run
+.claude/assistant-daemon-state.json
+
+# OS
+.DS_Store
+Thumbs.db

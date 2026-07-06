@@ -3734,6 +3734,40 @@ export default function TikiSprint12() {
     }));
   }, []);
 
+  if (realDataStatus === "idle" || realDataStatus === "loading") {
+    return (
+      <div
+        className="min-h-screen flex flex-col"
+        style={{
+          background: "#F8FAFF",
+          fontFamily: '"Pretendard Variable","Pretendard",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif',
+          color: "#0D1B2A",
+        }}
+      >
+        <Header
+          isMobile={isMobile}
+          isLoggedIn={isAuthenticated}
+          phase="IDLE"
+          stateLabels={stateLabels}
+          user={sessionUser}
+          onLogout={() => {
+            clearAuthSession();
+            showToast("로그아웃 되었습니다.");
+          }}
+        />
+        <div className="flex-1 flex items-center justify-center">
+          <div className="flex flex-col items-center gap-3 text-slate-400">
+            <div
+              className="h-8 w-8 animate-spin rounded-full border-2 border-slate-200"
+              style={{ borderTopColor: "#0099CC" }}
+            />
+            <p className="text-sm font-semibold">회의록을 불러오는 중입니다...</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div
       className="min-h-screen"

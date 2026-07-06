@@ -1066,25 +1066,35 @@ export default function ProjectMeetings() {
                 const isUUID = (id) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(id));
                 setProjectCatalog((prev) => {
                     const base = Array.isArray(prev) ? prev : [];
-                    // listProjects() returns a lighter-weight ProjectListItem with no per-member
-                    // position data and no meetings at all, so carry forward whatever the
-                    // getProject() detail fetch already resolved for those two fields —
-                    // otherwise this replace wipes them back to empty every time it re-runs
-                    // (e.g. right after a fresh upload adds a real meeting to the catalog).
+                    // listProjects() returns a lighter-weight ProjectListItem with no members,
+                    // no meetings, and no per-member position data at all — structurally poorer
+                    // than what getProject() already resolved for this same project. If that
+                    // richer fetch landed first, carry its participants/admins/teamLead/meetings/
+                    // positionByName forward instead of letting this shallower list response
+                    // reset them (this previously showed a project's real accepted members as
+                    // "외 0명 참여" and let a random member get picked as admin once the owner's
+                    // name vanished from the reset participants list).
                     const priorEnriched = {};
                     base.forEach((p) => {
                         if (!p?.id) return;
-                        const hasPosition = p?.positionByName && typeof p.positionByName === 'object';
-                        const hasMeetings = Array.isArray(p?.meetings) && p.meetings.length > 0;
-                        if (hasPosition || hasMeetings) {
-                            priorEnriched[String(p.id)] = { positionByName: p.positionByName, meetings: p.meetings };
-                        }
+                        priorEnriched[String(p.id)] = {
+                            participants: p.participants,
+                            admins: p.admins,
+                            teamLead: p.teamLead,
+                            positionByName: p.positionByName,
+                            meetings: p.meetings,
+                        };
                     });
                     const mappedWithPosition = mapped.map((m) => {
                         const prior = priorEnriched[String(m.id)];
                         if (!prior) return m;
                         return {
                             ...m,
+                            participants: Array.isArray(prior.participants) && prior.participants.length > (m.participants?.length || 0)
+                                ? prior.participants
+                                : m.participants,
+                            admins: Array.isArray(prior.admins) && prior.admins.length > 0 ? prior.admins : m.admins,
+                            teamLead: m.teamLead || prior.teamLead,
                             positionByName: { ...(prior.positionByName || {}), ...(m.positionByName || {}) },
                             meetings: Array.isArray(m.meetings) && m.meetings.length > 0 ? m.meetings : prior.meetings,
                         };
@@ -1164,6 +1174,12 @@ export default function ProjectMeetings() {
                 // freshly-fetched meetings/action items from getProject() here —
                 // always trust the live fetch over anything cached in the override.
                 meetings: Array.isArray(baseProject?.meetings) ? baseProject.meetings : override?.meetings,
+                // Same story for teamLead — a stale override carrying an old owner
+                // name would silently replace the real owner (and, since the real
+                // owner isn't in project.members at all, would also make the real
+                // owner disappear from the participants list entirely while some
+                // other member incorrectly gets picked as admin).
+                teamLead: baseProject?.teamLead || override?.teamLead,
             });
         };
 

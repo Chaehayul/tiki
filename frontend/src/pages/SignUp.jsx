@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { saveAuthSession, signupUser } from '../api/apiClient';
+import { DEPARTMENTS, POSITIONS } from '../data/profileOptions';
 import AuthHeader from '../components/AuthHeader';
 
 const cn = (...classes) => classes.filter(Boolean).join(' ');
@@ -183,14 +184,6 @@ const INPUT_BASE =
 const INPUT_ERROR =
     'border-[rgba(239,68,68,.4)] bg-[rgba(239,68,68,.04)] focus:border-[rgba(239,68,68,.5)] focus:shadow-[0_0_0_3px_rgba(239,68,68,.10)]';
 
-/* ── 역할 선택 옵션 ── */
-const ROLES = [
-    { value: 'dev', label: '마케터', icon: 'megaphone', color: '#0099CC' },
-    { value: 'pm', label: 'PM', icon: 'briefcase', color: '#7C3AED' },
-    { value: 'design', label: '디자이너', icon: 'sparkles', color: '#F59E0B' },
-    { value: 'other', label: '기타', icon: 'users', color: '#5A6F8A' },
-];
-
 /* ── 성공 화면 ── */
 function SuccessScreen() {
     return (
@@ -236,13 +229,20 @@ export default function SignUpPage() {
     const [confirmPw, setConfirmPw] = useState('');
     const [showPw, setShowPw] = useState(false);
     const [showConfirm, setShowConfirm] = useState(false);
-    const [role, setRole] = useState('');
+    const [department, setDepartment] = useState('');
+    const [departmentCustom, setDepartmentCustom] = useState('');
+    const [position, setPosition] = useState('');
+    const [positionCustom, setPositionCustom] = useState('');
     const [agree, setAgree] = useState(false);
     const [s2Errors, setS2Errors] = useState({});
     const [loading, setLoading] = useState(false);
     const [submitError, setSubmitError] = useState('');
 
     const strength = getPasswordStrength(password);
+    const isCustomDepartment = department === '직접 입력';
+    const isCustomPosition = position === '직접 입력';
+    const resolvedDepartment = isCustomDepartment ? departmentCustom.trim() : department;
+    const resolvedPosition = isCustomPosition ? positionCustom.trim() : position;
 
     /* ── 유효성 검사 ── */
     const validateStep1 = () => {
@@ -260,7 +260,8 @@ export default function SignUpPage() {
         else if (password.length < 8) errs.password = '비밀번호는 8자 이상이어야 합니다.';
         if (!confirmPw) errs.confirmPw = '비밀번호를 한 번 더 입력해주세요.';
         else if (password !== confirmPw) errs.confirmPw = '비밀번호가 일치하지 않아요.';
-        if (!role) errs.role = '역할을 선택해주세요.';
+        if (!department) errs.department = '부서를 선택해주세요.';
+        else if (isCustomDepartment && !departmentCustom.trim()) errs.department = '부서명을 입력해주세요.';
         if (!agree) errs.agree = '이용약관에 동의해주세요.';
         setS2Errors(errs);
         return Object.keys(errs).length === 0;
@@ -281,7 +282,8 @@ export default function SignUpPage() {
                 name: name.trim(),
                 email,
                 password,
-                role,
+                role: resolvedDepartment,
+                position: resolvedPosition,
             });
             saveAuthSession(authResponse);
             navigate('/upload', { replace: true });
@@ -531,50 +533,72 @@ export default function SignUpPage() {
                                     )}
                                 </Field>
 
-                                {/* 역할 선택 */}
-                                <div>
-                                    <label className="mb-2 block text-[13px] font-semibold text-[#0D1B2A]">
-                                        팀에서의 역할
-                                    </label>
-                                    <div className="grid grid-cols-4 gap-2">
-                                        {ROLES.map(({ value, label, icon, color }) => (
-                                            <button
-                                                key={value}
-                                                type="button"
-                                                onClick={() => {
-                                                    setRole(value);
-                                                    setS2Errors((p) => ({ ...p, role: '' }));
+                                {/* 부서 / 포지션 선택 */}
+                                <div className="grid grid-cols-2 gap-3">
+                                    <div>
+                                        <label className="mb-1.5 block text-[13px] font-semibold text-[#0D1B2A]">
+                                            부서
+                                        </label>
+                                        <select
+                                            value={department}
+                                            onChange={(e) => {
+                                                setDepartment(e.target.value);
+                                                setS2Errors((p) => ({ ...p, department: '' }));
+                                            }}
+                                            className={cn(
+                                                'w-full rounded-xl border border-transparent bg-[#EEF3FF] px-3.5 py-[11px] text-sm text-[#0D1B2A] outline-none transition-all duration-200 focus:border-[rgba(0,153,204,.5)] focus:bg-white focus:shadow-[0_0_0_3px_rgba(0,153,204,.12)]',
+                                                s2Errors.department && INPUT_ERROR
+                                            )}
+                                        >
+                                            <option value="" disabled>부서 선택</option>
+                                            {DEPARTMENTS.map((item) => (
+                                                <option key={item} value={item}>{item}</option>
+                                            ))}
+                                        </select>
+                                        {isCustomDepartment && (
+                                            <input
+                                                type="text"
+                                                value={departmentCustom}
+                                                onChange={(e) => {
+                                                    setDepartmentCustom(e.target.value);
+                                                    setS2Errors((p) => ({ ...p, department: '' }));
                                                 }}
-                                                className={cn(
-                                                    'flex flex-col items-center gap-1.5 rounded-xl border py-3 text-[11px] font-semibold transition-all duration-150',
-                                                    role === value
-                                                        ? 'border-[rgba(0,153,204,.4)] bg-[rgba(0,153,204,.07)] text-[#0099CC] shadow-[0_0_0_2px_rgba(0,153,204,.15)]'
-                                                        : 'border-[rgba(0,60,150,.10)] bg-[#F8FAFF] text-[#5A6F8A] hover:bg-[#EEF3FF]'
-                                                )}
-                                            >
-                                                <span
-                                                    className="flex h-7 w-7 items-center justify-center rounded-lg"
-                                                    style={{
-                                                        backgroundColor:
-                                                            role === value ? `${color}1A` : 'rgba(0,60,150,.06)',
-                                                    }}
-                                                >
-                                                    <Icon
-                                                        name={icon}
-                                                        size={14}
-                                                        color={role === value ? color : '#5A6F8A'}
-                                                    />
-                                                </span>
-                                                {label}
-                                            </button>
-                                        ))}
+                                                placeholder="부서명을 입력하세요"
+                                                className={cn('mt-2 w-full rounded-xl border border-transparent bg-[#EEF3FF] px-3.5 py-[11px] text-sm text-[#0D1B2A] outline-none transition-all duration-200 focus:border-[rgba(0,153,204,.5)] focus:bg-white focus:shadow-[0_0_0_3px_rgba(0,153,204,.12)]', s2Errors.department && INPUT_ERROR)}
+                                            />
+                                        )}
+                                        {s2Errors.department && (
+                                            <p className="mt-1.5 flex items-center gap-1 text-[12px] text-[#DC2626]">
+                                                <Icon name="alertCircle" size={12} color="#EF4444" />
+                                                {s2Errors.department}
+                                            </p>
+                                        )}
                                     </div>
-                                    {s2Errors.role && (
-                                        <p className="mt-1.5 flex items-center gap-1 text-[12px] text-[#DC2626]">
-                                            <Icon name="alertCircle" size={12} color="#EF4444" />
-                                            {s2Errors.role}
-                                        </p>
-                                    )}
+
+                                    <div>
+                                        <label className="mb-1.5 block text-[13px] font-semibold text-[#0D1B2A]">
+                                            포지션
+                                        </label>
+                                        <select
+                                            value={position}
+                                            onChange={(e) => setPosition(e.target.value)}
+                                            className="w-full rounded-xl border border-transparent bg-[#EEF3FF] px-3.5 py-[11px] text-sm text-[#0D1B2A] outline-none transition-all duration-200 focus:border-[rgba(0,153,204,.5)] focus:bg-white focus:shadow-[0_0_0_3px_rgba(0,153,204,.12)]"
+                                        >
+                                            <option value="">포지션 선택</option>
+                                            {POSITIONS.map((item) => (
+                                                <option key={item} value={item}>{item}</option>
+                                            ))}
+                                        </select>
+                                        {isCustomPosition && (
+                                            <input
+                                                type="text"
+                                                value={positionCustom}
+                                                onChange={(e) => setPositionCustom(e.target.value)}
+                                                placeholder="포지션을 입력하세요"
+                                                className="mt-2 w-full rounded-xl border border-transparent bg-[#EEF3FF] px-3.5 py-[11px] text-sm text-[#0D1B2A] outline-none transition-all duration-200 focus:border-[rgba(0,153,204,.5)] focus:bg-white focus:shadow-[0_0_0_3px_rgba(0,153,204,.12)]"
+                                            />
+                                        )}
+                                    </div>
                                 </div>
 
                                 {/* 약관 동의 */}

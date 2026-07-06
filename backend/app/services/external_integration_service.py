@@ -15,6 +15,7 @@ from app.core.crypto import decrypt_secret, encrypt_secret
 from app.core.exceptions import AppException
 from app.integrations.jira import JiraOAuthClient, JiraProjectOption
 from app.integrations.notion import get_notion_client
+from app.models.analysis import AnalysisResult
 from app.models.enums import IntegrationProvider, SyncStatus
 from app.models.integration import MeetingExternalLink, OAuthState, ProjectIntegration, TaskExternalLink
 from app.models.project import Meeting, Project
@@ -346,9 +347,32 @@ def _list_from_meta(value: object) -> list:
     return [value]
 
 
+def _analysis_extra_for_meeting(db: Session, meeting: Meeting) -> dict:
+    """The structured summary (keywords/decisions/issues/next agenda) for a
+    "회의록 직접 작성" meeting lives in a __tiki_meeting_meta marker inside
+    action_items (see _meeting_meta) — but an uploaded/AI-analyzed meeting
+    never gets that marker at all, so this returned {} for every such
+    meeting and the Jira/Notion sync always rendered "없음" for issues/next
+    agenda even when the real AI analysis clearly had them. Look up the
+    AnalysisResult tied to this meeting (via the created_meeting_id it was
+    tagged with in app/workers/tasks.py) as a fallback source instead.
+    """
+    result = db.scalar(
+        select(AnalysisResult).where(
+            AnalysisResult.extra_data["created_meeting_id"].astext == str(meeting.id)
+        )
+    )
+    if result is None:
+        return {}
+    extra = dict(result.extra_data or {})
+    extra.setdefault("summary", result.summary)
+    return extra
+
+
 def _analysis_payload_for_meeting(db: Session, meeting: Meeting) -> dict:
-    del db
     meta = _meeting_meta(meeting)
+    if not meta:
+        meta = _analysis_extra_for_meeting(db, meeting)
     keywords = _list_from_meta(meta.get("keywords")) or meeting.tags or []
     raw_text = meta.get("raw_text") or meta.get("content") or meta.get("fullText") or meeting.summary
     return {

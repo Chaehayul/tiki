@@ -115,6 +115,7 @@ def signup(
         email=email,
         name=payload.name.strip(),
         role=payload.role,
+        position=payload.position,
         hashed_password=hash_password(payload.password),
     )
     db.add(user)

@@ -213,8 +213,16 @@ const avatarColor = (name = '') => {
 const memberDisplayName = (member) => member?.name || member?.email || '';
 
 const projectParticipants = (project) => {
+  // The project owner is never a ProjectMember row (they're tracked via
+  // owner_id/team_lead instead), so they'd otherwise be silently missing from
+  // this whole list — and every admin-fallback below only ever looks within
+  // this list, so the owner would then lose out to whichever invited member
+  // happens to come first once none of them are explicitly flagged "admin".
+  const ownerName = String(project?.team_lead || project?.teamLead || '').trim();
+
+  let members;
   if (Array.isArray(project?.members)) {
-    return project.members
+    members = project.members
       .filter((member) => !member?.invite_status || member.invite_status === 'accepted')
       .map((member) => ({
         id: member?.id ?? null,
@@ -222,12 +230,18 @@ const projectParticipants = (project) => {
         role: member?.role === 'admin' ? 'admin' : 'member',
       }))
       .filter((participant) => participant.name);
+  } else {
+    members = Array.isArray(project?.participants)
+      ? project.participants
+          .map((entry) => (typeof entry === 'string' ? { id: null, name: entry, role: 'member' } : entry))
+          .filter((participant) => participant?.name)
+      : [];
   }
-  return Array.isArray(project?.participants)
-    ? project.participants
-        .map((entry) => (typeof entry === 'string' ? { id: null, name: entry, role: 'member' } : entry))
-        .filter((participant) => participant?.name)
-    : [];
+
+  if (ownerName && !members.some((p) => p.name === ownerName)) {
+    return [{ id: null, name: ownerName, role: 'admin' }, ...members];
+  }
+  return members;
 };
 
 const inviteStatusMeta = {

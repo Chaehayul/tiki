@@ -20,6 +20,7 @@ import {
   updateCurrentUser,
 } from "../api/apiClient";
 import { PLANS, yearlyDiscount } from "../data/subscriptionPlans";
+import { DEPARTMENTS, POSITIONS } from "../data/profileOptions";
 
 // ── Icons ──────────────────────────────────────────────────────────────────
 const ICON_PATHS = {
@@ -78,23 +79,6 @@ const NAV_ITEMS = [
   { id: "subscription",label: "구독권 관리",     icon: "creditCard" },
   { id: "sessions",    label: "세션 관리",       icon: "monitor" },
   { id: "data",        label: "데이터",          icon: "download" },
-];
-
-const DEPARTMENTS = [
-  "기획팀",
-  "개발팀",
-  "디자인팀",
-  "마케팅팀",
-  "직접 입력",
-];
-
-const POSITIONS = [
-  "개발자",
-  "디자이너",
-  "PM",
-  "마케터",
-  "기획자",
-  "직접 입력",
 ];
 
 const ROLE_LABELS = {
@@ -592,10 +576,17 @@ function getMeetingDedupeKey(meeting) {
 
 function getActionDedupeKey(item) {
   const projectKey = normalizeKeyText(item?.projectId || item?.projectName);
-  const sourceKey = normalizeKeyText(item?.source || item?.meetingTitle || item?.meetingId);
   const titleKey = normalizeKeyText(getActionTitle(item));
   const assigneeKey = normalizeKeyText(item?.assignee || (Array.isArray(item?.assignees) ? item.assignees.join(",") : ""));
-  return `${projectKey}::${sourceKey}::${titleKey}::${assigneeKey}`;
+  // Deliberately excludes "source" (meeting title): once a task is synced to
+  // Jira/Notion it also exists as a separate Ticket row (see Ticket creation
+  // in backend/app/workers/tasks.py), and ProjectTicketItem has no field
+  // linking back to its originating meeting — so a ticket-derived entry's
+  // source is always empty and never matches the real meeting-derived entry's
+  // source, silently double-counting the same task in "이번 달 활동"/dashboard
+  // totals. Project + title + assignee alone is specific enough to identify
+  // the same real task without that mismatch.
+  return `${projectKey}::${titleKey}::${assigneeKey}`;
 }
 
 function mergePreferRicher(prev, next) {

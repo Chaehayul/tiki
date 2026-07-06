@@ -4,7 +4,7 @@ import Header from "../components/Header";
 import Footer from "../components/Footer";
 import MobileTab from "../components/MobileTab";
 import ToastPopup from "../components/toastpopup";
-import { clearAuthSession, getProjectIntegrations, getUploadAnalysis, listProjectMeetings, listUploads } from "../api/apiClient";
+import { clearAuthSession, getProject, getProjectIntegrations, getUploadAnalysis, listProjectMeetings, listUploads } from "../api/apiClient";
 
 /* ─── 데이터 ─────────────────────────────────────────── */
 const TX = [
@@ -3222,7 +3222,11 @@ export default function TikiSprint12() {
       text: String(item?.text || item?.title || item?.description || "").trim(),
       assignee: item?.assignee || "미정",
       due: item?.due || item?.due_at || "",
-      status: item?.status === "완료" || item?.status === "done" ? "done" : "todo",
+      // Real task records use "수행완료" (see Dashboard.jsx/ProjectMeetings.jsx's
+      // status vocabulary), not "완료" — this only ever matched a status no
+      // real task actually has, so completed tasks always showed as unchecked
+      // here even though they were genuinely marked done elsewhere.
+      status: item?.status === "수행완료" || item?.status === "완료" || item?.status === "done" || item?.checked ? "done" : "todo",
     });
 
     (async () => {
@@ -3315,8 +3319,22 @@ export default function TikiSprint12() {
           issues: Array.isArray(analysis.issues) && analysis.issues.length ? analysis.issues : prev.issues,
           next_agenda: Array.isArray(analysis.next_agenda) && analysis.next_agenda.length ? analysis.next_agenda : prev.next_agenda,
         }));
-        if (Array.isArray(analysis.action_items) && analysis.action_items.length > 0) {
-          setSummaryActions(analysis.action_items.map(normalizeAction));
+        // analysis.action_items is a frozen snapshot taken at analysis time
+        // (AnalysisResult.action_items on the backend) — it never reflects a
+        // task being checked off later via Dashboard/ProjectMeetings.jsx, which
+        // only update the live Meeting record. Prefer the live meeting's
+        // action_items for status/checked state when available, so a task
+        // marked 수행완료 elsewhere actually shows as done here too.
+        const liveMeetings = await listProjectMeetings(projectId).catch(() => []);
+        const liveMeeting = (Array.isArray(liveMeetings) ? liveMeetings : []).find(
+          (m) => String(m?.id || "") === String(meetingId)
+        );
+        const liveActionItems = Array.isArray(liveMeeting?.action_items)
+          ? liveMeeting.action_items.filter((item) => !(item?.__tiki_meta || item?.type === "__tiki_meeting_meta"))
+          : [];
+        const actionItemsToShow = liveActionItems.length > 0 ? liveActionItems : analysis.action_items;
+        if (Array.isArray(actionItemsToShow) && actionItemsToShow.length > 0) {
+          setSummaryActions(actionItemsToShow.map(normalizeAction));
         }
         setMeetingHeader({
           title: analysis.meeting_title || state.meeting?.title || "",
@@ -3646,10 +3664,45 @@ export default function TikiSprint12() {
     return acc;
   }, -1);
 
-  const acceptedParticipants = useMemo(() => {
+  const cachedParticipants = useMemo(() => {
     const state = location?.state || {};
     return buildAcceptedProjectParticipants({ projectId: state.projectId, state });
   }, [location?.state]);
+
+  // The cached version above reads from a localStorage project catalog that
+  // multiple pages write to — if this page loads before the fuller project
+  // list page ever re-populates that cache, it stays stuck showing just the
+  // owner's name. Fetch the real project directly instead so this doesn't
+  // depend on which page happened to load first.
+  const [liveParticipants, setLiveParticipants] = useState(null);
+  useEffect(() => {
+    const projectId = location?.state?.projectId || searchParams.get("projectId");
+    if (!projectId) return;
+    let cancelled = false;
+    getProject(projectId)
+      .then((project) => {
+        if (cancelled || !project) return;
+        const names = new Set();
+        const add = (value) => {
+          const normalized = String(value || "").trim();
+          if (normalized) names.add(normalized);
+        };
+        add(project.team_lead);
+        (Array.isArray(project.members) ? project.members : []).forEach((member) => {
+          if (member?.invite_status && member.invite_status !== "accepted") return;
+          add(member?.name || member?.email);
+        });
+        setLiveParticipants([...names]);
+      })
+      .catch(() => {
+        // Keep whatever the cached fallback resolved to.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [location?.state, searchParams]);
+
+  const acceptedParticipants = liveParticipants && liveParticipants.length > 0 ? liveParticipants : cachedParticipants;
   const visibleParticipants = acceptedParticipants.slice(0, 4);
   const hiddenCount = Math.max(acceptedParticipants.length - visibleParticipants.length, 0);
 

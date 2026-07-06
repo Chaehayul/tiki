@@ -80,10 +80,10 @@ export async function loginUser({ email, password }) {
   });
 }
 
-export async function signupUser({ name, email, password, role }) {
+export async function signupUser({ name, email, password, role, position }) {
   return request('/auth/signup', {
     method: 'POST',
-    body: JSON.stringify({ name, email, password, role }),
+    body: JSON.stringify({ name, email, password, role, position }),
   });
 }
 

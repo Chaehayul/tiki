@@ -1642,8 +1642,28 @@ class AIEngine:
         self.stt_service = stt_service or WhisperSpeechToTextService(transcription_profile=transcription_profile)
         self.llm_service = llm_service or build_llm_analysis_service()
 
-    def transcribe_audio(self, file_path: str) -> str:
-        return self.stt_service.transcribe(file_path)
+    def warm_up(self, *, preload_secondary_models: bool = False, preload_diarization: bool = True) -> None:
+        """Preload reusable AI models for long-lived server/worker processes."""
+        warm_up_stt = getattr(self.stt_service, "warm_up", None)
+        if callable(warm_up_stt):
+            try:
+                warm_up_stt(preload_secondary_models=preload_secondary_models)
+            except Exception as exc:  # pragma: no cover - best effort warmup
+                logger.warning("STT warm-up failed: %s", exc)
+
+        if preload_diarization:
+            get_diarization_service = getattr(self.stt_service, "_get_diarization_service", None)
+            if callable(get_diarization_service):
+                try:
+                    diarization_service = get_diarization_service()
+                    warm_up_diarization = getattr(diarization_service, "warm_up", None)
+                    if callable(warm_up_diarization):
+                        warm_up_diarization()
+                except Exception as exc:  # pragma: no cover - best effort warmup
+                    logger.warning("Diarization warm-up failed from AIEngine: %s", exc)
+
+    def transcribe_audio(self, file_path: str, *, n_workers: int | None = None) -> str:
+        return self.stt_service.transcribe(file_path, n_workers=n_workers)
 
     def prepare_audio(self, file_path: str) -> dict[str, Any]:
         """Expose chunking metadata for inspection and future diarization work."""
@@ -1774,7 +1794,14 @@ class AIEngine:
             analysis=analysis,
         )
 
-    def process_audio(self, file_path: str, rag_context: Any | None = None) -> AIProcessingResult:
+    def process_audio(
+        self,
+        file_path: str,
+        rag_context: Any | None = None,
+        *,
+        include_diarization: bool = True,
+        n_workers: int | None = None,
+    ) -> AIProcessingResult:
         context_snapshot = _build_context_snapshot(rag_context)
         context_snapshot = _ensure_search_source_metadata(
             context_snapshot,
@@ -1786,9 +1813,14 @@ class AIEngine:
         participant_names = list(context_snapshot.get("participants") or []) if context_snapshot else []
         transcriber = getattr(self.stt_service, "transcribe_with_segments", None)
         if callable(transcriber):
-            transcript, raw_segments = transcriber(file_path, participant_names=participant_names)
+            transcript, raw_segments = transcriber(
+                file_path,
+                participant_names=participant_names,
+                include_diarization=include_diarization,
+                n_workers=n_workers,
+            )
         else:
-            transcript = self.transcribe_audio(file_path)
+            transcript = self.transcribe_audio(file_path, n_workers=n_workers)
             raw_segments = []
 
         masked_transcript = mask_personal_information(transcript)
@@ -1847,7 +1879,10 @@ class AIEngine:
             diarization_summary = get_last_diarization()
             if diarization_summary:
                 analysis.extra_data["speaker_diarization"] = diarization_summary
-        stt_routing = _summarize_stt_routing(segments)
+        get_last_stt_routing = getattr(self.stt_service, "get_last_stt_routing", None)
+        stt_routing = get_last_stt_routing() if callable(get_last_stt_routing) else None
+        if not stt_routing:
+            stt_routing = _summarize_stt_routing(segments)
         if stt_routing:
             analysis.extra_data["stt_routing"] = stt_routing
         script_segments, tx_rows, search_document = _build_script_contract(
@@ -1877,8 +1912,10 @@ class AIEngine:
     def process_audio_parallel(
         self,
         file_path: str,
-        n_workers: int = 2,
+        n_workers: int | None = None,
         rag_context: Any | None = None,
+        *,
+        include_diarization: bool = True,
     ) -> AIProcessingResult:
         """Parallel variant of process_audio for long multi-chunk recordings.
 
@@ -1888,7 +1925,12 @@ class AIEngine:
         """
         parallel_transcribe = getattr(self.stt_service, "transcribe_with_segments_parallel", None)
         if not callable(parallel_transcribe):
-            return self.process_audio(file_path, rag_context=rag_context)
+            return self.process_audio(
+                file_path,
+                rag_context=rag_context,
+                include_diarization=include_diarization,
+                n_workers=n_workers,
+            )
 
         context_snapshot = _build_context_snapshot(rag_context)
         context_snapshot = _ensure_search_source_metadata(
@@ -1903,6 +1945,7 @@ class AIEngine:
             file_path,
             n_workers=n_workers,
             participant_names=participant_names,
+            include_diarization=include_diarization,
         )
 
         masked_transcript = mask_personal_information(transcript)
@@ -1970,7 +2013,10 @@ class AIEngine:
             diarization_summary = get_last_diarization()
             if diarization_summary:
                 analysis.extra_data["speaker_diarization"] = diarization_summary
-        stt_routing = _summarize_stt_routing(segments)
+        get_last_stt_routing = getattr(self.stt_service, "get_last_stt_routing", None)
+        stt_routing = get_last_stt_routing() if callable(get_last_stt_routing) else None
+        if not stt_routing:
+            stt_routing = _summarize_stt_routing(segments)
         if stt_routing:
             analysis.extra_data["stt_routing"] = stt_routing
         script_segments, tx_rows, search_document = _build_script_contract(
@@ -1997,7 +2043,14 @@ class AIEngine:
             analysis=analysis,
         )
 
-    def process_audio_batch(self, file_paths: list[str], rag_context: Any | None = None) -> AIProcessingBatchResult:
+    def process_audio_batch(
+        self,
+        file_paths: list[str],
+        rag_context: Any | None = None,
+        *,
+        include_diarization: bool = True,
+        n_workers: int | None = None,
+    ) -> AIProcessingBatchResult:
         if not file_paths:
             raise ValueError("At least one audio file path is required.")
 
@@ -2073,7 +2126,12 @@ class AIEngine:
             if merged_audio_path is not None:
                 transcriber = getattr(self.stt_service, "transcribe_with_segments", None)
                 if callable(transcriber):
-                    combined_transcript, merged_segments = transcriber(str(merged_audio_path), participant_names=participant_names)
+                    combined_transcript, merged_segments = transcriber(
+                        str(merged_audio_path),
+                        participant_names=participant_names,
+                        include_diarization=include_diarization,
+                        n_workers=n_workers,
+                    )
                 else:
                     combined_transcript = self.transcribe_audio(str(merged_audio_path))
                     merged_segments = []
@@ -2180,7 +2238,12 @@ class AIEngine:
                     file_path = str(window["file_path"])
                     transcriber = getattr(self.stt_service, "transcribe_with_segments", None)
                     if callable(transcriber):
-                        transcript, raw_segments = transcriber(file_path, participant_names=participant_names)
+                        transcript, raw_segments = transcriber(
+                            file_path,
+                            participant_names=participant_names,
+                            include_diarization=include_diarization,
+                            n_workers=n_workers,
+                        )
                     else:
                         transcript = self.transcribe_audio(file_path)
                         raw_segments = []
@@ -2318,7 +2381,10 @@ class AIEngine:
                 analysis.extra_data["audio_preprocessing"] = audio_preprocessing_summaries
             if diarization_summaries:
                 analysis.extra_data["speaker_diarization"] = diarization_summaries
-            stt_routing = _summarize_stt_routing(timeline_segments)
+            get_last_stt_routing = getattr(self.stt_service, "get_last_stt_routing", None)
+            stt_routing = get_last_stt_routing() if callable(get_last_stt_routing) else None
+            if not stt_routing:
+                stt_routing = _summarize_stt_routing(timeline_segments)
             if stt_routing:
                 analysis.extra_data["stt_routing"] = stt_routing
             script_segments, tx_rows, search_document = _build_script_contract(
@@ -2358,8 +2424,8 @@ def get_default_ai_engine() -> AIEngine:
         _DEFAULT_AI_ENGINE = AIEngine()
     return _DEFAULT_AI_ENGINE
 
-def transcribe_audio(file_path: str) -> str:
-    return get_default_ai_engine().transcribe_audio(file_path)
+def transcribe_audio(file_path: str, *, n_workers: int | None = None) -> str:
+    return get_default_ai_engine().transcribe_audio(file_path, n_workers=n_workers)
 
 def prepare_audio(file_path: str) -> dict[str, Any]:
     return get_default_ai_engine().prepare_audio(file_path)
@@ -2375,25 +2441,54 @@ def process_document(file_path: str, rag_context: Any | None = None) -> dict[str
     logger.info("AI document pipeline completed for %s", file_path)
     return result.to_dict()
 
-def process_audio(file_path: str, rag_context: Any | None = None) -> dict[str, Any]:
+def process_audio(
+    file_path: str,
+    rag_context: Any | None = None,
+    *,
+    include_diarization: bool = True,
+    n_workers: int | None = None,
+) -> dict[str, Any]:
     """Convenience wrapper for callers that prefer dict payloads."""
-    result = get_default_ai_engine().process_audio(file_path, rag_context=rag_context)
+    result = get_default_ai_engine().process_audio(
+        file_path,
+        rag_context=rag_context,
+        include_diarization=include_diarization,
+        n_workers=n_workers,
+    )
     logger.info("AI pipeline completed for %s", file_path)
     return result.to_dict()
 
 def process_audio_parallel(
-    file_path: str, n_workers: int = 2, rag_context: Any | None = None
+    file_path: str,
+    n_workers: int | None = None,
+    rag_context: Any | None = None,
+    *,
+    include_diarization: bool = True,
 ) -> dict[str, Any]:
     """Parallel variant of process_audio. Falls back to sequential for short files."""
     result = get_default_ai_engine().process_audio_parallel(
-        file_path, n_workers=n_workers, rag_context=rag_context
+        file_path,
+        n_workers=n_workers,
+        rag_context=rag_context,
+        include_diarization=include_diarization,
     )
     logger.info("AI parallel pipeline completed for %s", file_path)
     return result.to_dict()
 
-def process_audio_batch(file_paths: list[str], rag_context: Any | None = None) -> dict[str, Any]:
+def process_audio_batch(
+    file_paths: list[str],
+    rag_context: Any | None = None,
+    *,
+    include_diarization: bool = True,
+    n_workers: int | None = None,
+) -> dict[str, Any]:
     """Convenience wrapper for ordered multi-file audio inputs."""
-    result = get_default_ai_engine().process_audio_batch(file_paths, rag_context=rag_context)
+    result = get_default_ai_engine().process_audio_batch(
+        file_paths,
+        rag_context=rag_context,
+        include_diarization=include_diarization,
+        n_workers=n_workers,
+    )
     logger.info("AI batch pipeline completed for %s files", len(file_paths))
     return result.to_dict()
 

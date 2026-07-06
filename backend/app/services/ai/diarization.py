@@ -20,7 +20,8 @@ from app.services.ai.audio_preprocessing import WhisperAudioPreprocessor
 os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
 
 logger = logging.getLogger(__name__)
-DIARIZATION_MERGE_GAP_SECONDS = 0.6
+# 같은 화자 내부의 아주 짧은 끊김만 합치고, 경계가 흔들릴 수 있는 구간은 보수적으로 유지한다.
+DIARIZATION_MERGE_GAP_SECONDS = 0.35
 TORCH_THREAD_LIMIT = 8
 # VAD는 무음 구간을 줄이되, 화자 전환 경계를 너무 많이 잘라내지 않도록 보수적으로 유지한다.
 VAD_MIN_SPEECH_SECONDS = 0.25
@@ -250,6 +251,10 @@ class SpeakerDiarizationService(ABC):
         sample_rate: int | None = None,
     ) -> list[dict[str, Any]]:
         raise NotImplementedError
+
+    def warm_up(self) -> None:
+        """Optional hook for long-lived servers to preload diarization state."""
+        return None
 
 
 class NoopSpeakerDiarizationService(SpeakerDiarizationService):
@@ -511,6 +516,17 @@ class PyannoteSpeakerDiarizationService(SpeakerDiarizationService):
             return normalized_turns
         finally:
             self._clear_device_cache(device_name)
+
+    def warm_up(self) -> None:
+        """Preload the pyannote pipeline in long-lived server processes."""
+        if not self.enabled:
+            return
+        try:
+            device_name = self._resolve_device_name()
+            self._configure_torch_threads()
+            self._load_pipeline(self.model_name, self.token, device_name)
+        except Exception as exc:  # pragma: no cover - best effort warmup
+            logger.warning("Diarization warm-up failed: %s", exc)
 
 
 def build_speaker_diarization_service() -> SpeakerDiarizationService:

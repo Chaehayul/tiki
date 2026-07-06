@@ -9,6 +9,7 @@ from app.api.v1.router import router as api_v1_router
 from app.core.config import settings
 from app.core.exceptions import register_exception_handlers
 from app.models.registry import import_all_models
+from app.services.ai_engine import get_default_ai_engine
 
 import_all_models()
 
@@ -56,6 +57,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 register_exception_handlers(app)
+
+
+@app.on_event("startup")
+def warm_up_ai_services() -> None:
+    """Preload reusable AI models in long-lived server processes."""
+    engine = get_default_ai_engine()
+    engine.warm_up(preload_secondary_models=False, preload_diarization=True)
 
 
 @app.get("/", tags=["health"])

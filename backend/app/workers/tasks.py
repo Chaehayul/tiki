@@ -6,6 +6,7 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import select
 
+from app.core.config import settings
 from app.db.database import SessionLocal
 from app.models.analysis import AnalysisResult
 from app.models.enums import FileKind, ProcessingStatus, TicketStatus
@@ -116,8 +117,9 @@ def _run_pipeline(db, file_id: UUID) -> None:
         _log_progress(file_id, 25, "오디오 전사와 화자 분리 파이프라인을 시작합니다.")
         result = engine.process_audio_parallel(
             uploaded_file.storage_path,
-            n_workers=2,
+            n_workers=settings.whisper_parallel_workers,
             rag_context=project_context,
+            include_diarization=False,
         )
         _log_progress(file_id, 75, "전사 결과를 분석하고 있습니다.")
         extraction_method = "whisper"

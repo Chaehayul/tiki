@@ -366,6 +366,8 @@ def _analysis_extra_for_meeting(db: Session, meeting: Meeting) -> dict:
         return {}
     extra = dict(result.extra_data or {})
     extra.setdefault("summary", result.summary)
+    if not extra.get("raw_text") and result.extracted_content is not None:
+        extra["raw_text"] = result.extracted_content.masked_text or result.extracted_content.raw_text
     return extra
 
 
@@ -419,7 +421,6 @@ def _meeting_markdown(db: Session, meeting: Meeting) -> str:
     issues = [_text_from_item(item) for item in payload.get("issues", []) if _text_from_item(item)]
     next_agenda = [_text_from_item(item) for item in payload.get("next_agenda", []) if _text_from_item(item)]
     action_items = [item for item in payload.get("action_items", []) if isinstance(item, dict)]
-    raw_text = payload.get("raw_text") or payload.get("summary") or "원문이 없습니다."
 
     lines: list[str] = [
         f"# {meeting.date} {_service_text(meeting.title)}",
@@ -473,8 +474,6 @@ def _meeting_markdown(db: Session, meeting: Meeting) -> str:
 
     lines.extend(["", "## 다음 안건"])
     lines.extend([f"- {item}" for item in next_agenda] or ["- 없음"])
-
-    lines.extend(["", "## 회의 전체 내용", raw_text])
 
     if isinstance(meta, dict) and meta.get("source") == "manual":
         lines.extend(["", "<!-- TIKI manual meeting metadata synced -->"])
@@ -670,7 +669,7 @@ def sync_project_meeting_resources(db: Session, project_id: UUID, provider: Inte
     ).all()
     result = {"total": len(meetings), "synced": 0, "failed": 0, "errors": []}
     for meeting in meetings:
-        link = ensure_meeting_external_resource(db, meeting, provider, force=provider == IntegrationProvider.NOTION)
+        link = ensure_meeting_external_resource(db, meeting, provider, force=True)
         if link.sync_status == SyncStatus.SYNCED:
             result["synced"] += 1
             if provider == IntegrationProvider.JIRA:

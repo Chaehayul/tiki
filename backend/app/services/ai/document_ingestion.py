@@ -74,11 +74,16 @@ def _normalize_text(value: Any) -> str:
 
 
 def _normalize_paragraph(text: str) -> str:
-    text = _normalize_text(text)
+    text = str(text or "")
     if not text:
         return ""
-    text = re.sub(r"\s*\n\s*", "\n", text)
+    # _normalize_text collapses \s+ (which includes \n) into a single space, so it
+    # must never run before line breaks are dealt with here — that previously
+    # flattened every extracted document (docx/txt/hwp/doc) into one unreadable
+    # single-line blob, losing all paragraph/table-row structure.
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
     text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r" *\n *", "\n", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()
 

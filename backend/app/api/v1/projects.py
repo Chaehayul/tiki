@@ -1,12 +1,13 @@
 from uuid import UUID
+import logging
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_current_user
 from app.core.exceptions import AppException
-from app.db.database import get_db
+from app.db.database import SessionLocal, get_db
 from app.models.analysis import AnalysisResult
 from app.models.enums import ProcessingStatus
 from app.models.enums import IntegrationProvider
@@ -35,6 +36,17 @@ from app.services import project_service
 from app.services import external_integration_service
 
 router = APIRouter(prefix="/projects", tags=["projects"])
+logger = logging.getLogger(__name__)
+
+
+def _sync_project_meeting_resources_background(project_id: UUID, provider: IntegrationProvider) -> None:
+    db = SessionLocal()
+    try:
+        external_integration_service.sync_project_meeting_resources(db, project_id, provider)
+    except Exception:
+        logger.exception("Background %s meeting sync failed for project %s", provider.value, project_id)
+    finally:
+        db.close()
 
 
 def _to_member_response(member) -> MemberResponse:
@@ -192,6 +204,8 @@ def get_project_integrations(
 def sync_project_integration_meetings(
     project_id: UUID,
     provider: IntegrationProvider,
+    background_tasks: BackgroundTasks,
+    background: bool = Query(False),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
@@ -199,6 +213,9 @@ def sync_project_integration_meetings(
     provider_status = statuses.get(provider.value)
     if provider_status is None or not provider_status.connected:
         raise AppException(detail=f"{provider.value} is not connected", status_code=403, code=f"{provider.value}_not_connected")
+    if background:
+        background_tasks.add_task(_sync_project_meeting_resources_background, project_id, provider)
+        return {"queued": True, "provider": provider.value}
     return external_integration_service.sync_project_meeting_resources(db, project_id, provider)
 
 

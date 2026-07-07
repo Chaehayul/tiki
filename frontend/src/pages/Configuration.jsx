@@ -429,22 +429,10 @@ const Configuration = () => {
       refreshIntegrationStatus(projectId);
       if (oauthProviderFromQuery === 'notion' && oauthStatusFromQuery === 'connected') {
         showToast('Notion 연동 완료. 회의록을 동기화 중입니다...', 'loading', null);
-        syncProjectIntegrationMeetings(projectId, 'notion')
-          .then((result) => {
+        syncProjectIntegrationMeetings(projectId, 'notion', { background: true })
+          .then(() => {
             refreshIntegrationStatus(projectId);
-            const total = Number(result?.total ?? 0);
-            const synced = Number(result?.synced ?? 0);
-            const failed = Number(result?.failed ?? 0);
-            const firstError = Array.isArray(result?.errors)
-              ? result.errors.find((item) => item?.message)?.message
-              : '';
-            if (failed > 0) {
-              showToast(`Notion 연동은 되었지만 동기화가 실패했습니다: ${failed}/${total}${firstError ? ` - ${firstError}` : ''}`, 'error', 5000);
-            } else if (total === 0) {
-              showToast('Notion 연동은 되었지만 아직 서버에 저장된 회의록이 없습니다.', 'warning', 3500);
-            } else {
-              showToast(`Notion 연동 완료: 회의록 ${synced}/${total}개를 동기화했습니다.`, 'success', 3500);
-            }
+            showToast('Notion 연동 완료. 회의록은 백그라운드에서 동기화 중입니다.', 'success', 3500);
           })
           .catch((err) => {
             showToast(err?.message || 'Notion 회의록 동기화에 실패했습니다.', 'error', 5000);
@@ -622,21 +610,9 @@ const Configuration = () => {
     showToast(`Jira 프로젝트 연결 중입니다: ${option.name}`, 'loading', null);
     try {
       await setJiraProject(selectedProject.id, { key: option.key, name: option.name });
-      const syncResult = await syncProjectIntegrationMeetings(selectedProject.id, 'jira');
+      await syncProjectIntegrationMeetings(selectedProject.id, 'jira', { background: true });
       await refreshIntegrationStatus(selectedProject.id);
-      const total = Number(syncResult?.total ?? 0);
-      const synced = Number(syncResult?.synced ?? 0);
-      const failed = Number(syncResult?.failed ?? 0);
-      const firstError = Array.isArray(syncResult?.errors)
-        ? syncResult.errors.find((item) => item?.message)?.message
-        : '';
-      if (failed > 0) {
-        showToast(`Jira 연동은 되었지만 동기화가 실패했습니다: ${failed}/${total}${firstError ? ` - ${firstError}` : ''}`, 'error');
-      } else if (total === 0) {
-        showToast('Jira 연동은 되었지만 아직 서버에 저장된 회의록이 없습니다.', 'warning');
-      } else {
-        showToast(`Jira 연동 완료: 회의록 ${synced}/${total}개를 동기화했습니다.`, 'success');
-      }
+      showToast('Jira 프로젝트 연결 완료. 회의록과 해야 할 일은 백그라운드에서 동기화 중입니다.', 'success', 3500);
     } catch (err) {
       showToast(err?.message || 'Jira 프로젝트 설정에 실패했습니다.', 'error');
     } finally {

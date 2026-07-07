@@ -281,8 +281,9 @@ export async function disconnectProjectIntegration(projectId, provider) {
   });
 }
 
-export async function syncProjectIntegrationMeetings(projectId, provider) {
-  return request(`/projects/${projectId}/integrations/${provider}/sync-meetings`, {
+export async function syncProjectIntegrationMeetings(projectId, provider, options = {}) {
+  const query = options.background ? '?background=true' : '';
+  return request(`/projects/${projectId}/integrations/${provider}/sync-meetings${query}`, {
     method: 'POST',
   });
 }

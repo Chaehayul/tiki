@@ -574,6 +574,11 @@ const Configuration = () => {
     setJiraProjectSaving(true);
     try {
       await setJiraProject(selectedProject.id, { key: option.key, name: option.name });
+      try {
+        await syncProjectIntegrationMeetings(selectedProject.id, 'jira');
+      } catch (syncErr) {
+        console.warn('Failed to resync Jira meetings after selecting a project', syncErr);
+      }
       await refreshIntegrationStatus(selectedProject.id);
       showToast(`Jira 프로젝트를 "${option.name}"(으)로 설정했습니다.`, 'success');
     } catch (err) {

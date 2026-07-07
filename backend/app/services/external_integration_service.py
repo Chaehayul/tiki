@@ -505,7 +505,9 @@ def ensure_meeting_external_resource(db: Session, meeting: Meeting, provider: In
             token = _get_valid_jira_access_token(db, integration)
             db.commit()
             client = JiraOAuthClient(access_token=token, cloud_id=integration.cloud_id, site_url=integration.external_site_url)
-            if client.issue_exists(link.external_id):
+            existing_project_key = client.get_issue_project_key(link.external_id)
+            target_project_key = integration.jira_project_key or settings.jira_project_key
+            if existing_project_key is not None and existing_project_key == target_project_key:
                 return link
             link.external_id = None
             link.external_url = None
@@ -808,7 +810,7 @@ def _sync_tasks_to_provider(
                 if not project_key:
                     raise RuntimeError("Jira project is not selected for this project")
                 existing_key = link.external_key or link.external_id or ""
-                if existing_key and not client.issue_exists(existing_key):
+                if existing_key and client.get_issue_project_key(existing_key) != project_key:
                     link.external_id = None
                     link.external_key = None
                     existing_key = ""

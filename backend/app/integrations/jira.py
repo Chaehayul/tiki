@@ -358,6 +358,20 @@ class JiraOAuthClient:
                 return False
             raise
 
+    def get_issue_project_key(self, issue_id_or_key: str) -> str | None:
+        """Return the project key an existing issue belongs to, or None if it
+        no longer exists. Used to detect a stale link left over from before
+        the user switched which Jira project this TIKI project syncs to —
+        the issue ID can still resolve on the site while belonging to a
+        completely different (old) project."""
+        try:
+            result = self._api_request("GET", f"issue/{issue_id_or_key}?fields=project")
+        except RuntimeError as exc:
+            if "Jira API 404" in str(exc):
+                return None
+            raise
+        return result.get("fields", {}).get("project", {}).get("key")
+
     def get_transitions(self, issue_id_or_key: str) -> list[dict[str, Any]]:
         result = self._api_request("GET", f"issue/{issue_id_or_key}/transitions")
         return result.get("transitions", [])

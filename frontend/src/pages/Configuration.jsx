@@ -594,6 +594,7 @@ const Configuration = () => {
     const option = jiraProjectOptions.find((item) => item.key === key);
     if (!option || !selectedProject?.id) return;
     setJiraProjectSaving(true);
+    showToast(`Jira project linking: ${option.name}`, 'info');
     try {
       await setJiraProject(selectedProject.id, { key: option.key, name: option.name });
       try {

@@ -164,7 +164,6 @@ def notion_callback(
                 notion_bot_id=token_result.bot_id,
                 connected_by_user_id=oauth_state.user_id,
             )
-            external_integration_service.sync_project_meeting_resources(db, oauth_state.project_id, IntegrationProvider.NOTION)
             return RedirectResponse(url=f"{settings.frontend_base_url.rstrip('/')}/configuration?projectId={oauth_state.project_id}&notion=connected")
         try:
             user_id = UUID(state)

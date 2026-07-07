@@ -427,6 +427,29 @@ const Configuration = () => {
     const projectId = selectedProject?.id || projectIdFromQuery;
     if (projectId) {
       refreshIntegrationStatus(projectId);
+      if (oauthProviderFromQuery === 'notion' && oauthStatusFromQuery === 'connected') {
+        showToast('Notion 연동 완료. 회의록을 동기화 중입니다...', 'loading', null);
+        syncProjectIntegrationMeetings(projectId, 'notion')
+          .then((result) => {
+            refreshIntegrationStatus(projectId);
+            const total = Number(result?.total ?? 0);
+            const synced = Number(result?.synced ?? 0);
+            const failed = Number(result?.failed ?? 0);
+            const firstError = Array.isArray(result?.errors)
+              ? result.errors.find((item) => item?.message)?.message
+              : '';
+            if (failed > 0) {
+              showToast(`Notion 연동은 되었지만 동기화가 실패했습니다: ${failed}/${total}${firstError ? ` - ${firstError}` : ''}`, 'error', 5000);
+            } else if (total === 0) {
+              showToast('Notion 연동은 되었지만 아직 서버에 저장된 회의록이 없습니다.', 'warning', 3500);
+            } else {
+              showToast(`Notion 연동 완료: 회의록 ${synced}/${total}개를 동기화했습니다.`, 'success', 3500);
+            }
+          })
+          .catch((err) => {
+            showToast(err?.message || 'Notion 회의록 동기화에 실패했습니다.', 'error', 5000);
+          });
+      }
     }
 
     const cleanedParams = new URLSearchParams(location.search);

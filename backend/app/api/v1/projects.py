@@ -230,7 +230,6 @@ def set_jira_project(
     db: Session = Depends(get_db),
 ) -> ProjectIntegrationsResponse:
     external_integration_service.set_jira_project(db, project_id, current_user.id, payload.key, payload.name)
-    external_integration_service.sync_project_meeting_resources(db, project_id, IntegrationProvider.JIRA)
     statuses = external_integration_service.list_project_integration_status(db, project_id, current_user.id)
     return ProjectIntegrationsResponse(**statuses)
 

@@ -426,7 +426,29 @@ const Configuration = () => {
     if (projectId) {
       refreshIntegrationStatus(projectId);
     }
-  }, [oauthProviderFromQuery, oauthStatusFromQuery, projectIdFromQuery, selectedProject?.id]);
+
+    const cleanedParams = new URLSearchParams(location.search);
+    cleanedParams.delete('jira');
+    cleanedParams.delete('notion');
+    if (!cleanedParams.has('tab')) cleanedParams.set('tab', 'integration');
+    const nextSearch = cleanedParams.toString();
+    navigate(
+      {
+        pathname: location.pathname,
+        search: nextSearch ? `?${nextSearch}` : '',
+      },
+      { replace: true, state: location.state }
+    );
+  }, [
+    oauthProviderFromQuery,
+    oauthStatusFromQuery,
+    projectIdFromQuery,
+    selectedProject?.id,
+    location.pathname,
+    location.search,
+    location.state,
+    navigate,
+  ]);
 
   useEffect(() => {
     setFormData(buildInitialState(selectedProject));

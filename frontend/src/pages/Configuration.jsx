@@ -90,6 +90,7 @@ const TOAST_COLORS = {
   success: '#10B981',
   warning: '#F59E0B',
   error: '#EF4444',
+  loading: '#38BDF8',
 };
 
 const TOAST_VARIANTS = {
@@ -98,6 +99,7 @@ const TOAST_VARIANTS = {
   success: { background: '#0D1B2A', text: '#FFFFFF', icon: TOAST_COLORS.success, border: 'rgba(255,255,255,0.12)' },
   warning: { background: '#0D1B2A', text: '#FFFFFF', icon: TOAST_COLORS.warning, border: 'rgba(255,255,255,0.12)' },
   error: { background: '#0D1B2A', text: '#FFFFFF', icon: TOAST_COLORS.error, border: 'rgba(255,255,255,0.12)' },
+  loading: { background: '#0D1B2A', text: '#FFFFFF', icon: TOAST_COLORS.loading, border: 'rgba(56,189,248,0.28)' },
 };
 
 const readProjectOverrides = () => {
@@ -594,7 +596,7 @@ const Configuration = () => {
     const option = jiraProjectOptions.find((item) => item.key === key);
     if (!option || !selectedProject?.id) return;
     setJiraProjectSaving(true);
-    showToast(`Jira project linking: ${option.name}`, 'info');
+    showToast(`Jira 프로젝트 연결 중입니다: ${option.name}`, 'loading', null);
     try {
       await setJiraProject(selectedProject.id, { key: option.key, name: option.name });
       const syncResult = await syncProjectIntegrationMeetings(selectedProject.id, 'jira');
@@ -730,10 +732,13 @@ const Configuration = () => {
     showToast('설정이 초기화되었습니다.', 'success');
   };
 
-  const showToast = (message, type = 'info') => {
+  const showToast = (message, type = 'info', duration = 2200) => {
     setToast({ message, type });
     if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
-    toastTimerRef.current = window.setTimeout(() => setToast({ message: '', type: 'info' }), 2200);
+    toastTimerRef.current = null;
+    if (duration !== null) {
+      toastTimerRef.current = window.setTimeout(() => setToast({ message: '', type: 'info' }), duration);
+    }
   };
 
   const matchedMembers = useMemo(() => [], []);
@@ -1723,7 +1728,12 @@ const Configuration = () => {
               borderColor: currentToastVariant.border,
             }}
           >
-            {toast.type === 'success' ? (
+            {toast.type === 'loading' ? (
+              <span
+                className="h-4 w-4 shrink-0 rounded-full border-2 border-sky-200 border-t-sky-500 animate-spin"
+                aria-hidden="true"
+              />
+            ) : toast.type === 'success' ? (
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                 <circle cx="12" cy="12" r="10" fill={TOAST_COLORS.success} />
                 <path d="M16.7 9.2 10.6 15.3 7.2 11.9" stroke="#FFFFFF" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round" />

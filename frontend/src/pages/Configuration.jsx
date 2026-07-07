@@ -597,13 +597,21 @@ const Configuration = () => {
     showToast(`Jira project linking: ${option.name}`, 'info');
     try {
       await setJiraProject(selectedProject.id, { key: option.key, name: option.name });
-      try {
-        await syncProjectIntegrationMeetings(selectedProject.id, 'jira');
-      } catch (syncErr) {
-        console.warn('Failed to resync Jira meetings after selecting a project', syncErr);
-      }
+      const syncResult = await syncProjectIntegrationMeetings(selectedProject.id, 'jira');
       await refreshIntegrationStatus(selectedProject.id);
-      showToast(`Jira 프로젝트를 "${option.name}"(으)로 설정했습니다.`, 'success');
+      const total = Number(syncResult?.total ?? 0);
+      const synced = Number(syncResult?.synced ?? 0);
+      const failed = Number(syncResult?.failed ?? 0);
+      const firstError = Array.isArray(syncResult?.errors)
+        ? syncResult.errors.find((item) => item?.message)?.message
+        : '';
+      if (failed > 0) {
+        showToast(`Jira 연동은 되었지만 동기화가 실패했습니다: ${failed}/${total}${firstError ? ` - ${firstError}` : ''}`, 'error');
+      } else if (total === 0) {
+        showToast('Jira 연동은 되었지만 아직 서버에 저장된 회의록이 없습니다.', 'warning');
+      } else {
+        showToast(`Jira 연동 완료: 회의록 ${synced}/${total}개를 동기화했습니다.`, 'success');
+      }
     } catch (err) {
       showToast(err?.message || 'Jira 프로젝트 설정에 실패했습니다.', 'error');
     } finally {

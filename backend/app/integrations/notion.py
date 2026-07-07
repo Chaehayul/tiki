@@ -108,7 +108,10 @@ class NotionClient:
                 return json.loads(raw) if raw else {}
         except urllib.error.HTTPError as exc:
             body_text = exc.read().decode("utf-8", errors="replace")
-            logger.error("Notion API error %s: %s", exc.code, body_text)
+            if exc.code == 404:
+                logger.info("Notion API returned 404: %s", body_text)
+            else:
+                logger.error("Notion API error %s: %s", exc.code, body_text)
             raise RuntimeError(f"Notion API {exc.code}: {body_text}") from exc
         except urllib.error.URLError as exc:
             logger.error("Notion network error: %s", exc)

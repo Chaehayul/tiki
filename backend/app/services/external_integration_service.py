@@ -559,7 +559,7 @@ def ensure_meeting_external_resource(db: Session, meeting: Meeting, provider: In
                 meeting_type=meeting.meeting_type or "",
                 participants=meeting.participants or [],
                 markdown=_meeting_markdown(db, meeting),
-                existing_page_id=link.external_id,
+                existing_page_id=existing_page_id if existing_page_alive else None,
             )
             link.external_id = page.page_id
             link.external_url = page.page_url

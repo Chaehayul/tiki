@@ -125,7 +125,11 @@ def _run_pipeline(db, file_id: UUID) -> None:
         extraction_method = "whisper"
     elif uploaded_file.file_kind in {FileKind.DOCUMENT, FileKind.TEXT}:
         _log_progress(file_id, 25, "문서 추출 파이프라인을 시작합니다.")
-        result = engine.process_document(uploaded_file.storage_path, rag_context=project_context)
+        result = engine.process_document(
+            uploaded_file.storage_path,
+            rag_context=project_context,
+            source_name=uploaded_file.original_filename,
+        )
         _log_progress(file_id, 75, "문서 요약과 해야 할 일을 정리하고 있습니다.")
         extraction_meta = result.analysis.extra_data.get("document_extraction", {})
         extraction_method = extraction_meta.get("extraction_method", "document")

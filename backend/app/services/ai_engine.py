@@ -986,6 +986,21 @@ def _ensure_search_source_metadata(
     return {key: value for key, value in snapshot.items() if value not in (None, "", [], {}, ())}
 
 
+def _merge_participants(*sources: Any) -> list[str]:
+    merged: list[str] = []
+    seen: set[str] = set()
+    for source in sources:
+        if not isinstance(source, (list, tuple, set)):
+            continue
+        for item in source:
+            text = str(item or "").strip()
+            if not text or text in seen:
+                continue
+            seen.add(text)
+            merged.append(text)
+    return merged
+
+
 def _build_document_analysis_context(document: Any, rag_context: Any | None = None) -> dict[str, Any]:
     document_extraction = {
         "source_path": getattr(document, "source_path", None),
@@ -1002,6 +1017,9 @@ def _build_document_analysis_context(document: Any, rag_context: Any | None = No
         normalized_context = normalize_rag_context(rag_context)
         analysis_context = normalized_context.to_dict() if normalized_context else {}
 
+    document_participants = getattr(document, "metadata", {}).get("participants") if getattr(document, "metadata", None) else None
+    merged_participants = _merge_participants(analysis_context.get("participants"), document_participants)
+
     extra = dict(analysis_context.get("extra") or {})
     extra.update(
         {
@@ -1009,7 +1027,7 @@ def _build_document_analysis_context(document: Any, rag_context: Any | None = No
             "source_title": getattr(document, "metadata", {}).get("source_title") if getattr(document, "metadata", None) else None,
             "source_name": getattr(document, "source_name", None),
             "source_path": getattr(document, "source_path", None),
-            "participants": getattr(document, "metadata", {}).get("participants") if getattr(document, "metadata", None) else None,
+            "participants": merged_participants,
             "document_extraction": document_extraction,
         }
     )
@@ -1019,7 +1037,7 @@ def _build_document_analysis_context(document: Any, rag_context: Any | None = No
     analysis_context["source_title"] = getattr(document, "metadata", {}).get("source_title") if getattr(document, "metadata", None) else None
     analysis_context["source_name"] = getattr(document, "source_name", None)
     analysis_context["source_path"] = getattr(document, "source_path", None)
-    analysis_context["participants"] = getattr(document, "metadata", {}).get("participants") if getattr(document, "metadata", None) else None
+    analysis_context["participants"] = merged_participants
     analysis_context["document_extraction"] = document_extraction
     if extra:
         analysis_context["extra"] = extra
@@ -1746,8 +1764,13 @@ class AIEngine:
             result.masked_transcript = masked_transcript
         return result
 
-    def process_document(self, file_path: str, rag_context: Any | None = None) -> AIProcessingResult:
+    def process_document(self, file_path: str, rag_context: Any | None = None, source_name: str | None = None) -> AIProcessingResult:
         document = load_document_file(file_path)
+        if source_name:
+            document.source_name = source_name
+            source_title = Path(source_name).stem.strip()
+            if source_title:
+                document.metadata["source_title"] = source_title
         document.masked_text = mask_personal_information(document.text)
         analysis_context = _build_document_analysis_context(document, rag_context)
         context_snapshot = _build_context_snapshot(analysis_context)

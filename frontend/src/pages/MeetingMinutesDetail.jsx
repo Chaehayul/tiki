@@ -4,7 +4,7 @@ import Header from "../components/Header";
 import Footer from "../components/Footer";
 import MobileTab from "../components/MobileTab";
 import ToastPopup from "../components/toastpopup";
-import { clearAuthSession, getProject, getProjectIntegrations, getUploadAnalysis, listProjectMeetings, listUploads } from "../api/apiClient";
+import { clearAuthSession, getProject, getProjectIntegrations, getUploadAnalysis, listProjectMeetings, listUploads, updateProjectMeeting } from "../api/apiClient";
 
 /* ─── 데이터 ─────────────────────────────────────────── */
 const TX = [
@@ -711,7 +711,7 @@ function CollapsibleSectionHeader({ label, collapsed, onToggle, badge }) {
 }
 
 /* ─── 의제 달성률 카드 ──────────────────────────────── */
-function AgendaCompletionSection({ actions, onToggleAction }) {
+function AgendaCompletionSection({ actions, onToggleAction, onChangeActionAssignee = () => {}, assigneeOptions = [] }) {
   const [isCollapsed, setIsCollapsed] = useState(false);
   const total = actions.length;
   const done = actions.filter((action) => action.status === "done").length;
@@ -808,14 +808,21 @@ function AgendaCompletionSection({ actions, onToggleAction }) {
             {actions.map((action, idx) => {
               const isDone = action.status === "done";
               return (
-                <button
+                <div
                   key={`${action.text}-${idx}`}
-                  type="button"
                   onClick={() => onToggleAction(idx)}
                   className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl border text-left transition-all hover:-translate-y-0.5 cursor-pointer"
                   style={{
                     borderColor: isDone ? "rgba(16,185,129,0.3)" : "rgba(0,100,180,0.1)",
                     background: isDone ? "rgba(16,185,129,0.06)" : "#fff",
+                  }}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      onToggleAction(idx);
+                    }
                   }}
                 >
                   <span
@@ -837,17 +844,30 @@ function AgendaCompletionSection({ actions, onToggleAction }) {
                     <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-500">
                       {normalizeDueLabel(action.due) || "미정"}
                     </span>
-                    <span
-                      className="text-xs font-semibold px-2 py-0.5 rounded-full"
-                      style={{
-                        color: isDone ? "#10B981" : "#5A6F8A",
-                        background: isDone ? "rgba(16,185,129,0.1)" : "rgba(90,111,138,0.08)",
-                      }}
+                    <div
+                      className="w-28"
+                      onClick={(event) => event.stopPropagation()}
+                      onKeyDown={(event) => event.stopPropagation()}
                     >
-                      {action.assignee}
-                    </span>
+                      <CustomDropdown
+                        value={action.assignee && action.assignee !== "미정" ? action.assignee : ""}
+                        onChange={(nextAssignee) => onChangeActionAssignee(idx, nextAssignee)}
+                        options={assigneeOptions}
+                        placeholder="미정"
+                        triggerStyle={{
+                          minHeight: 24,
+                          padding: "0.125rem 0.5rem",
+                          borderRadius: 999,
+                          borderColor: "transparent",
+                          background: isDone ? "rgba(16,185,129,0.1)" : "rgba(90,111,138,0.08)",
+                          color: isDone ? "#10B981" : "#5A6F8A",
+                          fontSize: 12,
+                          fontWeight: 700,
+                        }}
+                      />
+                    </div>
                   </div>
-                </button>
+                </div>
               );
             })}
           </div>
@@ -3375,16 +3395,6 @@ export default function TikiSprint12() {
       cancelled = true;
     };
   }, [location?.state]);
-  const issueAssigneeOptions = useMemo(() => {
-    const state = location?.state || {};
-    return buildProjectAssigneeOptions({
-      projectId: state.projectId,
-      state,
-      participants: state.meeting?.participants,
-      actions: Array.isArray(state.actions) ? state.actions : [],
-    });
-  }, [location?.state]);
-
   const [modal, setModal] = useState(null);
   const [detailSvc, setDetailSvc] = useState(null);
   const [issueOpen, setIssueOpen] = useState(false);
@@ -3725,6 +3735,10 @@ export default function TikiSprint12() {
   }, [location?.state, searchParams]);
 
   const acceptedParticipants = liveParticipants && liveParticipants.length > 0 ? liveParticipants : cachedParticipants;
+  const actionAssigneeOptions = useMemo(
+    () => buildEditableAssigneeOptions(acceptedParticipants, summaryActions),
+    [acceptedParticipants, summaryActions]
+  );
   const visibleParticipants = acceptedParticipants.slice(0, 4);
   const hiddenCount = Math.max(acceptedParticipants.length - visibleParticipants.length, 0);
 
@@ -3732,6 +3746,44 @@ export default function TikiSprint12() {
     const latest = services.find(s => s.id === svc.id) || svc;
     setDetailSvc(latest);
   }, [services]);
+
+  const handleChangeActionAssignee = useCallback((index, nextAssignee) => {
+    const normalizedAssignee = String(nextAssignee || "").trim();
+    const assignee = normalizedAssignee && normalizedAssignee !== "미정" ? normalizedAssignee : "미정";
+    const nextActions = summaryActions.map((action, i) => (
+      i === index ? { ...action, assignee } : action
+    ));
+
+    setSummaryActions(nextActions);
+    setSummaryData((prev) => ({
+      ...prev,
+      actions: prev.actions.map((action, i) => (
+        i === index ? { ...action, assignee } : action
+      )),
+    }));
+
+    const projectId = location?.state?.projectId || searchParams.get("projectId");
+    const meetingId = location?.state?.meetingId || searchParams.get("meetingId");
+    if (!projectId || !meetingId) return;
+
+    updateProjectMeeting(projectId, meetingId, { action_items: nextActions })
+      .then((updatedMeeting) => {
+        const updatedActions = Array.isArray(updatedMeeting?.action_items)
+          ? updatedMeeting.action_items.filter((item) => !(item?.__tiki_meta || item?.type === "__tiki_meeting_meta"))
+          : null;
+        if (updatedActions) {
+          setSummaryActions(updatedActions.map((item) => ({
+            text: String(item?.text || item?.title || item?.description || "").trim(),
+            assignee: item?.assignee || "미정",
+            due: item?.due || item?.due_at || "",
+            status: item?.status === "수행완료" || item?.status === "완료" || item?.status === "done" || item?.checked ? "done" : "todo",
+          })));
+        }
+      })
+      .catch(() => {
+        showToast("담당자 저장에 실패했습니다. 다시 시도해 주세요.", "error");
+      });
+  }, [location?.state, searchParams, showToast, summaryActions]);
 
   const handleToggleAction = useCallback((index) => {
     setSummaryActions((prev) =>
@@ -3868,7 +3920,12 @@ export default function TikiSprint12() {
       </div>
 
       <div className="px-4 md:px-8 lg:px-12 pt-4 max-w-screen-xl mx-auto">
-        <AgendaCompletionSection actions={summaryActions} onToggleAction={handleToggleAction} />
+        <AgendaCompletionSection
+          actions={summaryActions}
+          onToggleAction={handleToggleAction}
+          onChangeActionAssignee={handleChangeActionAssignee}
+          assigneeOptions={actionAssigneeOptions}
+        />
       </div>
 
       <div
@@ -3892,7 +3949,7 @@ export default function TikiSprint12() {
               onToggleSummary={() => setSummaryCollapsed(prev => !prev)}
               transcriptVisible={transcriptVisibleResolved}
               transcriptEnabled={transcriptEnabled}
-              assigneeOptions={issueAssigneeOptions}
+              assigneeOptions={actionAssigneeOptions}
               onToggleTranscript={() => {
                 if (!transcriptEnabled) return;
                 setTranscriptVisible(v => !v);
@@ -4014,7 +4071,7 @@ export default function TikiSprint12() {
         onIssued={handleIssued}
         services={services}
         isMobile={isMobile}
-        assigneeOptions={issueAssigneeOptions}
+        assigneeOptions={actionAssigneeOptions}
       />
 
       <Modal open={modal === "participants"} onClose={() => setModal(null)} title="회의 참여자">

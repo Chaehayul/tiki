@@ -3308,6 +3308,7 @@ export default function TikiSprint12() {
           const metaData = metaItem?.data || {};
           const priorityToLevel = { 높음: "high", 보통: "medium", 낮음: "low" };
 
+          const normalizedVisibleItems = visibleItems.map(normalizeAction);
           setSummaryData((prev) => ({
             ...prev,
             summary: metaData.summary || meeting.summary || prev.summary,
@@ -3328,9 +3329,10 @@ export default function TikiSprint12() {
             next_agenda: typeof metaData.nextAgenda === "string" && metaData.nextAgenda.trim()
               ? metaData.nextAgenda.split("\n").map((line) => line.replace(/^-\s*/, "").trim()).filter(Boolean)
               : [],
+            actions: normalizedVisibleItems,
           }));
           if (visibleItems.length > 0) {
-            setSummaryActions(visibleItems.map(normalizeAction));
+            setSummaryActions(normalizedVisibleItems);
           }
           setMeetingHeader({ title: meeting.title || "", date: meeting.date || "" });
           setAnalysisDegraded(false);
@@ -3375,9 +3377,14 @@ export default function TikiSprint12() {
           ? liveMeeting.action_items.filter((item) => !(item?.__tiki_meta || item?.type === "__tiki_meeting_meta"))
           : [];
         const actionItemsToShow = liveActionItems.length > 0 ? liveActionItems : analysis.action_items;
+        const normalizedActions = Array.isArray(actionItemsToShow) ? actionItemsToShow.map(normalizeAction) : [];
         if (Array.isArray(actionItemsToShow) && actionItemsToShow.length > 0) {
-          setSummaryActions(actionItemsToShow.map(normalizeAction));
+          setSummaryActions(normalizedActions);
         }
+        setSummaryData((prev) => ({
+          ...prev,
+          actions: normalizedActions,
+        }));
         setMeetingHeader({
           title: analysis.meeting_title || state.meeting?.title || "",
           date: state.meeting?.date || "",

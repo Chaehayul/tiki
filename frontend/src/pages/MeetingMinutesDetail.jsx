@@ -268,7 +268,7 @@ function buildProjectAssigneeOptions({ projectId = "", state = {}, participants 
   return [...names];
 }
 
-function buildEditableAssigneeOptions(baseOptions = [], actions = []) {
+function buildEditableAssigneeOptions(baseOptions = []) {
   const names = new Set(["미정"]);
   const add = (value) => {
     const normalized = String(value || "").trim();
@@ -277,9 +277,6 @@ function buildEditableAssigneeOptions(baseOptions = [], actions = []) {
   };
 
   baseOptions.forEach(add);
-  if (Array.isArray(actions)) {
-    actions.forEach((item) => add(item?.assignee));
-  }
 
   return [...names];
 }
@@ -3727,6 +3724,7 @@ export default function TikiSprint12() {
           if (normalized) names.add(normalized);
         };
         add(project.team_lead);
+        add(getStoredUserName());
         (Array.isArray(project.members) ? project.members : []).forEach((member) => {
           if (member?.invite_status && member.invite_status !== "accepted") return;
           add(member?.name || member?.email);
@@ -3743,8 +3741,8 @@ export default function TikiSprint12() {
 
   const acceptedParticipants = liveParticipants && liveParticipants.length > 0 ? liveParticipants : cachedParticipants;
   const actionAssigneeOptions = useMemo(
-    () => buildEditableAssigneeOptions(acceptedParticipants, summaryActions),
-    [acceptedParticipants, summaryActions]
+    () => buildEditableAssigneeOptions(acceptedParticipants),
+    [acceptedParticipants]
   );
   const visibleParticipants = acceptedParticipants.slice(0, 4);
   const hiddenCount = Math.max(acceptedParticipants.length - visibleParticipants.length, 0);

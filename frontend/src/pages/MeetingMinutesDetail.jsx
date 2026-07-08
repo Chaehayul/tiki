@@ -2081,7 +2081,7 @@ function Divider({ label }) {
 }
 
 /* ─── AI Summary Panel ───────────────────────────────── */
-function SummaryPanel({ summaryData, onOpenRegen, onSaveSummaryEdit, transcriptVisible, onToggleTranscript, transcriptEnabled, isMobile, summaryCollapsed, onToggleSummary, actions, onToggleAction, editableAssigneeOptions = ["미정"] }) {
+function SummaryPanel({ summaryData, onOpenRegen, onSaveSummaryEdit, transcriptVisible, onToggleTranscript, transcriptEnabled, isMobile, summaryCollapsed, onToggleSummary, actions, onToggleAction, assigneeOptions = [] }) {
   const [decisions, setDecisions] = useState((summaryData.decisions || []).map((item) => normalizeFullDateLabel(item)));
   const [isMoreOpen, setIsMoreOpen] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
@@ -2146,6 +2146,10 @@ function SummaryPanel({ summaryData, onOpenRegen, onSaveSummaryEdit, transcriptV
       }))
       .filter((a) => a.text);
   }, [actionsDraft]);
+  const editableAssigneeOptions = useMemo(
+    () => buildEditableAssigneeOptions(assigneeOptions, [...actionsDraft, ...(Array.isArray(actions) ? actions : [])]),
+    [actions, actionsDraft, assigneeOptions]
+  );
 
   const buildIssues = useCallback(() => {
     return issuesDraft
@@ -3380,10 +3384,6 @@ export default function TikiSprint12() {
       actions: Array.isArray(state.actions) ? state.actions : [],
     });
   }, [location?.state]);
-  const editableAssigneeOptions = useMemo(
-    () => buildEditableAssigneeOptions(issueAssigneeOptions, [...actionsDraft, ...summaryActions]),
-    [actionsDraft, issueAssigneeOptions, summaryActions]
-  );
 
   const [modal, setModal] = useState(null);
   const [detailSvc, setDetailSvc] = useState(null);
@@ -3892,7 +3892,7 @@ export default function TikiSprint12() {
               onToggleSummary={() => setSummaryCollapsed(prev => !prev)}
               transcriptVisible={transcriptVisibleResolved}
               transcriptEnabled={transcriptEnabled}
-              editableAssigneeOptions={editableAssigneeOptions}
+              assigneeOptions={issueAssigneeOptions}
               onToggleTranscript={() => {
                 if (!transcriptEnabled) return;
                 setTranscriptVisible(v => !v);

@@ -76,6 +76,43 @@ function getFilePreviewIcon(fileName) {
   return SUPPORTED_DOCUMENT_EXTENSIONS.includes(extension) ? "fileText" : "music";
 }
 
+function getFileExtension(fileName) {
+  return String(fileName || "").includes(".") ? String(fileName).split(".").pop().toLowerCase() : "";
+}
+
+function getFileKindFromName(fileName) {
+  const extension = getFileExtension(fileName);
+  if (SUPPORTED_AUDIO_EXTENSIONS.includes(extension)) return "audio";
+  if (SUPPORTED_DOCUMENT_EXTENSIONS.includes(extension)) return extension === "txt" ? "text" : "document";
+  return "unknown";
+}
+
+function resolveUploadKind(files, uploadedFile) {
+  const serverKind = String(uploadedFile?.file_kind || uploadedFile?.fileKind || "").toLowerCase();
+  if (["audio", "document", "text"].includes(serverKind)) return serverKind;
+
+  const fileKinds = files.map((file) => getFileKindFromName(file?.name)).filter((kind) => kind !== "unknown");
+  if (fileKinds.length === 0) return "unknown";
+  const hasAudio = fileKinds.includes("audio");
+  const hasDocument = fileKinds.some((kind) => kind === "document" || kind === "text");
+  if (hasAudio && hasDocument) return "mixed";
+  return hasAudio ? "audio" : "document";
+}
+
+function buildCompletionStats({ uploadKind, elapsedTime }) {
+  const sourceStat = uploadKind === "audio"
+    ? { icon: "mic", text: "화자", val: "감지 완료" }
+    : uploadKind === "mixed"
+      ? { icon: "fileText", text: "자료", val: "추출 완료" }
+      : { icon: "fileText", text: "문서", val: "본문 추출 완료" };
+
+  return [
+    { icon: "clock", text: "처리 시간", val: elapsedTime },
+    sourceStat,
+    { icon: "checkCircle", text: "업무 반영", val: "완료" },
+  ];
+}
+
 function useAnimatedNumber(target, duration = 400) {
   const [display, setDisplay] = useState(0);
   const frameRef = useRef();
@@ -519,6 +556,17 @@ export default function TikiApp() {
   };
 
   const canAnalyze = files.length > 0 && !!selectedProject;
+  const uploadKind = resolveUploadKind(files, uploadedFile);
+  const completionStats = buildCompletionStats({ uploadKind, elapsedTime });
+  const supportBadges = [
+    { icon: "lock", text: "종단간 암호화 처리" },
+    { icon: "clock", text: "평균 처리 시간 2~5분" },
+    uploadKind === "audio"
+      ? { icon: "mic", text: "최대 8명 화자 분리 지원" }
+      : uploadKind === "mixed"
+        ? { icon: "fileText", text: "오디오·문서 통합 분석 지원" }
+        : { icon: "fileText", text: "PDF·Word·HWP 문서 분석 지원" },
+  ];
   const moveToMeetingResult = () => {
     const projectId = selectedProject?.id || uploadedFile?.project_id || uploadedFile?.projectId || "";
     if (!projectId) {
@@ -953,11 +1001,7 @@ export default function TikiApp() {
             <div className="mb-1 text-sm text-[#5A6F8A]">회의록 생성과 후속 업무 정리가 완료됐습니다.</div>
 
             <div className="mb-6 inline-flex flex-wrap justify-center gap-4 rounded-[10px] border border-[rgba(16,185,129,.15)] bg-[rgba(16,185,129,.06)] px-5 py-[10px]">
-              {[
-                { icon: "clock", text: "처리 시간", val: elapsedTime },
-                { icon: "mic", text: "화자", val: "3명 감지" },
-                { icon: "checkCircle", text: "업무 반영", val: "3건 완료" },
-              ].map(({ icon, text, val }) => (
+              {completionStats.map(({ icon, text, val }) => (
                 <div key={text} className="inline-flex items-center gap-1 text-[13px] text-[#5A6F8A]">
                   <IIcon name={icon} size={13} color="#10B981" />
                   {text} <strong className="font-bold text-[#10B981]">{val}</strong>
@@ -981,11 +1025,7 @@ export default function TikiApp() {
         )}
 
         <div className="mt-5 flex flex-wrap gap-2">
-          {[
-            { icon: "lock", text: "종단간 암호화 처리" },
-            { icon: "clock", text: "평균 처리 시간 2~5분" },
-            { icon: "mic", text: "최대 8명 화자 분리 지원" },
-          ].map(({ icon, text }) => (
+          {supportBadges.map(({ icon, text }) => (
             <div
               key={text}
               className={cn(

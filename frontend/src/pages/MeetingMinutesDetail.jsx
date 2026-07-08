@@ -268,6 +268,22 @@ function buildProjectAssigneeOptions({ projectId = "", state = {}, participants 
   return [...names];
 }
 
+function buildEditableAssigneeOptions(baseOptions = [], actions = []) {
+  const names = new Set(["미정"]);
+  const add = (value) => {
+    const normalized = String(value || "").trim();
+    if (!normalized || ["담당자", "담당자 미지정", "회의록", "전체"].includes(normalized)) return;
+    names.add(normalized);
+  };
+
+  baseOptions.forEach(add);
+  if (Array.isArray(actions)) {
+    actions.forEach((item) => add(item?.assignee));
+  }
+
+  return [...names];
+}
+
 function toAuditTimestamp(value) {
   const parsed = new Date(value || Date.now());
   const date = Number.isNaN(parsed.getTime()) ? new Date() : parsed;
@@ -2065,7 +2081,7 @@ function Divider({ label }) {
 }
 
 /* ─── AI Summary Panel ───────────────────────────────── */
-function SummaryPanel({ summaryData, onOpenRegen, onSaveSummaryEdit, transcriptVisible, onToggleTranscript, transcriptEnabled, isMobile, summaryCollapsed, onToggleSummary, actions, onToggleAction }) {
+function SummaryPanel({ summaryData, onOpenRegen, onSaveSummaryEdit, transcriptVisible, onToggleTranscript, transcriptEnabled, isMobile, summaryCollapsed, onToggleSummary, actions, onToggleAction, editableAssigneeOptions = ["미정"] }) {
   const [decisions, setDecisions] = useState((summaryData.decisions || []).map((item) => normalizeFullDateLabel(item)));
   const [isMoreOpen, setIsMoreOpen] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
@@ -2444,14 +2460,16 @@ function SummaryPanel({ summaryData, onOpenRegen, onSaveSummaryEdit, transcriptV
                           <EditRemoveButton onClick={() => setActionsDraft((prev) => prev.filter((_, i) => i !== idx))} />
                         </div>
                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                          <input
+                          <CustomDropdown
                             value={item.assignee || ""}
-                            onChange={(e) =>
-                              setActionsDraft((prev) => prev.map((v, i) => (i === idx ? { ...v, assignee: e.target.value } : v)))
+                            onChange={(nextAssignee) =>
+                              setActionsDraft((prev) => prev.map((v, i) => (
+                                i === idx ? { ...v, assignee: nextAssignee === "미정" ? "" : nextAssignee } : v
+                              )))
                             }
-                            className={`${EDIT_INPUT_CLS} bg-white text-xs py-2`}
-                            style={{ fontFamily: "inherit" }}
-                            placeholder="담당자"
+                            options={editableAssigneeOptions}
+                            placeholder="담당자 선택"
+                            triggerStyle={{ background: "#fff", fontSize: 12, padding: "0.5rem 0.625rem", minHeight: "2rem" }}
                           />
                           <div className="relative" data-due-picker-root>
                             <button
@@ -3362,6 +3380,10 @@ export default function TikiSprint12() {
       actions: Array.isArray(state.actions) ? state.actions : [],
     });
   }, [location?.state]);
+  const editableAssigneeOptions = useMemo(
+    () => buildEditableAssigneeOptions(issueAssigneeOptions, [...actionsDraft, ...summaryActions]),
+    [actionsDraft, issueAssigneeOptions, summaryActions]
+  );
 
   const [modal, setModal] = useState(null);
   const [detailSvc, setDetailSvc] = useState(null);
@@ -3870,6 +3892,7 @@ export default function TikiSprint12() {
               onToggleSummary={() => setSummaryCollapsed(prev => !prev)}
               transcriptVisible={transcriptVisibleResolved}
               transcriptEnabled={transcriptEnabled}
+              editableAssigneeOptions={editableAssigneeOptions}
               onToggleTranscript={() => {
                 if (!transcriptEnabled) return;
                 setTranscriptVisible(v => !v);

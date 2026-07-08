@@ -317,6 +317,22 @@ const buildProjectAssigneeOptions = ({ projectId = '', state = {}, participants 
   return [...names];
 };
 
+const buildEditableAssigneeOptions = (baseOptions = [], actions = []) => {
+  const names = new Set(['미정']);
+  const add = (value) => {
+    const normalized = String(value || '').trim();
+    if (!normalized || ['담당자', '담당자 미지정', '회의록', '전체'].includes(normalized)) return;
+    names.add(normalized);
+  };
+
+  baseOptions.forEach(add);
+  if (Array.isArray(actions)) {
+    actions.forEach((item) => add(item?.assignee));
+  }
+
+  return [...names];
+};
+
 const formatDueDate = (raw) => {
   const value = String(raw || '').trim();
   if (!value) return '미정';
@@ -1519,6 +1535,10 @@ export default function MeetingManualDetail() {
     }),
     [issueActionItems, issueIndividualDrafts, location.state, minutes]
   );
+  const editableAssigneeOptions = useMemo(
+    () => buildEditableAssigneeOptions(issueAssigneeOptions, editDraft.actionsDraft),
+    [editDraft.actionsDraft, issueAssigneeOptions]
+  );
   const selectableIssueItemIndexes = useMemo(
     () => issueActionItems.map((item, idx) => (isIssueItemIssued(item) ? null : idx)).filter((idx) => idx !== null),
     [isIssueItemIssued, issueActionItems]
@@ -2546,12 +2566,12 @@ export default function MeetingManualDetail() {
                             </div>
 
                             <div className="grid grid-cols-3 gap-2">
-                              <input
+                              <CustomDropdown
                                 value={item.assignee || ''}
-                                onChange={(e) => updateActionDraftItem(idx, 'assignee', e.target.value)}
-                                className={`${EDIT_INPUT_CLS} bg-white text-xs py-2`}
-                                style={{ fontFamily: 'inherit' }}
-                                placeholder="담당자"
+                                onChange={(nextAssignee) => updateActionDraftItem(idx, 'assignee', nextAssignee === '미정' ? '' : nextAssignee)}
+                                options={editableAssigneeOptions}
+                                placeholder="담당자 선택"
+                                triggerStyle={{ background: '#fff', fontSize: 12, padding: '0.5rem 0.625rem', minHeight: '2rem' }}
                               />
                               <div className="relative" data-due-picker-root>
                                 <button

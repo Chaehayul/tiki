@@ -55,10 +55,15 @@ def _project_context_for_upload(db, uploaded_file: UploadedFile) -> dict | None:
     if project is None:
         return None
 
-    participant_names = _dedupe_names(
+    owner_names = _dedupe_names(
         [
             getattr(project.owner, "name", None),
             getattr(project.owner, "email", None),
+        ]
+    )
+    participant_names = _dedupe_names(
+        [
+            *owner_names,
             *[
                 (getattr(member.user, "name", None) or member.name or member.email or "").strip()
                 for member in project.members
@@ -70,9 +75,11 @@ def _project_context_for_upload(db, uploaded_file: UploadedFile) -> dict | None:
         "project_name": project.name,
         "project_category": project.category,
         "participants": participant_names,
+        "admins": owner_names,
         "extra": {
             "project_id": str(project.id),
             "project_visibility": project.visibility,
+            "default_assignee": owner_names[0] if owner_names else None,
         },
     }
 
@@ -112,7 +119,7 @@ def _match_participant_name(value: str, participants: list[str]) -> str | None:
     return None
 
 
-def _resolve_action_assignee(item: dict, participants: list[str]) -> str:
+def _resolve_action_assignee(item: dict, participants: list[str], fallback_assignee: str | None = None) -> str:
     assignee = (
         item.get("assignee")
         or item.get("owner")
@@ -135,10 +142,18 @@ def _resolve_action_assignee(item: dict, participants: list[str]) -> str:
     if len(participants) == 1:
         return participants[0]
 
+    fallback = _match_participant_name(_clean_text(fallback_assignee), participants)
+    if fallback:
+        return fallback
+
     return _clean_text(assignee) or "미정"
 
 
-def _normalize_action_items(raw_items, participants: list[str] | None = None) -> list[dict]:
+def _normalize_action_items(
+    raw_items,
+    participants: list[str] | None = None,
+    fallback_assignee: str | None = None,
+) -> list[dict]:
     participant_names = _dedupe_names(participants or [])
     normalized: list[dict] = []
     for item in raw_items or []:
@@ -163,7 +178,7 @@ def _normalize_action_items(raw_items, participants: list[str] | None = None) ->
                 "title": title,
                 "text": _clean_text(item.get("text") or title),
                 "description": description,
-                "assignee": _resolve_action_assignee(item, participant_names),
+                "assignee": _resolve_action_assignee(item, participant_names, fallback_assignee),
                 # Always start a freshly analyzed task at 검토대기, regardless of
                 # any status-like word the extractor happened to pick up from the
                 # source text (e.g. a meeting note that already had its own
@@ -237,6 +252,7 @@ def _run_pipeline(db, file_id: UUID) -> None:
     action_items = _normalize_action_items(
         result.analysis.action_items,
         participants=list((project_context or {}).get("participants") or []),
+        fallback_assignee=((project_context or {}).get("extra") or {}).get("default_assignee"),
     )
     extra_data = dict(result.analysis.extra_data or {})
 

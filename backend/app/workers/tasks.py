@@ -67,7 +67,6 @@ def _project_context_for_upload(db, uploaded_file: UploadedFile) -> dict | None:
             *[
                 (getattr(member.user, "name", None) or member.name or member.email or "").strip()
                 for member in project.members
-                if member.invite_status == "accepted"
             ],
         ]
     )

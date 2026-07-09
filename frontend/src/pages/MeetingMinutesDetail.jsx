@@ -202,8 +202,6 @@ function getStoredUserName() {
 function normalizeMemberName(member) {
   if (typeof member === "string") return member.trim();
   if (!member || typeof member !== "object") return "";
-  const inviteStatus = String(member.invite_status || member.inviteStatus || "").trim();
-  if (inviteStatus && inviteStatus !== "accepted") return "";
   return String(member.name || member.email || "").trim();
 }
 
@@ -3726,7 +3724,6 @@ export default function TikiSprint12() {
         add(project.team_lead);
         add(getStoredUserName());
         (Array.isArray(project.members) ? project.members : []).forEach((member) => {
-          if (member?.invite_status && member.invite_status !== "accepted") return;
           add(member?.name || member?.email);
         });
         setLiveParticipants([...names]);

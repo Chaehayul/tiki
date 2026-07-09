@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
 from app.db.database import SessionLocal
@@ -43,16 +44,28 @@ def _project_context_for_upload(db, uploaded_file: UploadedFile) -> dict | None:
     if uploaded_file.project_id is None:
         return None
 
-    project = db.get(Project, uploaded_file.project_id)
+    project = db.scalar(
+        select(Project)
+        .where(Project.id == uploaded_file.project_id)
+        .options(
+            selectinload(Project.owner),
+            selectinload(Project.members).selectinload(ProjectMember.user),
+        )
+    )
     if project is None:
         return None
 
-    members = db.scalars(select(ProjectMember).where(ProjectMember.project_id == project.id)).all()
-    participant_names = [
-        (member.name or member.email or "").strip()
-        for member in members
-        if (member.name or member.email or "").strip()
-    ]
+    participant_names = _dedupe_names(
+        [
+            getattr(project.owner, "name", None),
+            getattr(project.owner, "email", None),
+            *[
+                (getattr(member.user, "name", None) or member.name or member.email or "").strip()
+                for member in project.members
+                if member.invite_status == "accepted"
+            ],
+        ]
+    )
     return {
         "project_name": project.name,
         "project_category": project.category,
@@ -64,19 +77,93 @@ def _project_context_for_upload(db, uploaded_file: UploadedFile) -> dict | None:
     }
 
 
-def _normalize_action_items(raw_items) -> list[dict]:
+def _clean_text(value) -> str:
+    return str(value or "").strip()
+
+
+def _dedupe_names(values) -> list[str]:
+    names: list[str] = []
+    seen: set[str] = set()
+    for value in values or []:
+        text = _clean_text(value)
+        if not text:
+            continue
+        key = text.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        names.append(text)
+    return names
+
+
+def _match_participant_name(value: str, participants: list[str]) -> str | None:
+    candidate = _clean_text(value)
+    if not candidate:
+        return None
+
+    normalized = candidate.casefold()
+    for participant in participants:
+        if participant.casefold() == normalized:
+            return participant
+    for participant in participants:
+        participant_key = participant.casefold()
+        if participant_key and (participant_key in normalized or normalized in participant_key):
+            return participant
+    return None
+
+
+def _resolve_action_assignee(item: dict, participants: list[str]) -> str:
+    assignee = (
+        item.get("assignee")
+        or item.get("owner")
+        or item.get("responsible")
+        or item.get("담당자")
+        or item.get("담당")
+    )
+    matched = _match_participant_name(_clean_text(assignee), participants)
+    if matched:
+        return matched
+
+    searchable = " ".join(
+        _clean_text(item.get(key))
+        for key in ("title", "text", "description", "context", "note")
+    )
+    for participant in participants:
+        if participant and participant.casefold() in searchable.casefold():
+            return participant
+
+    if len(participants) == 1:
+        return participants[0]
+
+    return _clean_text(assignee) or "미정"
+
+
+def _normalize_action_items(raw_items, participants: list[str] | None = None) -> list[dict]:
+    participant_names = _dedupe_names(participants or [])
     normalized: list[dict] = []
     for item in raw_items or []:
         if not isinstance(item, dict):
             continue
-        title = str(item.get("title") or item.get("text") or "").strip()
+        description = _clean_text(item.get("description") or item.get("detail") or item.get("details"))
+        title = _clean_text(
+            item.get("title")
+            or item.get("text")
+            or item.get("task")
+            or item.get("todo")
+            or description
+        )
         if not title:
             continue
+        if title == description and len(title) > 90:
+            title = f"{title[:87].rstrip()}..."
         normalized.append(
             {
                 **item,
                 "id": str(item.get("id") or item.get("task_id") or uuid4()),
                 "title": title,
+                "text": _clean_text(item.get("text") or title),
+                "description": description,
+                "assignee": _resolve_action_assignee(item, participant_names),
                 # Always start a freshly analyzed task at 검토대기, regardless of
                 # any status-like word the extractor happened to pick up from the
                 # source text (e.g. a meeting note that already had its own
@@ -147,7 +234,10 @@ def _run_pipeline(db, file_id: UUID) -> None:
     db.flush()
     _log_progress(file_id, 85, "추출된 본문을 저장했습니다.")
 
-    action_items = _normalize_action_items(result.analysis.action_items)
+    action_items = _normalize_action_items(
+        result.analysis.action_items,
+        participants=list((project_context or {}).get("participants") or []),
+    )
     extra_data = dict(result.analysis.extra_data or {})
 
     analysis_result = AnalysisResult(

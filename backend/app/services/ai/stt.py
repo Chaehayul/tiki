@@ -30,6 +30,7 @@ MIN_MINOR_SPEAKER_MULTI_TURN_RATIO = 0.03
 MIN_MINOR_SPEAKER_MULTI_TURN_MAX_COUNT = 2
 MIN_MINOR_SPEAKER_MERGE_GAP_SECONDS = 0.6
 LIGHT_PROFILE_MAX_DURATION_SECONDS = 90.0
+PARALLEL_WORKER_PROMOTION_SECONDS = 700.0
 TranscriptionProfile = Literal["light", "balanced", "premium", "small", "medium", "large"]
 DEFAULT_TRANSCRIPTION_PROFILE: TranscriptionProfile = "balanced"
 TRANSCRIPTION_PROFILE_SETTINGS: dict[TranscriptionProfile, dict[str, Any]] = {
@@ -1517,11 +1518,13 @@ class WhisperSpeechToTextService(SpeechToTextService):
 
     @staticmethod
     def _should_use_parallel_transcription(preprocessing: AudioPreprocessingResult) -> bool:
-        if not preprocessing.chunking_enabled or len(preprocessing.chunks) <= 1:
+        chunks = getattr(preprocessing, "chunks", []) or []
+        chunking_enabled = bool(getattr(preprocessing, "chunking_enabled", len(chunks) > 1))
+        if not chunking_enabled or len(chunks) <= 1:
             return False
-        if preprocessing.duration_seconds >= 240.0:
+        if float(getattr(preprocessing, "duration_seconds", 0.0) or 0.0) >= 240.0:
             return True
-        return len(preprocessing.chunks) >= 3
+        return len(chunks) >= 3
 
     def _resolve_parallel_worker_count(
         self,
@@ -1540,10 +1543,10 @@ class WhisperSpeechToTextService(SpeechToTextService):
 
         if self._is_windows_cpu_runtime():
             return 1
-        if preprocessing.duration_seconds < 15 * 60:
+        if preprocessing.duration_seconds < PARALLEL_WORKER_PROMOTION_SECONDS:
             return 1
         if len(preprocessing.chunks) <= 3:
-            return 1
+            return 2 if self._should_use_parallel_transcription(preprocessing) else 1
         if preprocessing.duration_seconds < 30 * 60:
             return 2
         if preprocessing.duration_seconds >= 45 * 60:
@@ -1792,8 +1795,10 @@ class WhisperSpeechToTextService(SpeechToTextService):
     def _score_chunk_difficulty(self, preprocessing: AudioPreprocessingResult, chunk: Any) -> int:
         score = 0
         chunk_duration = max(0.0, float(chunk.end_seconds) - float(chunk.start_seconds))
-        core_start = chunk.core_start_seconds if chunk.core_start_seconds is not None else chunk.start_seconds
-        core_end = chunk.core_end_seconds if chunk.core_end_seconds is not None else chunk.end_seconds
+        core_start_value = getattr(chunk, "core_start_seconds", None)
+        core_end_value = getattr(chunk, "core_end_seconds", None)
+        core_start = core_start_value if core_start_value is not None else chunk.start_seconds
+        core_end = core_end_value if core_end_value is not None else chunk.end_seconds
         core_duration = max(0.0, float(core_end) - float(core_start))
         core_ratio = core_duration / chunk_duration if chunk_duration > 0 else 0.0
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -216,7 +217,9 @@ class HeuristicMeetingAnalysisTests(unittest.TestCase):
         )
         chunk = SimpleNamespace(start_seconds=0.0, end_seconds=120.0)
 
-        with patch("app.services.ai.stt.settings.whisper_light_model", "small-model"), patch(
+        with patch("app.services.ai.stt.platform.system", return_value="Linux"), patch(
+            "app.services.ai.stt.settings.whisper_light_model", "small-model"
+        ), patch(
             "app.services.ai.stt.settings.whisper_medium_model",
             "medium-model",
         ), patch(
@@ -291,9 +294,10 @@ class HeuristicMeetingAnalysisTests(unittest.TestCase):
         medium_preprocessing = SimpleNamespace(duration_seconds=22 * 60, chunks=[object(), object(), object(), object()])
         long_preprocessing = SimpleNamespace(duration_seconds=52 * 60, chunks=[object(), object(), object(), object(), object(), object()])
 
-        self.assertEqual(service._resolve_parallel_worker_count(short_preprocessing), 1)
-        self.assertEqual(service._resolve_parallel_worker_count(medium_preprocessing), 2)
-        self.assertGreaterEqual(service._resolve_parallel_worker_count(long_preprocessing), 2)
+        with patch("app.services.ai.stt.platform.system", return_value="Linux"):
+            self.assertEqual(service._resolve_parallel_worker_count(short_preprocessing), 1)
+            self.assertEqual(service._resolve_parallel_worker_count(medium_preprocessing), 2)
+            self.assertGreaterEqual(service._resolve_parallel_worker_count(long_preprocessing), 2)
 
     def test_parallel_worker_count_override_takes_priority(self) -> None:
         service = WhisperSpeechToTextService(language="ko")
@@ -543,16 +547,18 @@ class HeuristicMeetingAnalysisTests(unittest.TestCase):
         service = WhisperSpeechToTextService(model_name="large-model", language="ko", transcription_profile="light")
         preprocessing = SimpleNamespace(duration_seconds=707.869, chunking_enabled=True)
 
-        self.assertEqual(service._select_model_name(preprocessing), "medium")
+        with patch("app.services.ai.stt.platform.system", return_value="Linux"):
+            self.assertEqual(service._select_model_name(preprocessing), "medium")
 
     def test_parallel_transcription_threshold_prefers_parallel_for_long_chunked_audio(self) -> None:
         service = WhisperSpeechToTextService(language="ko", transcription_profile="balanced")
         long_chunked = SimpleNamespace(duration_seconds=707.869, chunking_enabled=True, chunks=[1, 2, 3])
         short_chunked = SimpleNamespace(duration_seconds=120.0, chunking_enabled=True, chunks=[1, 2])
 
-        self.assertTrue(service._should_use_parallel_transcription(long_chunked))
-        self.assertFalse(service._should_use_parallel_transcription(short_chunked))
-        self.assertGreaterEqual(service._resolve_parallel_worker_count(long_chunked), 2)
+        with patch("app.services.ai.stt.platform.system", return_value="Linux"):
+            self.assertTrue(service._should_use_parallel_transcription(long_chunked))
+            self.assertFalse(service._should_use_parallel_transcription(short_chunked))
+            self.assertGreaterEqual(service._resolve_parallel_worker_count(long_chunked), 2)
 
     def test_batch_title_derivation_uses_first_file_stem(self) -> None:
         title = _derive_batch_source_title(
@@ -1176,11 +1182,17 @@ class HeuristicMeetingAnalysisTests(unittest.TestCase):
         self.assertEqual(contract.chunks[0].metadata, {"page": 1})
 
     def test_document_loader_extracts_pdf_text_and_chunks(self) -> None:
-        sample_path = Path(
-            "/Users/jiyoung/문서/내파일/study/내 문서/협업/최종프로젝트/데이터소스/문서파일/sample_meeting_ops_easy.pdf"
-        )
-
-        result = load_document_file(sample_path)
+        pages = [
+            "운영팀 주간 회의록\nAI 회의록 솔루션 도입과 운영 현황을 검토했다.",
+            "Jira 연동과 후속 업무를 정리했다.",
+        ]
+        with tempfile.TemporaryDirectory() as temp_dir, patch(
+            "app.services.ai.document_ingestion._extract_pdf_pages",
+            return_value=(pages, {"page_count": 2}),
+        ):
+            sample_path = Path(temp_dir) / "sample_meeting_ops_easy.pdf"
+            sample_path.write_bytes(b"%PDF-1.4 test fixture")
+            result = load_document_file(sample_path)
 
         self.assertEqual(result.source_kind, "document")
         self.assertEqual(result.extraction_method, "document_pdf")
@@ -1192,11 +1204,14 @@ class HeuristicMeetingAnalysisTests(unittest.TestCase):
         self.assertIn("Jira", result.text)
 
     def test_document_loader_prefers_first_page_heading_over_filename(self) -> None:
-        sample_path = Path(
-            "/Users/jiyoung/문서/내파일/study/내 문서/협업/최종프로젝트/데이터소스/문서파일/marketing_meeting_minutes.pdf"
-        )
-
-        result = load_document_file(sample_path)
+        pages = ["상반기 성과 리뷰\n하반기 전략과 콘텐츠 캘린더를 논의했다."]
+        with tempfile.TemporaryDirectory() as temp_dir, patch(
+            "app.services.ai.document_ingestion._extract_pdf_pages",
+            return_value=(pages, {"page_count": 1}),
+        ):
+            sample_path = Path(temp_dir) / "marketing_meeting_minutes.pdf"
+            sample_path.write_bytes(b"%PDF-1.4 test fixture")
+            result = load_document_file(sample_path)
 
         self.assertIn("상반기 성과 리뷰", result.metadata.get("source_title", ""))
         self.assertNotEqual(result.metadata.get("source_title"), sample_path.stem)
@@ -1211,13 +1226,19 @@ class HeuristicMeetingAnalysisTests(unittest.TestCase):
         self.assertIn("Notion·Slack·Figma", summary)
 
     def test_document_action_items_are_filtered_more_conservatively(self) -> None:
-        sample_path = Path(
-            "/Users/jiyoung/문서/내파일/study/내 문서/협업/최종프로젝트/데이터소스/문서파일/marketing_meeting_minutes.pdf"
-        )
-
-        result = load_document_file(sample_path)
-        service = AIEngine(llm_service=HeuristicLLMAnalysisService())
-        analysis = service.process_document(str(sample_path)).analysis.to_dict()
+        pages = [
+            "상반기 성과 리뷰\n하반기 전략을 확정했다.\n김소현 님은 7월 10일까지 콘텐츠 캘린더를 작성한다.",
+            "Notion 워크스페이스와 Slack 채널, Figma 라이브러리를 정비한다.",
+        ]
+        with tempfile.TemporaryDirectory() as temp_dir, patch(
+            "app.services.ai.document_ingestion._extract_pdf_pages",
+            return_value=(pages, {"page_count": 2}),
+        ):
+            sample_path = Path(temp_dir) / "marketing_meeting_minutes.pdf"
+            sample_path.write_bytes(b"%PDF-1.4 test fixture")
+            result = load_document_file(sample_path)
+            service = AIEngine(llm_service=HeuristicLLMAnalysisService())
+            analysis = service.process_document(str(sample_path)).analysis.to_dict()
 
         self.assertLessEqual(len(analysis.get("action_items", [])), 12)
         for item in analysis.get("action_items", []):
@@ -1225,12 +1246,18 @@ class HeuristicMeetingAnalysisTests(unittest.TestCase):
             self.assertFalse(str(title).startswith(("보통 ", "낮음 ", "높음 ", "결정 ")))
 
     def test_document_processing_uses_document_contract(self) -> None:
-        sample_path = Path(
-            "/Users/jiyoung/문서/내파일/study/내 문서/협업/최종프로젝트/데이터소스/문서파일/sample_meeting_ops_easy.pdf"
-        )
-        service = AIEngine(llm_service=HeuristicLLMAnalysisService())
-
-        result = service.process_document(str(sample_path))
+        pages = [
+            "운영팀 주간 회의록\nAI 회의록 솔루션 운영 현황을 검토했다.",
+            "Jira 연동과 후속 업무를 정리했다.",
+        ]
+        with tempfile.TemporaryDirectory() as temp_dir, patch(
+            "app.services.ai.document_ingestion._extract_pdf_pages",
+            return_value=(pages, {"page_count": 2}),
+        ):
+            sample_path = Path(temp_dir) / "sample_meeting_ops_easy.pdf"
+            sample_path.write_bytes(b"%PDF-1.4 test fixture")
+            service = AIEngine(llm_service=HeuristicLLMAnalysisService())
+            result = service.process_document(str(sample_path))
         analysis_dict = result.analysis.to_dict()
         ai_input_contract = analysis_dict["extra_data"]["ai_input_contract"]
 
@@ -1531,7 +1558,7 @@ class HeuristicMeetingAnalysisTests(unittest.TestCase):
         )
 
         self.assertLessEqual(len(result["summary"]), 320)
-        self.assertTrue(result["summary"].startswith("회의에서는"))
+        self.assertIn("주요 안건", result["summary"])
         self.assertNotIn("회의 시작", result["summary"])
         self.assertNotIn("다들 왔죠", result["summary"])
         self.assertIn("결제", result["summary"])
@@ -1906,8 +1933,9 @@ class HeuristicMeetingAnalysisTests(unittest.TestCase):
             },
         )()
 
-        self.assertEqual(service._select_model_name(noisy_preprocessing), "medium")
-        self.assertEqual(service._select_model_name(calm_preprocessing), "medium")
+        with patch("app.services.ai.stt.platform.system", return_value="Linux"):
+            self.assertEqual(service._select_model_name(noisy_preprocessing), "medium")
+            self.assertEqual(service._select_model_name(calm_preprocessing), "medium")
 
     def test_chunk_model_selection_tracks_profile(self) -> None:
         preprocessing = type(
@@ -1941,7 +1969,9 @@ class HeuristicMeetingAnalysisTests(unittest.TestCase):
             },
         )()
 
-        with patch("app.services.ai.stt.settings.whisper_model", "large-model"):
+        with patch("app.services.ai.stt.platform.system", return_value="Linux"), patch(
+            "app.services.ai.stt.settings.whisper_model", "large-model"
+        ):
             service = WhisperSpeechToTextService(language="ko", transcription_profile="large")
             self.assertEqual(service._select_chunk_model_name(preprocessing, easy_chunk), "large-model")
             self.assertEqual(service._select_chunk_model_name(preprocessing, hard_chunk), "large-model")

@@ -1577,9 +1577,11 @@ FINAL_DECISION_MARKERS: tuple[str, ...] = (
     "결정",
     "확정",
     "합의",
+    "하기로",
     "동의",
     "선정",
     "채택",
+    "분류했다",
     "마무리",
 )
 
@@ -3394,7 +3396,10 @@ class HeuristicLLMAnalysisService(LLMAnalysisService):
         return _parse_due_date_text(sentence)
 
     def _build_decisions(self, sentences: list[str]) -> list[str]:
-        picked = self._pick_sentence_list(sentences, DECISION_PATTERNS, MAX_DECISIONS)
+        # Filtering happens below, so do not truncate candidates first. Long but
+        # non-final statements previously occupied the candidate limit and pushed
+        # valid concise decisions out of the result.
+        picked = self._pick_sentence_list(sentences, DECISION_PATTERNS, len(sentences))
         decisions: list[str] = []
         seen: set[str] = set()
         for sentence in picked:
@@ -3415,6 +3420,8 @@ class HeuristicLLMAnalysisService(LLMAnalysisService):
                 continue
             seen.add(signature)
             decisions.append(text)
+            if len(decisions) >= MAX_DECISIONS:
+                break
         return decisions
 
     def _build_issues(self, sentences: list[str]) -> list[dict[str, Any]]:

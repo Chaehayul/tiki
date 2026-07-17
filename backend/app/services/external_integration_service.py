@@ -585,6 +585,9 @@ def ensure_meeting_external_resource(db: Session, meeting: Meeting, provider: In
             if link.external_id and not client.issue_exists(link.external_id):
                 link.external_id = None
                 link.external_url = None
+            if link.external_id and client.get_issue_project_key(link.external_id) != project_key:
+                link.external_id = None
+                link.external_url = None
             if link.external_id:
                 client.update_issue(link.external_id, title=title, description=description)
             else:
@@ -592,13 +595,13 @@ def ensure_meeting_external_resource(db: Session, meeting: Meeting, provider: In
                 # (Epic in software projects, Workstream in business projects) so it
                 # reads as a container/document rather than another flat task — falls
                 # back to a plain issue if the project has no such type configured.
-                container_type = client.get_container_issue_type(project_key)
+                standard_type = client.get_standard_issue_type(project_key)
                 issue = client.create_issue(
                     project_key=project_key,
                     title=title,
                     description=description,
                     issue_type="Task",
-                    issue_type_id=container_type["id"] if container_type else None,
+                    issue_type_id=standard_type["id"] if standard_type else None,
                 )
                 link.external_id = issue.issue_id
                 link.external_url = issue.issue_url
@@ -772,6 +775,7 @@ def _sync_tasks_to_provider(
     selected_ids = [str(item) for item in task_ids]
     should_resync_notion_page = False
     jira_account_id_cache: dict[str, str | None] = {}
+    jira_standard_issue_type_cache: dict[str, str | None] = {}
 
     for task_id in selected_ids:
         found = _find_action_item(meeting, task_id)
@@ -809,6 +813,10 @@ def _sync_tasks_to_provider(
                 project_key = integration.jira_project_key or settings.jira_project_key
                 if not project_key:
                     raise RuntimeError("Jira project is not selected for this project")
+                if project_key not in jira_standard_issue_type_cache:
+                    standard_type = client.get_standard_issue_type(project_key)
+                    jira_standard_issue_type_cache[project_key] = standard_type["id"] if standard_type else None
+                standard_issue_type_id = jira_standard_issue_type_cache[project_key]
                 existing_key = link.external_key or link.external_id or ""
                 if existing_key and client.get_issue_project_key(existing_key) != project_key:
                     link.external_id = None
@@ -840,11 +848,13 @@ def _sync_tasks_to_provider(
                         # loosely "relating" to it.
                         issue = client.create_issue(
                             project_key=project_key, title=title, description=description, issue_type="Task",
+                            issue_type_id=standard_issue_type_id,
                             due_date=due_date, assignee_account_id=assignee_account_id, parent_key=parent_key,
                         )
                     except RuntimeError:
                         issue = client.create_issue(
                             project_key=project_key, title=title, description=description, issue_type="Task",
+                            issue_type_id=standard_issue_type_id,
                             due_date=due_date, assignee_account_id=assignee_account_id,
                         )
                         parent_key = None
@@ -905,5 +915,8 @@ def _sync_tasks_to_provider(
             if str(result.provider.value if hasattr(result.provider, "value") else result.provider) == IntegrationProvider.NOTION.value and str(result.syncStatus.value if hasattr(result.syncStatus, "value") else result.syncStatus) == SyncStatus.SYNCED.value:
                 result.externalId = refreshed_link.external_id
                 result.externalUrl = refreshed_link.external_url
+                if refreshed_link.sync_status == SyncStatus.FAILED:
+                    result.syncStatus = SyncStatus.FAILED
+                    result.errorMessage = refreshed_link.error_message or "Notion page refresh failed"
     db.commit()
     return results

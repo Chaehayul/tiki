@@ -499,6 +499,9 @@ class NotionClient:
         return properties
 
     def replace_page_children(self, page_id: str, children: list[dict[str, Any]]) -> None:
+        # Fetch every block id before deleting anything. Deleting the first page
+        # while following Notion's cursor can shift the collection and skip blocks.
+        block_ids: list[str] = []
         cursor: str | None = None
         while True:
             suffix = f"?start_cursor={urllib.parse.quote(cursor)}" if cursor else ""
@@ -506,10 +509,14 @@ class NotionClient:
             for block in result.get("results") or []:
                 block_id = block.get("id")
                 if block_id:
-                    self._request("DELETE", f"blocks/{block_id}")
+                    block_ids.append(block_id)
             if not result.get("has_more"):
                 break
             cursor = result.get("next_cursor")
+            if not cursor:
+                raise RuntimeError("Notion block pagination returned has_more without next_cursor")
+        for block_id in block_ids:
+            self._request("DELETE", f"blocks/{block_id}")
         for index in range(0, len(children), 100):
             self._request("PATCH", f"blocks/{page_id}/children", {"children": children[index:index + 100]})
 

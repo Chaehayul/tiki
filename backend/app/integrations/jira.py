@@ -298,6 +298,19 @@ class JiraOAuthClient:
         issue_types = self._api_request("GET", f"issuetype/project?projectId={project_id}")
         return next((t for t in issue_types if t.get("hierarchyLevel") == 1), None)
 
+    def get_standard_issue_type(self, project_key: str) -> dict[str, Any] | None:
+        """Return a normal, non-subtask issue type for the project.
+
+        Jira localizes issue type names (for example, Korean business projects use
+        "작업" instead of "Task"), so API calls should prefer IDs over English names.
+        """
+        project = self._api_request("GET", f"project/{project_key}")
+        project_id = project.get("id")
+        if not project_id:
+            return None
+        issue_types = self._api_request("GET", f"issuetype/project?projectId={project_id}")
+        return next((t for t in issue_types if t.get("hierarchyLevel") == 0 and not t.get("subtask")), None)
+
     def create_issue(
         self,
         *,
@@ -322,7 +335,22 @@ class JiraOAuthClient:
             fields["assignee"] = {"accountId": assignee_account_id}
         if parent_key:
             fields["parent"] = {"key": parent_key}
-        result = self._api_request("POST", "issue", {"fields": fields})
+        try:
+            result = self._api_request("POST", "issue", {"fields": fields})
+        except RuntimeError as exc:
+            # Description is optional and may be hidden by a project's field
+            # configuration. Summary, however, is required by Jira, so retrying
+            # the same summary payload cannot recover from a summary-field error.
+            if "Field 'description' cannot be set" not in str(exc):
+                raise
+            minimal_fields: dict[str, Any] = {
+                "project": {"key": project_key},
+                "summary": title[:255],
+                "issuetype": {"id": issue_type_id} if issue_type_id else {"name": issue_type},
+            }
+            if parent_key:
+                minimal_fields["parent"] = {"key": parent_key}
+            result = self._api_request("POST", "issue", {"fields": minimal_fields})
         issue_key = result["key"]
         return JiraIssueResult(
             issue_id=result.get("id", issue_key),
